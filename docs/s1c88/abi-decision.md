@@ -109,6 +109,23 @@ where they match (`ld`, `add`, `adc`, `sub`, `sbc`, `and`, `or`, `xor`, `inc`, `
 `ret`, `call`, `jp`); S1C88-specific selection (`ba` ops, `jrs`/`jrl`/`cars`/`carl`, `rete`, `[br:ll]`,
 `mlt`/`div`, `pack`/`upck`, `ex`, `swap`) replaces the z80-only forms.
 
+**Execution strategy: always-green incremental** (decided after a big-bang attempt). Removing the z80
+registers from the model up-front breaks ~1144 `gen.c` sites at once and leaves the compiler unbuildable
+for a long, unverifiable stretch — high risk for silent miscompilation with no test suite. Instead:
+
+1. Keep every register symbol (`C/D/E/IYL/IYH_IDX`, `BC/DE_IDX`, `PAIR_BC/PAIR_DE`, the `asmop_*` scratch)
+   **defined** so the build never breaks.
+2. Constrain the *allocator* to the S1C88 byte regs (A, B, L, H) first.
+3. Rewrite the `DE`/`BC` *scratch* uses in `gen.c` function-by-function — building and smoke-testing
+   (`sdcc -ms1c88 --c1mode`) after each — mapping onto `BA`/`HL`/`IX`/`IY`/stack (z80 long combos
+   `DEHL`/`HLDE` → S1C88 `HL:BA` per the ABI; drop `asmop_iyl`/`iyh` since IX/IY aren't byte-addressable).
+4. Delete each register symbol only once it has no remaining uses.
+
+The linchpin is the scratch-asmop machinery near the top of `gen.c` (`asmop_bc/de`, `asmop_dehl/hlde/
+hlbc/debc`, `_pairs[]`, the `[IYH_IDX+1]` parm-mask arrays). Note: reordering the `*_IDX` enum so
+A,B,L,H are the first four (needed for `num_regs==4`) makes the z80 `BC` pair non-adjacent (B=1, C=4) —
+verify `ralloc2.cc`'s pair-adjacency logic tolerates that for the (never-allocated) scratch pairs.
+
 Still deferred within the codegen milestone:
 - Epson segment/section names and the generic-pointer tag scheme.
 - 3-byte far-pointer code generation and the `_near`/`_far` memory-model story.
