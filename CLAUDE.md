@@ -2,6 +2,11 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+> **▶ Resuming / "pick up where you left off"?** Go to **[`docs/s1c88/HANDOFF.md`](docs/s1c88/HANDOFF.md)** —
+> it has the current state and the exact next action. TL;DR: `git checkout s1c88-retarget && ./scripts/dev.sh`
+> (confirms the build is green + runs a codegen smoke test), then continue the codegen retarget per
+> `docs/s1c88/abi-decision.md`.
+
 ## Project Overview
 
 **skip-c** retargets [SDCC](https://sdcc.sourceforge.net/) (the Small Device C Compiler) **4.5.0** to the
