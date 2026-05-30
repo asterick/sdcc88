@@ -237,7 +237,7 @@ bool z80_regs_preserved_in_calls_from_current_function[IYH_IDX + 1];
 
 static const char *aopGet (asmop *aop, int offset, bool bit16);
 
-static struct asmop asmop_a, asmop_b, asmop_c, asmop_d, asmop_e, asmop_h, asmop_l, asmop_iyh, asmop_iyl, asmop_hl, asmop_de, asmop_bc, asmop_iy, asmop_dehl, asmop_hlde, asmop_hlbc, asmop_debc, asmop_zero, asmop_one, asmop_mone;
+static struct asmop asmop_a, asmop_b, asmop_c, asmop_d, asmop_e, asmop_h, asmop_l, asmop_iyh, asmop_iyl, asmop_hl, asmop_de, asmop_bc, asmop_ba, asmop_iy, asmop_dehl, asmop_hlde, asmop_hlbc, asmop_debc, asmop_zero, asmop_one, asmop_mone;
 static struct asmop *const ASMOP_A = &asmop_a;
 static struct asmop *const ASMOP_B = &asmop_b;
 static struct asmop *const ASMOP_C = &asmop_c;
@@ -250,6 +250,7 @@ static struct asmop *const ASMOP_IYL = &asmop_iyl;
 static struct asmop *const ASMOP_HL = &asmop_hl;
 static struct asmop *const ASMOP_DE = &asmop_de;
 static struct asmop *const ASMOP_BC = &asmop_bc;
+static struct asmop *const ASMOP_BA = &asmop_ba;   /* S1C88 2nd ALU pair B:A (z80 DE's role) */
 static struct asmop *const ASMOP_IY = &asmop_iy;
 static struct asmop *const ASMOP_DEHL = &asmop_dehl;
 static struct asmop *const ASMOP_HLDE = &asmop_hlde;
@@ -294,6 +295,7 @@ z80_init_asmops (void)
   z80_init_reg_asmop(&asmop_iyl, (const signed char[]){IYL_IDX, -1});
   z80_init_reg_asmop(&asmop_bc, (const signed char[]){C_IDX, B_IDX, -1});
   z80_init_reg_asmop(&asmop_de, (const signed char[]){E_IDX, D_IDX, -1});
+  z80_init_reg_asmop(&asmop_ba, (const signed char[]){A_IDX, B_IDX, -1});   // BA = A(low):B(high)
   z80_init_reg_asmop(&asmop_hl, (const signed char[]){L_IDX, H_IDX, -1});
   z80_init_reg_asmop(&asmop_dehl, (const signed char[]){L_IDX, H_IDX, E_IDX, D_IDX, -1});
   z80_init_reg_asmop(&asmop_hlde, (const signed char[]){E_IDX, D_IDX, L_IDX, H_IDX, -1});
@@ -2173,7 +2175,9 @@ aopRet (sym_link *ftype)
 {
   wassert (IS_FUNC (ftype));
 
-  // Adjust returnregs in isReturned in peep.c accordingly when changing asmop_return here.
+  // z80IsReturned()/z80IsRegArg() derive the live return/arg regs from aopRet/aopArg
+  // automatically, so no manual sync is needed here; but peephole .def rules that name
+  // return registers textually may need review when changing these.
 
   int size = getSize (ftype->next);
 
@@ -2207,7 +2211,7 @@ aopRet (sym_link *ftype)
       else if (IS_SM83)
         return ASMOP_BC;
       else
-        return ASMOP_DE;
+        return ASMOP_BA;  // S1C88: int/short returned in BA (was z80 DE)
     case 3:
     case 4:
       return (IS_SM83 ? ASMOP_DEBC : ASMOP_HLDE);   
