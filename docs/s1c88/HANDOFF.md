@@ -3,7 +3,8 @@
 **This is the single resume entry point.** If the prompt is *"let's pick up where you left off,"* do the
 steps under **NEXT ACTION** below. Everything needed to continue is here or linked from here.
 
-_Last updated: 2026-05-29. Branch: `s1c88-retarget`. State: **GREEN** (compiler builds, links, runs)._
+_Last updated: 2026-05-30. Branch: `s1c88-retarget`. State: **GREEN** (compiler builds, links, runs).
+Step 1 of the reshape is **DONE** (commit `b606833`); current action is **Step 2**._
 
 ---
 
@@ -26,12 +27,15 @@ _Last updated: 2026-05-29. Branch: `s1c88-retarget`. State: **GREEN** (compiler 
    ```
 2. Read [`abi-decision.md`](abi-decision.md) (the "Codegen milestone — decided design" + "Execution
    strategy: always-green incremental" sections). Then execute the always-green reshape:
-   - **Step 1 (task #17):** constrain the allocator to the S1C88 byte regs **A, B, L, H** while keeping
-     every register symbol *defined* so the build stays green. Concretely: reorder the `*_IDX` enum in
-     `src/s1c88/ralloc.h` so `A,B,L,H` are the first four, reorder `z80_regs[]` in `ralloc.c` to match,
-     set `PORT.num_regs = 4` in `main.c`, and update the `REG_*` `#define`s in `ralloc2.cc`. **Caveat:**
-     this makes the z80 `BC` pair non-adjacent (B=1, C=4) — verify `ralloc2.cc`'s pair-adjacency logic
-     tolerates that for the now-never-allocated `BC`/`DE` scratch pairs. Build green after this step.
+   - **Step 1 (task #17): ✅ DONE — commit `b606833`.** Constrained the allocator to the S1C88 byte regs
+     **A, B, L, H** while keeping every register symbol *defined* so the build stays green: reordered the
+     `*_IDX` enum (`A,B,L,H` = 0-3), reordered `z80_regs[]` preserving position==ordinal, set
+     `PORT.num_regs = 4`, updated the `REG_*` `#define`s, reordered `gen.c`'s `asmopregs[]`, fixed the
+     `regWithIdx`/`freeAllRegs` loops (start at `A_IDX`, was `C_IDX`), and dropped the `IY_RESERVED`
+     `num_regs-=2`. The BC-non-adjacency caveat was a non-issue (BC/DE are never allocated under
+     `num_regs=4`). Smoke tests confirm A,B,L,H-only allocation. **Known limitation:** BA-pair formation
+     is still disabled (the cost fn forbids A in multi-byte vars), so ints use HL only — enable BA once
+     gen.c can emit BA-pair code (part of Step 2).
    - **Step 2 (task #18):** rewrite the `DE`/`BC` scratch uses in `gen.c` **function-by-function**,
      running `./scripts/dev.sh` after each batch. Map z80 `BC`→`BA`(B:A); the combined long asmops
      `DEHL`/`HLDE`/`HLBC`/`DEBC` → S1C88 `HL:BA` (long return per the ABI); drop `asmop_iyl`/`iyh`
