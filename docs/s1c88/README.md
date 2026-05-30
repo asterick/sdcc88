@@ -44,6 +44,11 @@ the extraction note at the bottom.)
 | [utilities.md](utilities.md) | `ar88` librarian, `cc88` control program, `mk88` make, `pr88` object reader; **file formats**: IEEE-695/MUFOM (full binary opcode tables), Motorola S-records | Ch 6 + App · pp 221–331 |
 | [toolchain.md](toolchain.md) | How the tools fit together: the build pipeline, file extensions, and intermediate/output formats | synthesis |
 
+## skip-c backend decisions
+
+- [abi-decision.md](abi-decision.md) — the base-port choice (clone of SDCC's **z80** port) and the
+  target S1C88 C ABI / z80→s1c88 register mapping the backend retarget follows.
+
 ## ABI quick-reference (for the SDCC retarget)
 
 From [c-compiler.md](c-compiler.md) — the official S1C88 C ABI, useful as a model for the skip-c backend:

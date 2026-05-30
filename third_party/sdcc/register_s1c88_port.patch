@@ -1,3 +1,19 @@
+diff --git a/src/SDCCmain.c b/src/SDCCmain.c
+index 4c7a5e3..1192192 100644
+--- a/src/SDCCmain.c
++++ b/src/SDCCmain.c
+@@ -379,6 +379,9 @@ static PORT *_ports[] = {
+ #if !OPT_DISABLE_F8
+   &f8_port,
+ #endif
++#if !OPT_DISABLE_S1C88
++  &s1c88_port,
++#endif
+ };
+ 
+ #define NUM_PORTS (sizeof(_ports)/sizeof(_ports[0]))
+diff --git a/src/port.h b/src/port.h
+index da3258a..302b0cd 100644
 --- a/src/port.h
 +++ b/src/port.h
 @@ -36,6 +36,7 @@
@@ -8,15 +24,19 @@
  
  /* Macro to test the target we are compiling for.
     Can only be used after SDCCmain has defined the port
-@@ -66,6 +67,7 @@
+@@ -66,9 +67,10 @@
  #define TARGET_IS_MOS6502  (port->id == TARGET_ID_MOS6502)
  #define TARGET_IS_MOS65C02 (port->id == TARGET_ID_MOS65C02)
  #define TARGET_IS_F8       (port->id == TARGET_ID_F8)
 +#define TARGET_IS_S1C88    (port->id == TARGET_ID_S1C88)
  
  #define TARGET_MCS51_LIKE  (TARGET_IS_MCS51 || TARGET_IS_DS390 || TARGET_IS_DS400)
- #define TARGET_Z80_LIKE    (TARGET_IS_Z80 || TARGET_IS_Z180 || TARGET_IS_SM83 || TARGET_IS_R2K || TARGET_IS_R2KA || TARGET_IS_R3KA || TARGET_IS_TLCS90 || TARGET_IS_EZ80_Z80 || TARGET_IS_Z80N || TARGET_IS_R800)
-@@ -520,5 +522,8 @@
+-#define TARGET_Z80_LIKE    (TARGET_IS_Z80 || TARGET_IS_Z180 || TARGET_IS_SM83 || TARGET_IS_R2K || TARGET_IS_R2KA || TARGET_IS_R3KA || TARGET_IS_TLCS90 || TARGET_IS_EZ80_Z80 || TARGET_IS_Z80N || TARGET_IS_R800)
++#define TARGET_Z80_LIKE    (TARGET_IS_Z80 || TARGET_IS_Z180 || TARGET_IS_SM83 || TARGET_IS_R2K || TARGET_IS_R2KA || TARGET_IS_R3KA || TARGET_IS_TLCS90 || TARGET_IS_EZ80_Z80 || TARGET_IS_Z80N || TARGET_IS_R800 || TARGET_IS_S1C88)
+ #define TARGET_IS_RABBIT   (TARGET_IS_R2K || TARGET_IS_R2KA || TARGET_IS_R3KA)
+ #define TARGET_HC08_LIKE   (TARGET_IS_HC08 || TARGET_IS_S08)
+ #define TARGET_PIC_LIKE    (TARGET_IS_PIC14 || TARGET_IS_PIC16)
+@@ -520,5 +522,8 @@ extern PORT mos65c02_port;
  #if !OPT_DISABLE_F8
  extern PORT f8_port;
  #endif
@@ -25,15 +45,3 @@
 +#endif
  
  #endif /* PORT_INCLUDE */
---- a/src/SDCCmain.c
-+++ b/src/SDCCmain.c
-@@ -379,6 +379,9 @@
- #if !OPT_DISABLE_F8
-   &f8_port,
- #endif
-+#if !OPT_DISABLE_S1C88
-+  &s1c88_port,
-+#endif
- };
- 
- #define NUM_PORTS (sizeof(_ports)/sizeof(_ports[0]))

@@ -1,7 +1,7 @@
 /*-------------------------------------------------------------------------
-  gen.h - header file for code generation for 8051
+  SDCCgen51.h - header file for code generation for 8051
 
-             Written By -  Philipp Krause . pkk@spth.de (2012)
+             Written By -  Sandeep Dutta . sandeep.dutta@usa.net (1998)
 
    This program is free software; you can redistribute it and/or modify it
    under the terms of the GNU General Public License as published by the
@@ -18,10 +18,8 @@
    Foundation, 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
 -------------------------------------------------------------------------*/
 
-#ifndef S1C88GEN_H
-#define S1C88GEN_H 1
-
-#include "ralloc.h"
+#ifndef Z80GEN_H
+#define Z80GEN_H
 
 typedef enum
 {
@@ -30,73 +28,73 @@ typedef enum
   AOP_LIT = 1,
   /* Is in a register */
   AOP_REG,
-  /* Is partially in registers, partially on the stack */
-  AOP_REGSTK,
-  /* Is on the stack */
-  AOP_STK,
-  /* Is a stack location */
-  AOP_STL,
-  /* Is an immediate value */
-  AOP_IMMD,
   /* Is in direct space */
   AOP_DIR,
+  /* SFR space ($FF00 and above) */
+  AOP_SFR,
+  /* Is on the stack */
+  AOP_STK,
+  /* Is an immediate value */
+  AOP_IMMD,
+  /* Is an address on the stack */
+  AOP_STL,
+  /* Is in the carry register */
+  AOP_CRY,
+  /* Is pointed to by IY */
+  AOP_IY,
+  /* Is pointed to by HL */
+  AOP_HL,
+  /* Is on the extended stack (addressed via IY or HL) */
+  AOP_EXSTK,
+  /* Is referenced by a pointer in a register pair. */
+  AOP_PAIRPTR,
   /* Read undefined, discard writes */
-  AOP_DUMMY,
-  /* Has been optimized out by jumping directly (see ifxForOp) */
-  AOP_CND
+  AOP_DUMMY
 }
 AOP_TYPE;
 
-/* asmop_byte: A type for the location a single byte
-   of an operand can be in */
-typedef struct asmop_byte
-{
-  bool in_reg;
-  union
-  {
-    reg_info *reg;    /* Register this byte is in. */
-    long int stk; /* Stack offset for this byte. */
-  } byteu;
-} asmop_byte;
-
-/* asmop: A homogenised type for all the different
-   spaces an operand can be in */
+/* type asmop : a homogenised type for 
+   all the different spaces an operand can be
+   in */
 typedef struct asmop
 {
   AOP_TYPE type;
-  short size;
+  short coff;                   /* current offset */
+  short size;                   /* total size */
+  unsigned code:1;              /* is in Code space */
+  unsigned paged:1;             /* in paged memory  */
+  unsigned freed:1;             /* already freed    */
+  unsigned bcInUse:1;           /* for banked I/O, which uses bc for the I/O address */
   union
   {
-    value *aop_lit;
-    struct
-      {
-        char *immd;
-        int immd_off;
-      };
-    int stk_off;
-    char *aop_dir;
-    asmop_byte bytes[8];
-  } aopu;
-  signed char regs[6]; // Byte of this aop that is in the register. -1 if no byte of this aop is in the reg.
+    value *aop_lit;             /* if literal */
+    reg_info *aop_reg[4];       /* array of registers */
+    char *aop_dir;              /* if direct  */
+    char *aop_immd;             /* if immediate others are implied */
+    int aop_stk;                /* stack offset when AOP_STK or AOP_STL*/
+    int aop_pairId;             /* The pair ID */
+  }
+  aopu;
+  signed char regs[9]; // Byte of this aop that is in the register. -1 if no byte of this aop is in the reg.
   struct valinfo valinfo;
 }
 asmop;
 
-void genS1C88Code (iCode *);
-void s1c88_emitDebuggerSymbol (const char *);
+void genZ80Code (iCode *);
+void z80_emitDebuggerSymbol (const char *);
 
-bool s1c88IsReturned(const char *what);
+
+bool z80IsReturned(const char *what);
 
 // Check if what is part of the ith argument (counting from 1) to a function of type ftype.
-// If what is 0, just check if the ith argument is in registers.
-bool s1c88IsRegArg(struct sym_link *ftype, int i, const char *what);
+// If what is 0, just check if hte ith argument is in registers.
+bool z80IsRegArg(struct sym_link *ftype, int i, const char *what);
 
 // Check if what is part of the any argument (counting from 1) to a function of type ftype.
-bool s1c88IsParmInCall(sym_link *ftype, const char *what);
+bool z80IsParmInCall(sym_link *ftype, const char *what);
 
-extern bool s1c88_assignment_optimal;
-extern long int s1c88_call_stack_size;
-extern bool s1c88_extend_stack;
+extern bool z80_assignment_optimal;
+extern bool should_omit_frame_ptr;
 
 #endif
 

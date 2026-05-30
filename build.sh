@@ -49,14 +49,20 @@ fi
 echo ">> overlaying src/s1c88 port"
 mkdir -p "${SDCC}/src/s1c88"
 cp "${REPO}"/src/s1c88/*.c  "${REPO}"/src/s1c88/*.h  "${REPO}"/src/s1c88/*.cc \
-   "${REPO}"/src/s1c88/peeph.def  "${REPO}"/src/s1c88/Makefile.in  "${SDCC}/src/s1c88/"
+   "${REPO}"/src/s1c88/*.i  "${REPO}"/src/s1c88/peeph*.def \
+   "${REPO}"/src/s1c88/Makefile.in  "${SDCC}/src/s1c88/"
 
 # 4. Register the port in SDCC's core (port.h + SDCCmain.c). Idempotent: skip if already applied.
+#    Use patch(1), NOT `git apply`: build/ is nested inside skip-c's own git repo, so `git apply`
+#    resolves the patch paths against the OUTER repo and silently no-ops (exits 0 without touching the
+#    files), which then fails the build later with a confusing "TARGET_ID_S1C88 undeclared" error.
 if ! grep -q 'TARGET_ID_S1C88' "${SDCC}/src/port.h"; then
   echo ">> applying register_s1c88_port.patch"
-  ( cd "${SDCC}" && { git apply -p1 "${REPO}/third_party/sdcc/register_s1c88_port.patch" \
-        || patch -p1 < "${REPO}/third_party/sdcc/register_s1c88_port.patch"; } )
+  ( cd "${SDCC}" && patch -p1 --forward < "${REPO}/third_party/sdcc/register_s1c88_port.patch" )
 fi
+# Fail loudly if registration didn't land — otherwise the build dies later with a cryptic compile error.
+grep -q 'TARGET_ID_S1C88' "${SDCC}/src/port.h" \
+  || { echo "ERROR: port registration patch did not apply (src/port.h missing TARGET_ID_S1C88)" >&2; exit 1; }
 
 # 5. Configure: build only the compiler + s1c88, plus stm8 (kept as the donor for a generated per-port
 #    Makefile, and to validate the Boost-based allocator). Skip the other ports and peripheral tools.

@@ -2,7 +2,7 @@
 
   SDCCralloc.h - header file register allocation
 
-                Written By -  Philipp Krause . pkk@spth.de (2012)
+                Written By -  Sandeep Dutta . sandeep.dutta@usa.net (1998)
 
    This program is free software; you can redistribute it and/or modify it
    under the terms of the GNU General Public License as published by the
@@ -22,31 +22,51 @@
    You are forbidden to forbid anyone else to use, share and improve
    what you give them.   Help stamp out software-hoarding!  
 -------------------------------------------------------------------------*/
-
+#include "SDCCicode.h"
+#include "SDCCBBlock.h"
 #ifndef SDCCRALLOC_H
 #define SDCCRALLOC_H 1
 
-#include "common.h"
+#define DEBUG_FAKE_EXTRA_REGS 	0
+
+#define USE_OLDSALLOC 0 // Change to 1 to use old stack allocator
 
 enum
 {
-  A_IDX = 0, // The accumulator
-  XL_IDX,    // Lower byte of X
-  XH_IDX,    // Upper byte of X
-  YL_IDX,    // Lower byte of Y
-  YH_IDX,    // Upper byte of Y
-  C_IDX,     // Carry bit - for bool only.
+  A_IDX = 0,
+  C_IDX,
+  B_IDX,
+  E_IDX,
+  D_IDX,
+  L_IDX,
+  H_IDX,
+  IYL_IDX,
+  IYH_IDX,
+#if DEBUG_FAKE_EXTRA_REGS
+  M_IDX,
+  N_IDX,
+  O_IDX,
+  P_IDX,
+  Q_IDX,
+  R_IDX,
+  S_IDX,
+  T_IDX,
+#endif
+  CND_IDX,
 
-  X_IDX,     // X - for use with code generation support functions only.
-  Y_IDX,     // Y - for use with code generation support functions only.
-
-  SP_IDX     // SP - for use with debug info.
+  // These pairs are for internal use in code generation only.
+  IY_IDX,
+  BC_IDX,
+  DE_IDX,
+  HL_IDX
 };
 
 enum
 {
+  REG_PTR = 1,
   REG_GPR = 2,
   REG_CND = 4,
+  REG_PAIR = 8
 };
 
 /* definition for the registers */
@@ -56,15 +76,19 @@ typedef struct reg_info
                                    REG_GPR, REG_PTR or REG_CND */
   short rIdx;                   /* index into register table */
   char *name;                   /* name */
+  unsigned isFree:1;            /* is currently unassigned  */
 } reg_info;
 
-extern reg_info s1c88_regs[];
+extern reg_info *regsZ80;
 
-void s1c88_assignRegisters (ebbIndex *);
+void assignRegisters (eBBlock **, int);
+reg_info *regWithIdx (int);
 
-void s1c88SpillThis (symbol *sym, bool force_spill);
-iCode *s1c88_ralloc2_cc(ebbIndex *ebbi);
+void z80_assignRegisters (ebbIndex *);
+bitVect *z80_rUmaskForOp (const operand * op);
 
-void s1c88RegFix (eBBlock ** ebbs, int count);
+void z80SpillThis (symbol *);
+iCode *z80_ralloc2_cc(ebbIndex *ebbi);
+
+void Z80RegFix (eBBlock ** ebbs, int count);
 #endif
-
