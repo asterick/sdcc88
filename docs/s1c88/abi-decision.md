@@ -131,3 +131,64 @@ Still deferred within the codegen milestone:
 - 3-byte far-pointer code generation and the `_near`/`_far` memory-model story.
 - Peephole rules retargeting (replace the z80 `peeph*.def`).
 - Single-port cleanup (strip the 9 unregistered z80 PORT structs; entangled with `_parseOptions`).
+
+## Step 2: concrete codegen mapping (z80 pairs → S1C88) — ISA-grounded
+
+> Status: design recorded 2026-05-30 after auditing `instruction-set.md`. Step 1 (allocator constrained
+> to A,B,L,H, commit `b606833`) is done; this section is the executable plan for the `gen.c` reshape.
+
+### What the S1C88 actually gives us (instruction-set.md §"16-bit Transfer/Arithmetic")
+- **Four 16-bit registers — fully orthogonal for *transfer*:** `BA, HL, IX, IY` are mutually loadable
+  (`LD dst,src` for every pair, 2 B / 2 cyc), and every one loads `#imm`, `[hhll]`, `[HL]`, `[IX]`,
+  `[IY]`, `[SP+dd]` and stores back. 16-bit moves are therefore cheap and uniform.
+- **Two 16-bit *ALU* pairs:** only `BA` and `HL` have the full `ADD/ADC/SUB/SBC/CP` cross-product (with
+  each other, with IX/IY, and `#imm`), and only they are **byte-addressable** (A/B, L/H). This mirrors the
+  z80 exactly, where `HL` and `DE` are the two 16-bit ALU pairs.
+- **`IX`/`IY` are index-only:** 16-bit, **not byte-addressable** (there is no IXL/IXH/IYL/IYH), and they
+  have *limited* arithmetic — `ADD/SUB IX,{BA,HL,#imm}`, `CP IX,#imm`, `INC/DEC` — but **no `ADC`/`SBC`**,
+  so they can't carry-chain. Good for pointers/frame, not for multi-precision math.
+- **`EX` always pivots through BA:** `EX BA,HL` / `EX BA,IX` / `EX BA,IY` / `EX BA,SP` (+ 8-bit `EX A,B`,
+  `EX A,[HL]`). There is **no `EX HL,IX`**, etc. z80's workhorse `ex de,hl` → `ex ba,hl`.
+- **`A` is *both* the accumulator and BA's low byte; `B` is BA's high byte.**
+
+### The mapping
+
+| z80 | → S1C88 | byte-addressable | notes |
+|-----|---------|------------------|-------|
+| `HL` | `HL` | yes (H,L) | DIRECT — primary pointer + ALU pair |
+| `DE` | `BA` | yes (B,A) | the 2nd ALU pair. `ex de,hl`→`ex ba,hl`; `add/adc/sbc hl,de`→`…,ba` |
+| `BC` | `IX`/`IY`/stack | **no** | 3rd "pair" → index reg or spill; byte-level B/C uses eliminated |
+| `A`,`B`,`H`,`L` | `A`,`B`,`H`,`L` | — | DIRECT (the Step-1 allocatable byte set) |
+| `C`,`D`,`E` | **(eliminated)** | — | no S1C88 byte home — restructure to A/B/L/H/16-bit/stack |
+| `IYL`/`IYH` | **(dropped)** | — | IX/IY are not byte-addressable |
+| `IX` (frame ptr) | `IX` | no | keep as frame pointer |
+
+### Why it is NOT a textual rename — the two hazards
+1. **A/BA overlap.** `DE→BA` relocates z80 `E`→`A`, `D`→`B`. Any z80 site holding *independent* live
+   values in `A` (accumulator) and `E`/`D` (DE bytes) collapses them — e.g.
+   `ld a,#5; ld e,#3; add a,e` would become `ld a,#5; ld a,#3; add a,a` (miscompile). The relocation is
+   valid only where `A` is dead across the DE lifetime; `isPairDead(PAIR_BA)` must now test **both A and B**.
+2. **No home for C/D/E bytes.** S1C88 has 4 byte regs (A,B,L,H); z80 uses 7. C/D/E cannot be renamed
+   (D→B / E→A collide with z80's own live A/B) — their *byte* uses must be restructured away.
+
+### Tactic — retarget the central pair abstraction, then mop up direct byte sites
+The 335 `PAIR_DE` / 154 `PAIR_BC` references mostly flow through a few helpers; fix the abstraction once
+and most call sites follow. Keep every old symbol *defined* throughout (always-green):
+1. **`_pairs[]` + `PAIR_ID`**: make the 2nd ALU pair emit `"ba"` with l_idx=`A_IDX`, h_idx=`B_IDX`
+   (introduce `PAIR_BA`; keep `PAIR_DE` as a transition alias). 3rd pair → index (`PAIR_IX`/`PAIR_IY`).
+2. **byte-selection ternaries** (`pairId==PAIR_DE ? ASMOP_E : ASMOP_C`, dense in `fetchPairLong`,
+   `getPairId`, `setupPairFromSP`, the push/pop paths): re-point to BA's bytes (`ASMOP_A`/`ASMOP_B`);
+   teach `isPairDead`/`isPairInUse` that BA = {A,B}.
+3. **EX + 16-bit moves**: `ex de,hl`→`ex ba,hl`; lean on the orthogonal `LD`s for the rest.
+4. **ABI `aopRet`/`aopArg`** (c-compiler.md): `int`→`BA`, `long`→`HL:BA` (HLBA, HL high), ptr→`HL`,
+   replacing the z80 `ASMOP_DE` / `ASMOP_DEHL` / `ASMOP_HLDE`.
+5. **direct byte C/D/E sites** (`countreg` picks, `isRegIdxPair`, the genByte ALU loops): eliminate
+   per-site → A/B/L/H/IX/IY/stack. Build + run the meter (below) after each batch; delete a symbol only
+   once it has zero uses.
+
+### Verification meter (until a real S1C88 assembler is wired)
+`scripts/check-s1c88.sh` scans emitted asm for z80-only residue (`\bde\b`, `\bbc\b`, `ex de,hl`, `iyl`,
+`iyh`, z80-only mnemonics) and prints a count — a cheap progress/regression signal for Steps 2–3.
+Follow-ups: upgrade to full instruction-legality checking against `../skiploom/src/util/s1c88.csv`, and
+resolve the **binary-handoff toolchain** (open: sdas/sdld per this doc has no S1C88 backend; skiploom is an
+existing S1C88 assembler but uses AS88 syntax, not sdas — a syntax bridge or an sdas88 backend is needed).

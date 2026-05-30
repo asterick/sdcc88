@@ -53,8 +53,12 @@ The linchpin is the scratch-asmop machinery near the top of `src/s1c88/gen.c`:
 
 Approx. site counts to clear (from the reset big-bang spike): `PAIR_DE` 334, `PAIR_BC` 153,
 `E_IDX` 146, `D_IDX` 141, `IYL/IYH_IDX` 219, `C_IDX` 86, `DE/BC_IDX` 65 → ~1144 total. **Not** a
-mechanical `BC→BA`/`DE→HL` sed: z80 code uses HL and DE together, so each site needs real analysis →
-`BA`/`HL`/`IX`/`IY`/stack.
+mechanical sed — the concrete ISA-grounded mapping (`DE→BA`, `BC→IX/IY/stack`, the C/D/E bytes
+*eliminated* not renamed, IYL/IYH dropped) and the two hazards (A/BA overlap; no byte home for C/D/E) are
+written up in **`abi-decision.md` → "Step 2: concrete codegen mapping"** — read that first. The recommended
+tactic is to retarget the central pair abstraction (`_pairs[]`, `getPairId`, `fetchPairLong`, push/pop,
+`aopRet`/`aopArg`) once, let call sites follow, then mop up the direct byte-C/D/E sites, building +
+running `check-s1c88.sh` after each batch.
 
 > A from-scratch big-bang reshape (remove all symbols at once) was tried and **reset** — it leaves the
 > build unverifiable-red for the whole grind. The dead WIP is in the reflog at **`417bed5`** and is a
@@ -64,9 +68,12 @@ mechanical `BC→BA`/`DE→HL` sed: z80 code uses HL and DE together, so each si
 ## Verify
 
 - `./scripts/dev.sh` → builds, runs `sdcc -ms1c88 --c1mode`, prints the emitted functions and `GREEN`.
-- A verification harness (assemble the output with `../skiploom` to prove it's valid S1C88) is **deferred
-  by the user** — stand it up before/while doing Step 2 for real confidence (task is implicit; it's the
-  biggest de-risker).
+- `./scripts/check-s1c88.sh [file.asm]` → **the codegen meter**: counts z80-only residue (de/bc pairs,
+  iy?/ix? half-regs, `ex de,hl`) and names the functions still carrying it. Run it after each Step-2 batch;
+  `TOTAL` should trend to 0. Baseline on a realistic 8-function input: **18** (de 14, bc 1, ex de,hl 3).
+- A full assemble-the-output harness (`../skiploom`, an AS88-syntax S1C88 assembler) remains the eventual
+  validator but needs a syntax bridge (we emit sdas style); the binary-handoff toolchain is still open
+  (see `abi-decision.md` "Step 2" tail). The meter is the interim signal.
 
 ## Map of everything
 
