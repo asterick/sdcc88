@@ -83,10 +83,34 @@ each deferred:
 6. **Segment/section names, assembler/linker command strings** are placeholder z80 values; the real Epson
    `as88`/`lk88`/`lc88` handoff (see [toolchain.md](toolchain.md)) is a separate open decision.
 
-## Open questions for the codegen milestone
+## Codegen milestone — decided design
 
-- The true `s1c88_regs[]`/`*_IDX` reshape and the corresponding `ralloc2.cc` rework.
-- Epson segment/section names ([assembler.md](assembler.md)) and the generic-pointer tag scheme.
-- 3-byte far-pointer code generation and the memory-model (`_near`/`_far`) story.
-- S1C88 instruction selection, mnemonics, and peephole rules (replace the z80 ones).
-- Real assembler/linker handoff (Epson `as88` text, or skiploom — see [toolchain.md](toolchain.md)).
+**Register model: Faithful BA+HL** (decided). Reshape the z80 register file to the true S1C88 set:
+
+| Class | Registers | SDCC `*_IDX` (planned) | Notes |
+|-------|-----------|------------------------|-------|
+| byte GPRs (`num_regs`=4) | `A`, `B`, `L`, `H` | `A_IDX=0, B_IDX, L_IDX, H_IDX` | tree-decomposition allocator handles these 4 |
+| condition | carry | `CND_IDX` | bool-in-carry, as z80 |
+| GP pairs | `BA`(B:A), `HL`(H:L) | `BA_IDX, HL_IDX` | low-byte-first, adjacent: BA=(A,B), HL=(L,H) |
+| index pairs | `IX`, `IY` | `IX_IDX, IY_IDX` | 16-bit, **not** byte-addressable; `(ix+d)`/`(iy+d)` |
+
+Key differences from the z80 base to work through in `ralloc.c`/`ralloc.h`/`ralloc2.cc`/`gen.c`:
+- **Drop `C`, `D`, `E` and the `DE` pair** — S1C88 has no DE-equivalent; the z80 codegen uses BC/DE as
+  scratch pairs, so those paths must be rewritten to use BA/HL/stack.
+- **`A` is the low byte of `BA`** (unlike z80, where A is a standalone accumulator outside all GP pairs).
+  The allocator must know that using `BA` clobbers `A` and vice-versa — this is the core `ralloc2.cc`
+  rework. BA keeps the low-first/adjacent layout the z80 allocator already assumes (A=0, B=1).
+- **Drop `IYL`/`IYH`** — S1C88 `IX`/`IY` are not byte-addressable.
+
+**Asm output: keep SDCC sdas style** (decided). Emit sdas-dialect assembly (`.area`/`.module`, lowercase
+mnemonics, `(hl)`/`(ix+d)` addressing) and target the **sdas/sdld** assembler+linker family for the
+binary handoff — least divergence from the z80 base, self-contained. S1C88 mnemonics carry over from z80
+where they match (`ld`, `add`, `adc`, `sub`, `sbc`, `and`, `or`, `xor`, `inc`, `dec`, `push`, `pop`,
+`ret`, `call`, `jp`); S1C88-specific selection (`ba` ops, `jrs`/`jrl`/`cars`/`carl`, `rete`, `[br:ll]`,
+`mlt`/`div`, `pack`/`upck`, `ex`, `swap`) replaces the z80-only forms.
+
+Still deferred within the codegen milestone:
+- Epson segment/section names and the generic-pointer tag scheme.
+- 3-byte far-pointer code generation and the `_near`/`_far` memory-model story.
+- Peephole rules retargeting (replace the z80 `peeph*.def`).
+- Single-port cleanup (strip the 9 unregistered z80 PORT structs; entangled with `_parseOptions`).
