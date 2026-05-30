@@ -237,7 +237,7 @@ bool z80_regs_preserved_in_calls_from_current_function[IYH_IDX + 1];
 
 static const char *aopGet (asmop *aop, int offset, bool bit16);
 
-static struct asmop asmop_a, asmop_b, asmop_c, asmop_d, asmop_e, asmop_h, asmop_l, asmop_iyh, asmop_iyl, asmop_hl, asmop_de, asmop_bc, asmop_ba, asmop_iy, asmop_dehl, asmop_hlde, asmop_hlbc, asmop_debc, asmop_zero, asmop_one, asmop_mone;
+static struct asmop asmop_a, asmop_b, asmop_c, asmop_d, asmop_e, asmop_h, asmop_l, asmop_iyh, asmop_iyl, asmop_hl, asmop_de, asmop_bc, asmop_ba, asmop_iy, asmop_dehl, asmop_hlde, asmop_hlbc, asmop_debc, asmop_hlba, asmop_zero, asmop_one, asmop_mone;
 static struct asmop *const ASMOP_A = &asmop_a;
 static struct asmop *const ASMOP_B = &asmop_b;
 static struct asmop *const ASMOP_C = &asmop_c;
@@ -256,6 +256,7 @@ static struct asmop *const ASMOP_DEHL = &asmop_dehl;
 static struct asmop *const ASMOP_HLDE = &asmop_hlde;
 static struct asmop *const ASMOP_HLBC = &asmop_hlbc;
 static struct asmop *const ASMOP_DEBC = &asmop_debc;
+static struct asmop *const ASMOP_HLBA = &asmop_hlba;   /* S1C88 long layout HL(high):BA(low) */
 static struct asmop *const ASMOP_ZERO = &asmop_zero;
 static struct asmop *const ASMOP_ONE = &asmop_one;
 static struct asmop *const ASMOP_MONE = &asmop_mone;
@@ -302,6 +303,7 @@ z80_init_asmops (void)
   z80_init_reg_asmop(&asmop_iy, (const signed char[]){IYL_IDX, IYH_IDX, -1});
   z80_init_reg_asmop(&asmop_hlbc, (const signed char[]){C_IDX, B_IDX, L_IDX, H_IDX, -1});
   z80_init_reg_asmop(&asmop_debc, (const signed char[]){C_IDX, B_IDX, E_IDX, D_IDX, -1});
+  z80_init_reg_asmop(&asmop_hlba, (const signed char[]){A_IDX, B_IDX, L_IDX, H_IDX, -1});   // long = BA(low):HL(high)
   
   asmop_zero.type = AOP_LIT;
   asmop_zero.aopu.aop_lit = constVal ("0");
@@ -2214,7 +2216,7 @@ aopRet (sym_link *ftype)
         return ASMOP_BA;  // S1C88: int/short returned in BA (was z80 DE)
     case 3:
     case 4:
-      return (IS_SM83 ? ASMOP_DEBC : ASMOP_HLDE);   
+      return (IS_SM83 ? ASMOP_DEBC : ASMOP_HLBA);  // S1C88: long returned in HL:BA (was z80 HL:DE)
     default:
       return 0;
     }
