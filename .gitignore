@@ -1,0 +1,12 @@
+# Native build (build.sh work dir: fetched SDCC tree + tarball)
+/build/
+
+# Claude Code local (personal) settings
+.claude/settings.local.json
+
+# Editor / OS
+*.swp
+*~
+.DS_Store
+.idea/
+.vscode/

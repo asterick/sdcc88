@@ -1,0 +1,7 @@
+VPATH        = @srcdir@
+srcdir       = @srcdir@
+top_builddir = @top_builddir@
+top_srcdir   = @top_srcdir@
+
+# Make all in this directory (clone of SDCC's per-port Makefile.in; the real work is in ../port.mk).
+include $(srcdir)/../port.mk
