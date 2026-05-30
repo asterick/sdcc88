@@ -100,13 +100,16 @@ reg_info sm83_regs[] = {
 };
 
 reg_info z80_regs[] = {
+  /* Array position MUST equal the *_IDX ordinal: regsZ80[idx] and the Boost
+     allocator both index by it.  Order matches ralloc.h — A,B,L,H, then the
+     soon-to-be-removed z80 scratch regs C,D,E,IYL,IYH, then the carry. */
   {REG_GPR, A_IDX, "a", 1},
-  {REG_GPR, C_IDX, "c", 1},
   {REG_GPR, B_IDX, "b", 1},
-  {REG_GPR, E_IDX, "e", 1},
-  {REG_GPR, D_IDX, "d", 1},
   {REG_GPR, L_IDX, "l", 1},
   {REG_GPR, H_IDX, "h", 1},
+  {REG_GPR, C_IDX, "c", 1},
+  {REG_GPR, D_IDX, "d", 1},
+  {REG_GPR, E_IDX, "e", 1},
   {REG_GPR, IYL_IDX, "iyl", 1},
   {REG_GPR, IYH_IDX, "iyh", 1},
   {REG_CND, CND_IDX, "c", 1}
@@ -128,7 +131,7 @@ regWithIdx (int idx)
 {
   int i;
 
-  for (i = C_IDX; i < _G.nRegs; i++)
+  for (i = A_IDX; i < _G.nRegs; i++)
     {
       if (regsZ80[i].rIdx == idx)
         {
@@ -557,7 +560,7 @@ freeAllRegs ()
 
   D (D_ALLOC, ("freeAllRegs: running.\n"));
 
-  for (i = C_IDX; i < _G.nRegs; i++)
+  for (i = A_IDX; i < _G.nRegs; i++)
     regsZ80[i].isFree = 1;
 }
 

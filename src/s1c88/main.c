@@ -584,8 +584,8 @@ _finaliseOptions (void)
         break;
       }
 
-  if (IY_RESERVED)
-    port->num_regs -= 2;
+  /* S1C88: IX/IY are index-only (never byte-allocated), so num_regs stays at
+     A,B,L,H regardless of the z80 --reserve-iy option. */
 
   _setValues ();
 }
@@ -937,7 +937,7 @@ PORT s1c88_port =
   GPOINTER,                     /* treat unqualified pointers as "generic" pointers */
   1,                            /* reset labelKey to 1 */
   1,                            /* globals & local statics allowed */
-  9,                            /* Number of registers handled in the tree-decomposition-based register allocator in SDCCralloc.hpp */
+  4,                            /* num_regs: S1C88 byte GPRs A,B,L,H (tree-decomposition allocator in SDCCralloc.hpp) */
   PORT_MAGIC
 };
 

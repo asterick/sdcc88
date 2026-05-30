@@ -259,7 +259,8 @@ static struct asmop *const ASMOP_ZERO = &asmop_zero;
 static struct asmop *const ASMOP_ONE = &asmop_one;
 static struct asmop *const ASMOP_MONE = &asmop_mone;
 
-static asmop *asmopregs[] = { &asmop_a, &asmop_c, &asmop_b, &asmop_e, &asmop_d, &asmop_l, &asmop_h, &asmop_iyl, &asmop_iyh };
+/* Indexed by register ordinal (asmopregs[idx]); order matches ralloc.h. */
+static asmop *asmopregs[] = { &asmop_a, &asmop_b, &asmop_l, &asmop_h, &asmop_c, &asmop_d, &asmop_e, &asmop_iyl, &asmop_iyh };
 
 // Init aop as a an asmop for data in registers, as given by the -1-terminated array regidx.
 static void

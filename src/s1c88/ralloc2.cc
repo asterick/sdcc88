@@ -32,13 +32,16 @@ extern "C"
   bool should_omit_frame_ptr;
 }
 
+/* Must match the ralloc.h *_IDX ordinals: A,B,L,H are the allocatable S1C88
+   byte GPRs (indices 0-3); C,D,E,IYL,IYH (4-8) are z80 scratch, never assigned
+   by the allocator (they are >= port->num_regs == 4). */
 #define REG_A 0
-#define REG_C 1
-#define REG_B 2
-#define REG_E 3
-#define REG_D 4
-#define REG_L 5
-#define REG_H 6
+#define REG_B 1
+#define REG_L 2
+#define REG_H 3
+#define REG_C 4
+#define REG_D 5
+#define REG_E 6
 #define REG_IYL 7
 #define REG_IYH 8
 
