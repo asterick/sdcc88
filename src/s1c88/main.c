@@ -52,54 +52,14 @@ static char _z80_defaultRules[] = {
 #include "peeph-z80.rul"
 };
 
-static char _r2k_defaultRules[] = {
-#include "peeph.rul"
-#include "peeph-r2k.rul"
-};
 
-static char _tlcs90_defaultRules[] = {
-#include "peeph.rul"
-#include "peeph-tlcs90.rul"
-};
 
-static char _sm83_defaultRules[] = {
-#include "peeph-sm83.rul"
-#include "peeph.rul"
-};
 
-static char _ez80_z80_defaultRules[] = {
-#include "peeph.rul"
-#include "peeph-z80.rul"
-#include "peeph-ez80_z80.rul"
-};
 
-static char _z80n_defaultRules[] = {
-#include "peeph.rul"
-#include "peeph-z80.rul"
-#include "peeph-z80n.rul"
-};
 
 
 Z80_OPTS z80_opts;
 
-static OPTION _z80_like_options[] = {
-  {0, OPTION_CALLEE_SAVES_BC, &z80_opts.calleeSavesBC, "Force a called function to always save BC"},
-  {0, OPTION_PORTMODE,        NULL, "Determine PORT I/O mode (z80/z180)"},
-  {0, OPTION_BO,              NULL, "<num> use code bank <num>"},
-  {0, OPTION_BA,              NULL, "<num> use data bank <num>"},
-  {0, OPTION_ASM,             NULL, "Define assembler name (rgbds/asxxxx/isas/z80asm/gas)"},
-  {0, OPTION_CODE_SEG,        &options.code_seg, "<name> use this name for the code segment", CLAT_STRING},
-  {0, OPTION_CONST_SEG,       &options.const_seg, "<name> use this name for the const segment", CLAT_STRING},
-  {0, OPTION_DATA_SEG,        &options.data_seg, "<name> use this name for the data segment", CLAT_STRING},
-  {0, OPTION_NO_STD_CRT0,     &options.no_std_crt0, "Do not link default crt0.rel"},
-  {0, OPTION_RESERVE_IY,      &z80_opts.reserveIY, "Do not use IY (incompatible with --fomit-frame-pointer)"},
-  {0, OPTION_FRAMEPOINTER,    &z80_opts.noOmitFramePtr, "Do not omit frame pointer"},
-  {0, OPTION_EMIT_EXTERNS,    NULL, "Emit externs list in generated asm"},
-  {0, OPTION_LEGACY_BANKING,  &z80_opts.legacyBanking, "Use legacy method to call banked functions"},
-  {0, OPTION_NMOS_Z80,        &z80_opts.nmosZ80, "Generate workaround for NMOS Z80 when saving IFF2"},
-  {0, OPTION_SDCCCALL,        &options.sdcccall, "Set ABI version for default calling convention", CLAT_INTEGER},
-  {0, NULL}
-};
 
 static OPTION _z80_options[] = {
   {0, OPTION_CALLEE_SAVES_BC, &z80_opts.calleeSavesBC, "Force a called function to always save BC"},
@@ -121,19 +81,6 @@ static OPTION _z80_options[] = {
   {0, NULL}
 };
 
-static OPTION _sm83_options[] = {
-  {0, OPTION_BO,              NULL, "<num> use code bank <num>"},
-  {0, OPTION_BA,              NULL, "<num> use data bank <num>"},
-  {0, OPTION_ASM,             NULL, "Define assembler name (rgbds/asxxxx/isas/z80asm/gas)"},
-  {0, OPTION_CALLEE_SAVES_BC, &z80_opts.calleeSavesBC, "Force a called function to always save BC"},
-  {0, OPTION_CODE_SEG,        &options.code_seg, "<name> use this name for the code segment", CLAT_STRING},
-  {0, OPTION_CONST_SEG,       &options.const_seg, "<name> use this name for the const segment", CLAT_STRING},
-  {0, OPTION_DATA_SEG,        &options.data_seg, "<name> use this name for the data segment", CLAT_STRING},
-  {0, OPTION_NO_STD_CRT0,     &options.no_std_crt0, "Do not link default crt0.rel"},
-  {0, OPTION_LEGACY_BANKING,  &z80_opts.legacyBanking, "Use legacy method to call banked functions"},
-  {0, OPTION_SDCCCALL,        &options.sdcccall, "Set ABI version for default calling convention", CLAT_INTEGER},
-  {0, NULL}
-};
 
 typedef enum
 {
@@ -174,31 +121,7 @@ static char *_keywords[] = {
   NULL
 };
 
-static char *_keywordsgb[] = {
-  "sfr",
-  "nonbanked",
-  "banked",
-  "at",
-  "_naked",
-  "critical",
-  "interrupt",
-  "z88dk_callee",
-  "smallc",
-  NULL
-};
 
-static char *_keywordstlcs90[] = {
-  "nonbanked",
-  "banked",
-  "at",
-  "_naked",
-  "critical",
-  "interrupt",
-  "z88dk_fastcall",
-  "z88dk_callee",
-  "smallc",
-  NULL
-};
 
 extern PORT s1c88_port;
 
@@ -236,110 +159,14 @@ _z80_init (void)
   z80_init_asmops ();
 }
 
-static void
-_z180_init (void)
-{
-  z80_opts.sub = SUB_Z180;
-  switch (_G.asmType)
-    {
-    case ASM_TYPE_GAS:
-      asm_addTree (&_gas_z80);
-      break;
-    default:
-      asm_addTree (&_asxxxx_z80);
-      break;
-    }
 
-  regsZ80 = z80_regs;
-  z80_init_asmops ();
-}
 
-static void
-_r2k_init (void)
-{
-  z80_opts.sub = SUB_R2K;
-  asm_addTree (&_asxxxx_r2k);
 
-  regsZ80 = z80_regs;
-  z80_init_asmops ();
-}
 
-static void
-_r2ka_init (void)
-{
-  z80_opts.sub = SUB_R2KA;
-  asm_addTree (&_asxxxx_r2k);
 
-  regsZ80 = z80_regs;
-  z80_init_asmops ();
-}
 
-static void
-_r3ka_init (void)
-{
-  z80_opts.sub = SUB_R3KA;
-  asm_addTree (&_asxxxx_r2k);
 
-  regsZ80 = z80_regs;
-  z80_init_asmops ();
-}
 
-static void
-_sm83_init (void)
-{
-  z80_opts.sub = SUB_SM83;
-
-  regsZ80 = sm83_regs;
-  z80_init_asmops ();
-}
-
-static void
-_tlcs90_init (void)
-{
-  z80_opts.sub = SUB_TLCS90;
-  asm_addTree (&_asxxxx_z80);
-
-  regsZ80 = z80_regs;
-  z80_init_asmops ();
-}
-
-static void
-_ez80_z80_init (void)
-{
-  z80_opts.sub = SUB_EZ80_Z80;
-  switch (_G.asmType)
-    {
-    case ASM_TYPE_GAS:
-      asm_addTree (&_gas_z80);
-      break;
-    default:
-      asm_addTree (&_asxxxx_z80);
-      break;
-    }
-
-  regsZ80 = z80_regs;
-  z80_init_asmops ();
-}
-
-static void
-_z80n_init (void)
-{
-  z80_opts.sub = SUB_Z80N;
-  asm_addTree (&_asxxxx_z80);
-
-  regsZ80 = z80_regs;
-  z80_init_asmops ();
-}
-
-static void
-_r800_init (void)
-{
-  z80_opts.sub = SUB_R800;
-  asm_addTree (&_asxxxx_z80);
-
-  regsZ80 = z80_regs;
-  z80_init_asmops ();
-}
 
 static void
 _reset_regparm (struct sym_link *ftype)
@@ -552,58 +379,8 @@ _process_pragma (const char *s)
   return process_pragma_tbl (pragma_tbl, s);
 }
 
-static const char *_sm83_rgbasmCmd[] = {
-  "rgbasm", "-o$1.rel", "$1.asm", NULL
-};
 
-static const char *_sm83_rgblinkCmd[] = {
-  "xlink", "-tg", "-n$1.sym", "-m$1.map", "-zFF", "$1.lnk", NULL
-};
 
-static void
-_sm83_rgblink (void)
-{
-  FILE *lnkfile;
-  struct dbuf_s lnkFileName;
-  char *buffer;
-
-  dbuf_init (&lnkFileName, PATH_MAX);
-
-  /* first we need to create the <filename>.lnk file */
-  dbuf_append_str (&lnkFileName, dstFileName);
-  dbuf_append_str (&lnkFileName, ".lk");
-  if (!(lnkfile = fopen (dbuf_c_str (&lnkFileName), "w")))
-    {
-      werror (E_OUTPUT_FILE_OPEN_ERR, dbuf_c_str (&lnkFileName), strerror (errno));
-      dbuf_destroy (&lnkFileName);
-      exit (1);
-    }
-  dbuf_destroy (&lnkFileName);
-
-  fprintf (lnkfile, "[Objects]\n");
-
-  fprintf (lnkfile, "%s.rel\n", dstFileName);
-
-  fputStrSet (lnkfile, relFilesSet);
-
-  fprintf (lnkfile, "\n[Libraries]\n");
-  /* additional libraries if any */
-  fputStrSet (lnkfile, libFilesSet);
-
-  fprintf (lnkfile, "\n[Output]\n" "%s.gb", dstFileName);
-
-  fclose (lnkfile);
-
-  buffer = buildCmdLine (port->linker.cmd, dstFileName, NULL, NULL, NULL, NULL);
-  /* call the linker */
-  if (sdcc_system (buffer))
-    {
-      Safe_free (buffer);
-      perror ("Cannot exec linker");
-      exit (1);
-    }
-  Safe_free (buffer);
-}
 
 static bool
 _parseOptions (int *pargc, char **argv, int *i)
@@ -1009,9 +786,6 @@ static const char *_z80LinkCmd[] = {
   "sdldz80", "-nf", "$1", "$L", NULL
 };
 
-static const char *_gbLinkCmd[] = {
-  "sdldgb", "-nf", "$1", "$L", NULL
-};
 /*
 static const char *_gnuLdCmd[] = {
   "z80-elf-ld", "", "$1", NULL
@@ -1022,17 +796,8 @@ static const char *_z80AsmCmd[] = {
   "sdasz80", "$l", "$3", "$2", "$1.asm", NULL
 };
 
-static const char *_r2kAsmCmd[] = {
-  "sdasrab", "$l", "$3", "$2", "$1.asm", NULL
-};
 
-static const char *_gbAsmCmd[] = {
-  "sdasgb", "$l", "$3", "$2", "$1.asm", NULL
-};
 
-static const char *_tlcs90AsmCmd[] = {
-  "sdastlcs90", "$l", "$3", "$2", "$1.asm", NULL
-};
 /*
 static const char *_GnuAsmCmd[] = {
   "z80-elf-as", "$l", "$3", "$2", "$1.asm", NULL
@@ -1040,15 +805,6 @@ static const char *_GnuAsmCmd[] = {
 */
 static const char *const _crt[] = { "crt0.rel", NULL, };
 static const char *const _libs_z80[] = { "z80", NULL, };
-static const char *const _libs_z180[] = { "z180", NULL, };
-static const char *const _libs_r2k[] = { "r2k", NULL, };
-static const char *const _libs_r2ka[] = { "r2ka", NULL, };
-static const char *const _libs_r3ka[] = { "r3ka", NULL, };
-static const char *const _libs_tlcs90[] = { "tlcs90", NULL, };
-static const char *const _libs_sm83[] = { "sm83", NULL, };
-static const char *const _libs_ez80_z80[] = { "ez80_z80", NULL, };
-static const char *const _libs_z80n[] = { "z80n", NULL, };
-static const char *const _libs_r800[] = { "r800", NULL, };
 
 /* Globals */
 PORT s1c88_port =
