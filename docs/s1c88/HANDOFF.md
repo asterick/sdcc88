@@ -36,10 +36,17 @@ Step 1 of the reshape is **DONE** (commit `b606833`); current action is **Step 2
      `num_regs=4`). Smoke tests confirm A,B,L,H-only allocation. **Known limitation:** BA-pair formation
      is still disabled (the cost fn forbids A in multi-byte vars), so ints use HL only — enable BA once
      gen.c can emit BA-pair code (part of Step 2).
-   - **Step 2 (task #18):** rewrite the `DE`/`BC` scratch uses in `gen.c` **function-by-function**,
-     running `./scripts/dev.sh` after each batch. Map z80 `BC`→`BA`(B:A); the combined long asmops
-     `DEHL`/`HLDE`/`HLBC`/`DEBC` → S1C88 `HL:BA` (long return per the ABI); drop `asmop_iyl`/`iyh`
-     (IX/IY aren't byte-addressable). Delete each register symbol only once it has **no** remaining uses.
+   - **Step 2 (task #18) — IN PROGRESS:** retarget gen.c off z80 DE/BC onto S1C88 BA/HL/IX/IY per
+     `abi-decision.md` → "Step 2". **Done so far — the return-value ABI** (commits `d89db99`, `498ad12`):
+     `aopRet` int/short→`BA` (new `asmop_ba` = A:B), long/float→`HL:BA` (new `asmop_hlba` = {A,B,L,H});
+     char→`A` was already right. `z80IsReturned`/`z80IsRegArg` are data-driven off aopRet/aopArg so they
+     followed automatically. Verified end-to-end (`add1`→`inc hl;ld b,h;ld a,l;ret`; `rl`→HL:BA; a caller
+     reads the result from BA) and meter-checked. **Next, in order:** (a) the **arg ABI** (`aopArg`:
+     2nd-arg `DE`, long-arg `HLDE` → BA/HLBA — bigger, it also changes caller-side setup in genCall/genSend);
+     (b) the **central DE-scratch retarget** (`_pairs[]`, `fetchPairLong`'s `PAIR_DE?ASMOP_E:ASMOP_C`
+     ternaries, `ex de,hl`→`ex ba,hl`, push/pop) — clears the bulk of internal `de` residue; (c) mop up
+     direct byte-C/D/E sites; drop `asmop_iyl/iyh`. Run `scripts/check-s1c88.sh` after each batch
+     (realistic-input meter now ~11, was 18 at Step 1; pure return-ABI tests are at 0).
    - **Step 3 (task #19):** finish emission — S1C88 register names + any S1C88-specific mnemonics that
      differ from z80 (sdas style). Verify the smoke-test output looks like valid S1C88.
 3. Commit **green** checkpoints as you go; clearly label any intentionally-red WIP.
