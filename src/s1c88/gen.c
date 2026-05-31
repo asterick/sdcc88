@@ -2222,6 +2222,71 @@ aopRet (sym_link *ftype)
     }
 }
 
+// --- S1C88 Epson parameter passing (c-compiler.md §1.2.15 / §1.3.2) ------------------------------
+// Arguments are assigned to registers by descending priority *per type*, with the byte-register file
+// shared across the word pairs (placing a value in BA consumes A and B; in HL consumes L and H).
+// aopArg() is stateless, so we replay args 1..i, tracking which byte registers (A,B,L,H) have already
+// been consumed, and return the asmop assigned to arg i — or 0 when it falls through to the stack.
+//
+// Phase 1 supports only the byte-addressable registers (BA,HL for int; A,L,H,B for char; HL,BA for
+// near pointers; HLBA for long/float). The Epson scheme would also use IX,IY (int 3rd/4th, near-ptr
+// 1st/2nd), YP,XP (char 3rd/4th) and the far-pointer pairs; those, plus any overflow, go on the stack
+// for now and are added in later phases.
+
+// Bitmask (over the A_IDX/B_IDX/L_IDX/H_IDX ordinals) of the byte registers a register asmop occupies.
+static unsigned
+aopArgByteMask (const asmop *aop)
+{
+  unsigned m = 0;
+  for (int k = 0; k < aop->size; k++)
+    m |= 1u << aop->aopu.aop_reg[k]->rIdx;
+  return m;
+}
+
+static asmop *
+aopArgRegS1C88 (sym_link *ftype, int i)
+{
+  static asmop *const list_char[] = { ASMOP_A, ASMOP_L, ASMOP_H, ASMOP_B };  // Epson also: YP,XP
+  static asmop *const list_int[]  = { ASMOP_BA, ASMOP_HL };                  // Epson also: IX,IY
+  static asmop *const list_nptr[] = { ASMOP_HL, ASMOP_BA };                  // Epson also: IY,IX
+  static asmop *const list_long[] = { ASMOP_HLBA };                          // Epson also: IYIX
+
+  unsigned consumed = 0;
+  value *arg = FUNC_ARGS (ftype);
+
+  for (int j = 1; arg; j++, arg = arg->next)
+    {
+      asmop *const *list = 0;
+      int n = 0;
+
+      if (!IS_STRUCT (arg->type))          // structs/unions are always passed on the stack
+        switch (getSize (arg->type))
+          {
+          case 1: list = list_char; n = 4; break;
+          case 2: if (IS_PTR (arg->type)) { list = list_nptr; n = 2; } else { list = list_int; n = 2; } break;
+          case 4: list = list_long; n = 1; break;
+          // size 3 (far pointer) and anything larger -> stack (handled in a later phase)
+          }
+
+      asmop *chosen = 0;
+      for (int k = 0; k < n; k++)
+        {
+          unsigned m = aopArgByteMask (list[k]);
+          if (!(m & consumed))
+            {
+              chosen = list[k];
+              consumed |= m;
+              break;
+            }
+        }
+
+      if (j == i)
+        return chosen;                     // 0 => arg i is passed on the stack
+    }
+
+  return 0;
+}
+
 // Get asmop for registers containing a parameter
 // Returns 0 if the parameter is passed on the stack
 static asmop *
@@ -2270,39 +2335,7 @@ aopArg (sym_link *ftype, int i)
       if (IS_STRUCT (arg->type))
         return 0;
 
-      if (i == 1 && getSize (arg->type) == 1)
-        return ASMOP_A;
-      if (i == 1 && getSize (arg->type) == 2)
-        return (IS_SM83 ? ASMOP_DE : ASMOP_HL);
-      if (i == 1 && getSize (arg->type) == 4)
-        return (IS_SM83 ? ASMOP_DEBC : ASMOP_HLDE);
-
-      if (IS_SM83 && i == 2 && aopArg (ftype, 1) == ASMOP_A && getSize (arg->type) == 1)
-        return ASMOP_E;
-      if (IS_SM83 && i == 2 && aopArg (ftype, 1) == ASMOP_A && getSize (arg->type) == 2)
-        return ASMOP_DE;
-  
-      if (IS_SM83 && i == 2 && aopArg (ftype, 1) == ASMOP_DE && getSize (arg->type) == 1)
-        return ASMOP_A;
-      if (IS_SM83 && i == 2 && aopArg (ftype, 1) == ASMOP_DE && getSize (arg->type) == 2)
-        return ASMOP_BC;
-
-      if (!IS_SM83 && i == 2 && aopArg (ftype, 1) == ASMOP_A && getSize (arg->type) == 1)
-        return ASMOP_L;
-
-      if ((IS_Z80 || IS_Z180 || IS_Z80N || IS_R800) && i == 2 && aopArg (ftype, 1) == ASMOP_A && getSize (arg->type) == 2)
-        return ASMOP_DE;
-      if ((IS_Z80 || IS_Z180 || IS_Z80N || IS_R800) && i == 2 && aopArg (ftype, 1) == ASMOP_HL && getSize (arg->type) == 2)
-        return ASMOP_DE;
-
-      if ((IS_RAB || IS_TLCS90 || IS_EZ80_Z80) && i == 2 && aopArg (ftype, 1) == ASMOP_A && getSize (arg->type) == 2)
-        return ASMOP_HL;
-      if ((IS_RAB || IS_TLCS90 || IS_EZ80_Z80) && i == 2 && aopArg (ftype, 1) == ASMOP_HL && getSize (arg->type) == 1)
-        return ASMOP_A;
-      if ((IS_RAB || IS_TLCS90 || IS_EZ80_Z80) && i == 2 && aopArg (ftype, 1) == ASMOP_HLDE && getSize (arg->type) == 1)
-        return ASMOP_A;
-
-      return 0;
+      return aopArgRegS1C88 (ftype, i);   // S1C88 Epson register-priority consumption model
     }
 
   return 0;
