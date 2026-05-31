@@ -64,12 +64,15 @@ file suffix and invoking the stages in order — analogous to `gcc` driving `cpp
 - **Motorola S-records** — `S0`/`S2`/`S8` with 3-byte (24-bit) addresses for the S1C88's address space;
   layout + checksum in [utilities.md](utilities.md) (Appendix I).
 
-## Relationship to this project (skip-c) and skiploom
+## Relationship to this project (skip-c)
 
-- **skip-c** currently emits assembly only; the assembler/linker handoff is an open decision (see
-  `../../CLAUDE.md`). The Epson chain (`as88`/`lk88`/`lc88`) and its IEEE-695/S-record outputs are one
-  candidate consumer; matching `as88` syntax (see [assembler.md](assembler.md)) is what an emitted-`.src`
-  path would require.
-- **skiploom** (`../../../skiploom`) is a backward-compatible reimplementation of the Epson
-  assembler/linker (AS88 syntax). It is a cross-check and an alternate consumer, not a source for these
-  docs.
+- **Decided (2026-05-31): skip-c targets SDCC's own `sdas`/`sdld`** (its in-tree ASxxxx fork), not the
+  Epson `as88`/`lk88`/`lc88` chain. skip-c already emits sdas-dialect assembly; we **add an S1C88 backend
+  to `sdas`** — `build/sdcc-4.5.0/sdas/as88/` (binary `sdas88`), modeled on `sdas/asz80/`. That `sdas88`
+  doubles as the **codegen validator** (assemble emitted `.asm` as-is). See
+  [`abi-decision.md`](abi-decision.md) → "Toolchain & validator". (Note: our `sdas88` ≠ Epson `as88`; the
+  `sdas` prefix disambiguates.)
+- The **Epson chain** (`as88`/`lk88`/`lc88`, IEEE-695/S-record) and these docs remain the **authoritative
+  ISA/ABI reference**, but are no longer the build target.
+- **skiploom** (`../../../skiploom`) — a JS reimplementation of the Epson AS88 assembler/linker — stays an
+  **independent ISA cross-check** only (its opcode table `src/util/s1c88.csv`), not the toolchain.

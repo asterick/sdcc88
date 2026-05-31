@@ -220,9 +220,31 @@ Until phases 2-3 land the ABI diverges from Epson for args that need IX/IY/YP/XP
 lower-priority byte reg). This is safe — the convention is skip-c-internal (caller+callee both read
 `aopArg`); there is no Epson-object interop yet.
 
-### Verification meter (until a real S1C88 assembler is wired)
+### Verification meter (interim, until the assembler validates output)
 `scripts/check-s1c88.sh` scans emitted asm for z80-only residue (`\bde\b`, `\bbc\b`, `ex de,hl`, `iyl`,
-`iyh`, z80-only mnemonics) and prints a count — a cheap progress/regression signal for Steps 2–3.
-Follow-ups: upgrade to full instruction-legality checking against `../skiploom/src/util/s1c88.csv`, and
-resolve the **binary-handoff toolchain** (open: sdas/sdld per this doc has no S1C88 backend; skiploom is an
-existing S1C88 assembler but uses AS88 syntax, not sdas — a syntax bridge or an sdas88 backend is needed).
+`iyh`, z80-only mnemonics) and prints a count — a cheap progress/regression signal for Steps 2–3. It
+catches wrong *register names*, not wrong *encodings/flags/sizes* — the assembler validator (below) does.
+
+## Toolchain & validator: target sdas / sdld (decided 2026-05-31)
+
+**Decision:** skip-c's binary handoff is **SDCC's own `sdas`/`sdld`** (its in-tree fork of the ASxxxx
+cross-assembler suite — the toolchain almost every SDCC port uses, and the dialect skip-c already emits).
+**We retarget them for the S1C88** rather than bridging to an external assembler. `../skiploom` (AS88) is
+*not* the toolchain; its opcode table (`src/util/s1c88.csv`) stays only an independent ISA cross-check
+(per `CLAUDE.md`).
+
+Concretely:
+- **Assembler — add an `sdas/as88/` backend** modeled on `build/sdcc-4.5.0/sdas/asz80/` (`z80.h`,
+  `z80adr.c` addressing modes, `z80mch.c` the opcode/encoding table, `z80pst.c` mnemonics). This holds the
+  real S1C88 encodings (incl. the `CE`/`CF` 2nd-page prefix scheme; see `instruction-set.md` App. A and
+  the skiploom CSV as cross-check). Built incrementally — start with the instruction subset the codegen
+  currently emits and grow it alongside the codegen.
+- **Linker — `sdld`** is largely architecture-independent (the `.rel` relocatable format is generic);
+  retarget is mostly registering the S1C88 target + any arch-specific bits.
+- **The `as88` IS the validator:** assemble the emitted `.asm`/`.src` as-is (sdas syntax — no bridge),
+  wired into `scripts/dev.sh`/`check-s1c88.sh` so every build proves the output is legal S1C88 and catches
+  encoding/size/flag mistakes the meter can't.
+
+Note: the in-compiler `z80instructionSize()` (peep.c) + peephole `.def` rules carry their own S1C88
+instruction knowledge and must be taught the S1C88 forms separately — independent of which assembler
+consumes the output.
