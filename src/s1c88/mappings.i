@@ -51,7 +51,7 @@ static const ASM_MAPPING _asxxxx_z80_mapping[] = {
     { "*ixx", "%d (ix)" },
     { "*iyx", "%d (iy)" },
     { "*hl", "(hl)" },
-    { "jphl", "jp (hl)" },
+    { "jphl", "jp hl" },
     { "di", "di" },
     { "ei", "ei" },
     { "ldahli",
@@ -76,8 +76,7 @@ static const ASM_MAPPING _asxxxx_z80_mapping[] = {
     { "mems", "(%s)" },
     { "enter",
       "push\tix\n"
-      "ld\tix,#0\n"
-      "add\tix,sp" },
+      "ld\tix,sp" },
     { "enters",
       "call\t___sdcc_enter_ix\n" },
     { "pusha",
