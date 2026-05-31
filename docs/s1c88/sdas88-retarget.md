@@ -1,9 +1,18 @@
 # sdas88 — retargeting the assembler backend (z80 clone → real S1C88)
 
-> **Status:** `sdas/as88/` builds `bin/sdas88` but still encodes **z80** (it's a clone of `sdas/asz80/`).
-> This is the spec for retargeting its tables/encoder to the S1C88 ISA. Build with
+> **Status:** `sdas/as88/` builds `bin/sdas88` and encodes **real S1C88** for the **register/immediate
+> subset (v0, byte-verified vs App. A — commit `16a9bd4`)**: `ld8`/`ld16` (reg-reg, reg-#imm, rr-rr),
+> 8-bit + 16-bit ALU, `inc`/`dec`, `push`/`pop`, `ex`, `ret`/`nop`. It already works as a validator
+> (`add1` codegen → `50 59 91 4B 42 F8`; the invalid z80-ism `sub a,l` is rejected). **Next: the
+> memory-indirect operands** (`(hl)`/`(ix+d)`/`(hhll)`), the rest of the LD/ALU memory forms, and the
+> branches (`jrs`/`jrl`/`cars`/`carl`), then wire into `check-s1c88.sh`. Build with
 > `scripts/build-sdas.sh as88`. Authority: [`instruction-set.md`](instruction-set.md) (App. A opcode map
 > + the `CE`/`CF` prefix pages) and [`addressing-modes.md`](addressing-modes.md).
+>
+> **Two framework gotchas (cost real time):** (1) the `mne[]` table's **last entry must have
+> `m_flag = S_EOL`** (octal 040) — the loader (`assym.c`) hashes entries until it sees it; without it the
+> loop runs off the array → segfault. (2) `minit()` **must** do `hilo = 0` (little-endian) +
+> `exprmasks(4)` (expression/address masks) or the output machinery segfaults at startup.
 
 ## The ASxxxx framework (Alan Baldwin's), per file
 
