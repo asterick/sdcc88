@@ -77,6 +77,8 @@
 #define	S_IDXIY	38		/* d(iy)       displacement in expr */
 #define	S_INDM	39		/* (hhll) / (label)   absolute     */
 #define	S_CREG	40		/* control register br/sc/nb/ep/xp/yp/ip (e_addr = CR_*) */
+#define	S_PALL	41		/* all / ale  (push/pop multi-register; e_addr = 0/1) */
+#define	S_IDXSP	42		/* dd(sp)      SP-relative, displacement in expr */
 
 /*
  * Instruction classes (mne.m_type -> the machine() switch).
@@ -123,6 +125,7 @@ extern	struct	adsym	R8[];
 extern	struct	adsym	R16[];
 extern	struct	adsym	CND[];
 extern	struct	adsym	CR[];
+extern	struct	adsym	PALL[];
 
 	/* s1c88adr.c */
 extern	int	addr();

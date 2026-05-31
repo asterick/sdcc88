@@ -70,16 +70,23 @@ struct expr *esp;
 			esp->e_mode = S_CREG;
 			esp->e_addr = indx & 0xFF;
 			esp->e_base.e_ap = NULL;
+		} else
+		if ((indx = admode(PALL)) != 0) {	/* all / ale (push/pop) */
+			esp->e_mode = S_PALL;
+			esp->e_addr = indx & 0xFF;
+			esp->e_base.e_ap = NULL;
 		} else {
 			expr(esp, 0);			/* displacement, or a bare label */
 			esp->e_mode = S_USER;
 		}
-		if ((c = getnb()) == LFIND) {		/* d(ix) / d(iy) — displacement now in esp */
+		if ((c = getnb()) == LFIND) {		/* d(ix) / d(iy) / d(sp) — displacement now in esp */
 			if ((indx = admode(R16)) != 0 &&
 			    (((indx & 0xFF) == IX) || ((indx & 0xFF) == IY))) {
 				esp->e_mode = ((indx & 0xFF) == IX) ? S_IDXIX : S_IDXIY;
+			} else if ((indx != 0) && ((indx & 0xFF) == SP)) {
+				esp->e_mode = S_IDXSP;
 			} else {
-				xerr('a', "Register IX or IY required.");
+				xerr('a', "Register IX, IY or SP required.");
 			}
 			if ((c = getnb()) != RTIND)
 				xerr('a', "Missing ')'.");
@@ -179,6 +186,15 @@ struct	adsym	CR[] = {
     {	"yp",	CR_YP|0400	},
     {	"ip",	CR_IP|0400	},
     {	"",	0000		}
+};
+
+/*
+ * Multi-register stack operands: `push all` / `push ale` (and the pops).
+ */
+struct	adsym	PALL[] = {
+    {	"all",	0|0400	},
+    {	"ale",	1|0400	},
+    {	"",	0000	}
 };
 
 /*

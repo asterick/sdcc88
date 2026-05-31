@@ -132,8 +132,37 @@ struct mne *mp;
 				} else {
 					xerr('a', "Invalid Addressing Mode.");
 				}
+			} else if (t2 == S_INDHL || t2 == S_INDIX || t2 == S_INDIY) {
+				if (v1 > IY)
+					xerr('a', "Only ba/hl/ix/iy load from (rr).");
+				else {				/* ld rr,(hl)/(ix)/(iy) — CF,C0/D0/D8+rr */
+					outab(0xCF);
+					outab((t2 == S_INDHL ? 0xC0 : t2 == S_INDIX ? 0xD0 : 0xD8) + v1);
+				}
+			} else if (t2 == S_IDXSP) {
+				if (v1 > IY)
+					xerr('a', "Only ba/hl/ix/iy load from dd(sp).");
+				else {				/* ld rr,dd(sp) — CF,70+rr */
+					outab(0xCF); outab(0x70 + v1); outrb(&e2, R_SGND);
+				}
 			} else {
 				xerr('a', "Invalid Addressing Mode.");
+			}
+		} else if ((t1 == S_INDHL || t1 == S_INDIX || t1 == S_INDIY) && t2 == S_R16) {
+			if (v2 > IY)
+				xerr('a', "Only ba/hl/ix/iy store to (rr).");
+			else {				/* ld (hl)/(ix)/(iy),rr — CF,C4/D4/DC+rr */
+				outab(0xCF);
+				outab((t1 == S_INDHL ? 0xC4 : t1 == S_INDIX ? 0xD4 : 0xDC) + v2);
+			}
+		} else if ((t1 == S_INDHL || t1 == S_INDIX || t1 == S_INDIY) && t2 == S_IMMED) {
+			outab(t1 == S_INDHL ? 0xB5 : t1 == S_INDIX ? 0xB6 : 0xB7);	/* ld (mem),#nn */
+			outrb(&e2, 0);
+		} else if (t1 == S_IDXSP && t2 == S_R16) {
+			if (v2 > IY)
+				xerr('a', "Only ba/hl/ix/iy store to dd(sp).");
+			else {				/* ld dd(sp),rr — CF,74+rr */
+				outab(0xCF); outab(0x74 + v2); outrb(&e1, R_SGND);
 			}
 		} else if (t1 == S_INDM && t2 == S_R16) {
 			if (v2 == SP) { outab(0xCF); outab(0x7C); }	/* ld (hhll),sp */
@@ -270,6 +299,9 @@ struct mne *mp;
 				xerr('a', "Only br/ep/ip/sc are stackable control registers.");
 			else
 				outab((rf == S_PUSH ? 0xA4 : 0xAC) + base);
+		} else if (t1 == S_PALL) {				/* push/pop all/ale */
+			outab(0xCF);
+			outab((rf == S_PUSH ? 0xB8 : 0xBC) + v1);
 		} else {
 			xerr('a', "Invalid Addressing Mode.");
 		}
