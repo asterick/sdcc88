@@ -124,6 +124,7 @@ struct adsym {
 extern	struct	adsym	R8[];
 extern	struct	adsym	R16[];
 extern	struct	adsym	CND[];
+extern	struct	adsym	CNDE[];		/* extended signed/flag conditions (CE-page, jrs/cars only) */
 extern	struct	adsym	CR[];
 extern	struct	adsym	PALL[];
 

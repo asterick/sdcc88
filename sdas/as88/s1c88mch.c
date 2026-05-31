@@ -345,7 +345,11 @@ struct mne *mp;
 	case S_CARS:				/* cars [cc,] e */
 		cfb = (rf == S_JRS) ? 0xE4 : 0xE0;
 		if ((v1 = admode(CND)) != 0) {
-			outab(cfb + (v1 & 0xFF));	/* E4..E7 / E0..E3 */
+			outab(cfb + (v1 & 0xFF));	/* basic c/nc/z/nz: E4..E7 / E0..E3 */
+			comma(1);
+		} else if ((v1 = admode(CNDE)) != 0) {	/* extended signed/flag cc (CE-page) */
+			outab(0xCE);
+			outab((rf == S_JRS ? 0xE0 : 0xF0) + (v1 & 0xFF));
 			comma(1);
 		} else {
 			outab(op);			/* F1 / F0 unconditional */

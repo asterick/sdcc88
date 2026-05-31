@@ -207,3 +207,30 @@ struct	adsym	CND[] = {
     {	"c",	CC_C|0400	},
     {	"",	0000		}
 };
+
+/*
+ * Extended signed / flag conditions (CE-page jrs/cars only): index 0..15 maps
+ * to CE,E0+idx (jrs) / CE,F0+idx (cars).  Order is free (none is a prefix of
+ * another, and the trailing-letter guard in srch() keeps "v"/"p"/"m" from
+ * eating a label).  Two-byte forms (nf0..) sit after the conflicting one-byte
+ * f0.. entries; srch() anchors at the first char so either way is safe.
+ */
+struct	adsym	CNDE[] = {
+    {	"lt",	0|0400	},
+    {	"le",	1|0400	},
+    {	"gt",	2|0400	},
+    {	"ge",	3|0400	},
+    {	"nv",	5|0400	},
+    {	"v",	4|0400	},
+    {	"p",	6|0400	},
+    {	"m",	7|0400	},
+    {	"nf0",	12|0400	},
+    {	"nf1",	13|0400	},
+    {	"nf2",	14|0400	},
+    {	"nf3",	15|0400	},
+    {	"f0",	8|0400	},
+    {	"f1",	9|0400	},
+    {	"f2",	10|0400	},
+    {	"f3",	11|0400	},
+    {	"",	0000	}
+};
