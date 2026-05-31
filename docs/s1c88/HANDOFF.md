@@ -37,16 +37,21 @@ Step 1 of the reshape is **DONE** (commit `b606833`); current action is **Step 2
      is still disabled (the cost fn forbids A in multi-byte vars), so ints use HL only — enable BA once
      gen.c can emit BA-pair code (part of Step 2).
    - **Step 2 (task #18) — IN PROGRESS:** retarget gen.c off z80 DE/BC onto S1C88 BA/HL/IX/IY per
-     `abi-decision.md` → "Step 2". **Done so far — the return-value ABI** (commits `d89db99`, `498ad12`):
-     `aopRet` int/short→`BA` (new `asmop_ba` = A:B), long/float→`HL:BA` (new `asmop_hlba` = {A,B,L,H});
-     char→`A` was already right. `z80IsReturned`/`z80IsRegArg` are data-driven off aopRet/aopArg so they
-     followed automatically. Verified end-to-end (`add1`→`inc hl;ld b,h;ld a,l;ret`; `rl`→HL:BA; a caller
-     reads the result from BA) and meter-checked. **Next, in order:** (a) the **arg ABI** (`aopArg`:
-     2nd-arg `DE`, long-arg `HLDE` → BA/HLBA — bigger, it also changes caller-side setup in genCall/genSend);
-     (b) the **central DE-scratch retarget** (`_pairs[]`, `fetchPairLong`'s `PAIR_DE?ASMOP_E:ASMOP_C`
-     ternaries, `ex de,hl`→`ex ba,hl`, push/pop) — clears the bulk of internal `de` residue; (c) mop up
-     direct byte-C/D/E sites; drop `asmop_iyl/iyh`. Run `scripts/check-s1c88.sh` after each batch
-     (realistic-input meter now ~11, was 18 at Step 1; pure return-ABI tests are at 0).
+     `abi-decision.md` → "Step 2". **DONE — the call ABI** (commits `d89db99`, `498ad12`, `482f23b`):
+     - **Returns:** `aopRet` int/short→`BA` (new `asmop_ba`=A:B), long/float→`HL:BA` (new `asmop_hlba`
+       ={A,B,L,H}); char→`A` was already right.
+     - **Arguments — faithful Epson order** (`abi-decision.md` → "Argument ABI"): `aopArg` is now a
+       register-priority **consumption** allocator (`aopArgRegS1C88`), phase 1 = byte-addressable regs
+       (char `A,L,H,B`; int `BA,HL`; near-ptr `HL,BA`; long `HLBA`); IX/IY/YP/XP slots + overflow → stack.
+       Verified `f2/fc/fi/f3/pp/fl` + a caller; the A/BA overlap is handled by construction.
+     - `z80IsReturned`/`z80IsRegArg`, `genSend`/`genReceive` are all data-driven off aopRet/aopArg, so
+       they followed automatically.
+     **Next, in order:** (a) **arg ABI phase 2** — add `IX,IY` (int 3rd/4th, near-ptr 1st/2nd) + the S1C88
+     index-register move codegen (`ASMOP_IX`, `ld ix,hl`, non-byte handling); (b) the **central DE-scratch
+     retarget** (`_pairs[]`, `fetchPairLong`'s `PAIR_DE?ASMOP_E:ASMOP_C` ternaries, `ex de,hl`→`ex ba,hl`,
+     push/pop) — clears the bulk of internal `de` residue (genPlus/genMinus); (c) mop up direct byte-C/D/E
+     sites; drop `asmop_iyl/iyh`. Run `scripts/check-s1c88.sh` after each batch (realistic input now ~9,
+     was 18 at Step 1; pure call-ABI tests are at 0).
    - **Step 3 (task #19):** finish emission — S1C88 register names + any S1C88-specific mnemonics that
      differ from z80 (sdas style). Verify the smoke-test output looks like valid S1C88.
 3. Commit **green** checkpoints as you go; clearly label any intentionally-red WIP.

@@ -180,11 +180,45 @@ and most call sites follow. Keep every old symbol *defined* throughout (always-g
    `getPairId`, `setupPairFromSP`, the push/pop paths): re-point to BA's bytes (`ASMOP_A`/`ASMOP_B`);
    teach `isPairDead`/`isPairInUse` that BA = {A,B}.
 3. **EX + 16-bit moves**: `ex de,hl`→`ex ba,hl`; lean on the orthogonal `LD`s for the rest.
-4. **ABI `aopRet`/`aopArg`** (c-compiler.md): `int`→`BA`, `long`→`HL:BA` (HLBA, HL high), ptr→`HL`,
-   replacing the z80 `ASMOP_DE` / `ASMOP_DEHL` / `ASMOP_HLDE`.
+4. **ABI `aopRet`/`aopArg`** — **DONE for the byte-addressable registers** (commits `d89db99`,
+   `498ad12`, `482f23b`). Returns: char→`A`, int→`BA`, long/float→`HL:BA` (faithful). Arguments use the
+   **faithful Epson register-priority *consumption* model** — see "Argument ABI" below.
 5. **direct byte C/D/E sites** (`countreg` picks, `isRegIdxPair`, the genByte ALU loops): eliminate
    per-site → A/B/L/H/IX/IY/stack. Build + run the meter (below) after each batch; delete a symbol only
    once it has zero uses.
+
+### Argument ABI — faithful Epson order (decided 2026-05-31)
+
+Decided to follow the Epson scheme faithfully (c-compiler.md §1.2.15/§1.3.2), **not** a minimal z80-slot
+swap. Arguments are assigned by **descending priority per type**, sharing the byte-register file (placing
+a value in `BA` consumes `A` and `B`; in `HL` consumes `L` and `H`):
+
+| Type | Priority (high → low) |
+|------|-----------------------|
+| `char` | `A`, `L`, `YP`, `XP`, `H`, `B` |
+| `int`/`short` | `BA`, `HL`, `IX`, `IY` |
+| `long`/`float` | `HLBA`, `IYIX` |
+| near ptr | `IY`, `IX`, `HL`, `BA` |
+| far ptr | `IYP`, `IXP`, `HLP` (`IYP=IY+YP`, `IXP=IX+XP`, `HLP=HL+A`) |
+
+`aopArg` became a stateless **consumption allocator** (`aopArgRegS1C88` in gen.c): it replays args 1..i,
+tracking which byte regs (A,B,L,H) are consumed, and returns the first free register from arg i's priority
+list. The A/BA overlap is handled by construction (once `A` is taken, no char picks it; once `L` is taken,
+`HL` is unavailable). Both caller (`genSend`) and callee (`genReceive`) are data-driven off `aopArg`.
+
+**Executed always-green in phases:**
+- **Phase 1 — DONE (`482f23b`):** the byte-addressable registers only — char `A,L,H,B`; int `BA,HL`;
+  near-ptr `HL,BA`; long `HLBA`. Anything the Epson ABI would place in `IX/IY/YP/XP` (and any overflow)
+  goes on the **stack** for now. Verified: `f2(int,int)`→BA,HL; `fc(char,int)`→A,HL; `f3(int,int,int)`→3rd
+  on stack; caller/callee agree.
+- **Phase 2 — next:** add `IX`,`IY` (int 3rd/4th, near-ptr 1st/2nd), `IYIX` (long) + the S1C88
+  index-register move codegen (`ASMOP_IX`, `ld ix,hl`, non-byte-addressable handling).
+- **Phase 3 — later (with the deferred far-pointer/page-register work):** char `YP,XP`; far-ptr
+  `IYP/IXP/HLP` and far-ptr return `HLP`.
+
+Until phases 2-3 land the ABI diverges from Epson for args that need IX/IY/YP/XP (they're stacked / use a
+lower-priority byte reg). This is safe — the convention is skip-c-internal (caller+callee both read
+`aopArg`); there is no Epson-object interop yet.
 
 ### Verification meter (until a real S1C88 assembler is wired)
 `scripts/check-s1c88.sh` scans emitted asm for z80-only residue (`\bde\b`, `\bbc\b`, `ex de,hl`, `iyl`,
