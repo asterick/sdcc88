@@ -93,9 +93,13 @@ running `check-s1c88.sh` after each batch.
 - `./scripts/check-s1c88.sh [file.asm]` → **the codegen meter**: counts z80-only residue (de/bc pairs,
   iy?/ix? half-regs, `ex de,hl`) and names the functions still carrying it. Run it after each Step-2 batch;
   `TOTAL` should trend to 0. Baseline on a realistic 8-function input: **18** (de 14, bc 1, ex de,hl 3).
-- A full assemble-the-output harness (`../skiploom`, an AS88-syntax S1C88 assembler) remains the eventual
-  validator but needs a syntax bridge (we emit sdas style); the binary-handoff toolchain is still open
-  (see `abi-decision.md` "Step 2" tail). The meter is the interim signal.
+- **`./scripts/build-sdas.sh as88` → `bin/sdas88`** — the real validator/toolchain (decided: target
+  SDCC's sdas/sdld; see `abi-decision.md` "Toolchain & validator"). The sdas build is proven in-sandbox;
+  `sdas/as88/` is a buildable clone of `sdas/asz80`. **It still encodes z80** — retargeting the encoder
+  (`s1c88pst.c`/`s1c88adr.c`/`s1c88mch.c` → real S1C88 ISA: App.A opcode map + CE/CF prefixes) is the next
+  validator work, after which it wires into `check-s1c88.sh` to assemble emitted codegen as-is. Until
+  then, `check-s1c88.sh` (the z80-residue meter) is the interim signal. (`bin/sdasz80` is an encoding
+  oracle for shared mnemonics while building `s1c88mch.c`.)
 
 ## Map of everything
 
