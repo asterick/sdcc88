@@ -248,3 +248,16 @@ Concretely:
 Note: the in-compiler `z80instructionSize()` (peep.c) + peephole `.def` rules carry their own S1C88
 instruction knowledge and must be taught the S1C88 forms separately — independent of which assembler
 consumes the output.
+
+**Feasibility — PROVEN (2026-05-31).** The sdas build works in our sandbox: `scripts/build-sdas.sh asz80`
+generates the backend Makefile (`config.status --file=`) and builds `bin/sdasz80` against the shared
+`sdas/asxxsrc/` core; it assembles `.asm` → `.rel` with correct encodings (`ld a,#5; inc hl; ret` →
+`3E 05 23 C9`). So the whole validator/toolchain path is viable — no blockers. A backend is **~3000 lines**
+(`z80.h` 275, `z80adr.c` 296 addressing, `z80pst.c` 496 mnemonic table, `z80mch.c` 2157 encoder).
+
+**Building `as88` (next):** create `sdas/as88/` (`s1c88.h`, `s1c88adr.c`, `s1c88pst.c`, `s1c88mch.c`,
+`Makefile.in`) modeled on `asz80`, with S1C88 encodings from `instruction-set.md` (App. A opcode map +
+the `CE`/`CF` 2nd-page prefixes; skiploom CSV cross-check). Build incrementally — cover the instruction
+subset the codegen emits first (ld/add/adc/sub/sbc/inc/dec/push/pop/ret/call/jp/jr/ex/cp + the 16-bit
+ops), wire into `check-s1c88.sh` to assemble the smoke output, then grow it as codegen emits more.
+`build-sdas.sh` already handles building a config-unknown backend (derives its Makefile from asz80).
