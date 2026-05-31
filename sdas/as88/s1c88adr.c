@@ -65,6 +65,11 @@ struct expr *esp;
 			esp->e_mode = S_R16;
 			esp->e_addr = indx & 0xFF;
 			esp->e_base.e_ap = NULL;
+		} else
+		if ((indx = admode(CR)) != 0) {		/* control register br/sc/nb/ep/... */
+			esp->e_mode = S_CREG;
+			esp->e_addr = indx & 0xFF;
+			esp->e_base.e_ap = NULL;
 		} else {
 			expr(esp, 0);			/* displacement, or a bare label */
 			esp->e_mode = S_USER;
@@ -160,6 +165,20 @@ struct	adsym	R16[] = {
     {	"iy",	IY|0400	},
     {	"sp",	SP|0400	},
     {	"",	0000	}
+};
+
+/*
+ * Control / system registers.  None share a prefix, so order is free.
+ */
+struct	adsym	CR[] = {
+    {	"br",	CR_BR|0400	},
+    {	"sc",	CR_SC|0400	},
+    {	"nb",	CR_NB|0400	},
+    {	"ep",	CR_EP|0400	},
+    {	"xp",	CR_XP|0400	},
+    {	"yp",	CR_YP|0400	},
+    {	"ip",	CR_IP|0400	},
+    {	"",	0000		}
 };
 
 /*

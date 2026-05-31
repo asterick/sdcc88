@@ -51,7 +51,7 @@ VOID
 machine(mp)
 struct mne *mp;
 {
-	int op, rf, t1, t2, v1, v2, cfb;
+	int op, rf, t1, t2, v1, v2, cfb, base;
 	struct expr e1, e2;
 
 	clrexpr(&e1);
@@ -73,7 +73,23 @@ struct mne *mp;
 		t2 = addr(&e2);
 		v1 = (int) (e1.e_addr & 0xFF);
 		v2 = (int) (e2.e_addr & 0xFF);
-		if (t1 == S_R8) {			/* ld r8, <src> */
+		if (t1 == S_R8 && v1 == A && t2 == S_CREG) {	/* ld a,cr */
+			if (v2 == CR_BR)      { outab(0xCE); outab(0xC0); }
+			else if (v2 == CR_SC) { outab(0xCE); outab(0xC1); }
+			else if (v2 >= CR_NB && v2 <= CR_YP) { outab(0xCE); outab(0xC8 + (v2 - CR_NB)); }
+			else xerr('a', "No `ld a,<cr>' for this control register.");
+		} else if (t1 == S_CREG && t2 == S_R8 && v2 == A) {	/* ld cr,a */
+			if (v1 == CR_BR)      { outab(0xCE); outab(0xC2); }
+			else if (v1 == CR_SC) { outab(0xCE); outab(0xC3); }
+			else if (v1 >= CR_NB && v1 <= CR_YP) { outab(0xCE); outab(0xCC + (v1 - CR_NB)); }
+			else xerr('a', "No `ld <cr>,a' for this control register.");
+		} else if (t1 == S_CREG && t2 == S_IMMED) {		/* ld cr,#imm */
+			if (v1 == CR_BR)      { outab(0xB4); outrb(&e2, 0); }	/* ld br,#hh */
+			else if (v1 == CR_SC) { outab(0x9F); outrb(&e2, 0); }	/* ld sc,#nn */
+			else if (v1 >= CR_NB && v1 <= CR_YP)
+				{ outab(0xCE); outab(0xC4 + (v1 - CR_NB)); outrb(&e2, 0); } /* ld nb/ep/xp/yp,#pp */
+			else xerr('a', "No `ld <cr>,#imm' for this control register.");
+		} else if (t1 == S_R8) {			/* ld r8, <src> */
 			switch (t2) {
 			case S_R8:    outab(0x40 + (v1 << 3) + v2);		break;
 			case S_IMMED: outab(0xB0 + v1); outrb(&e2, 0);		break;
@@ -95,11 +111,13 @@ struct mne *mp;
 			outab(0xCE); outab(0xD4 + v2); outrw(&e1, 0);
 		} else if (t1 == S_R16) {		/* ld rr, <src> */
 			if (t2 == S_IMMED) {
-				if (v1 == SP)
-					xerr('a', "ld sp,#imm not yet supported.");
-				else { outab(0xC4 + v1); outrw(&e2, 0); }	/* ld rr,#mmnn */
+				if (v1 == SP) { outab(0xCF); outab(0x6E); }	/* ld sp,#mmnn */
+				else outab(0xC4 + v1);				/* ld rr,#mmnn */
+				outrw(&e2, 0);
 			} else if (t2 == S_INDM) {
-				outab(0xB8 + v1); outrw(&e2, 0);		/* ld rr,(hhll) */
+				if (v1 == SP) { outab(0xCF); outab(0x78); }	/* ld sp,(hhll) */
+				else outab(0xB8 + v1);				/* ld rr,(hhll) */
+				outrw(&e2, 0);
 			} else if (t2 == S_R16) {
 				if (v1 <= IY && v2 <= IY) {
 					outab(0xCF);			/* ld rr,rr' (CF,E0..EF) */
@@ -118,7 +136,9 @@ struct mne *mp;
 				xerr('a', "Invalid Addressing Mode.");
 			}
 		} else if (t1 == S_INDM && t2 == S_R16) {
-			outab(0xBC + v2); outrw(&e1, 0);		/* ld (hhll),rr */
+			if (v2 == SP) { outab(0xCF); outab(0x7C); }	/* ld (hhll),sp */
+			else outab(0xBC + v2);				/* ld (hhll),rr */
+			outrw(&e1, 0);
 		} else {
 			xerr('a', "Invalid Addressing Mode.");
 		}
@@ -169,18 +189,47 @@ struct mne *mp;
 			cfb = (rf == S_ADD) ? 0x00 : (rf == S_ADC) ? 0x04 :
 			      (rf == S_SUB) ? 0x08 : (rf == S_SBC) ? 0x0C :
 			      (rf == S_CP)  ? 0x18 : -1;
-			if (cfb < 0) {
-				xerr('a', "No 16-bit form for this operation.");
-			} else if (t2 == S_R16 && v2 <= IY && (v1 == BA || v1 == HL)) {
-				outab(0xCF);			/* CF,(cfb + dst*0x20 + src) */
-				outab(cfb + (v1 == HL ? 0x20 : 0x00) + v2);
-			} else if (t2 == S_IMMED &&
-				   (rf == S_ADD || rf == S_SUB || rf == S_CP) && v1 <= IY) {
-				outab((rf == S_ADD ? 0xC0 :		/* add rr,#mmnn  */
-				       rf == S_SUB ? 0xD0 : 0xD4) + v1);	/* sub/cp rr,#   */
-				outrw(&e2, 0);
+			if (t2 == S_R16 && v2 <= IY && (v1 == BA || v1 == HL)) {
+				if (cfb < 0)			/* CF,(cfb + dst*0x20 + src) */
+					xerr('a', "No 16-bit form for this operation.");
+				else { outab(0xCF); outab(cfb + (v1 == HL ? 0x20 : 0x00) + v2); }
+			} else if (t2 == S_R16 && (v2 == BA || v2 == HL) &&
+				   (v1 == IX || v1 == IY || v1 == SP)) {
+				base = -1;		/* add/sub ix/iy/sp,ba|hl (+ cp sp) — CF,40..5D */
+				if (rf == S_ADD)      base = (v1 == IX) ? 0x40 : (v1 == IY) ? 0x42 : 0x44;
+				else if (rf == S_SUB) base = (v1 == IX) ? 0x48 : (v1 == IY) ? 0x4A : 0x4C;
+				else if (rf == S_CP && v1 == SP) base = 0x5C;
+				if (base < 0)
+					xerr('a', "No 16-bit form for this register/operation.");
+				else { outab(0xCF); outab(base + (v2 == HL ? 1 : 0)); }
+			} else if (t2 == S_IMMED) {
+				if ((rf == S_ADD || rf == S_SUB || rf == S_CP) && v1 <= IY) {
+					outab((rf == S_ADD ? 0xC0 :		/* add/sub/cp ba..iy,#mmnn */
+					       rf == S_SUB ? 0xD0 : 0xD4) + v1);
+					outrw(&e2, 0);
+				} else if ((rf == S_ADD || rf == S_SUB || rf == S_CP) && v1 == SP) {
+					outab(0xCF);				/* add/sub/cp sp,#mmnn */
+					outab(rf == S_ADD ? 0x68 : rf == S_SUB ? 0x6A : 0x6C);
+					outrw(&e2, 0);
+				} else if ((rf == S_ADC || rf == S_SBC) && (v1 == BA || v1 == HL)) {
+					outab(0xCF);				/* adc/sbc ba|hl,#mmnn */
+					outab((rf == S_ADC ? 0x60 : 0x62) + (v1 == HL ? 1 : 0));
+					outrw(&e2, 0);
+				} else {
+					xerr('a', "No 16-bit immediate form for this register/operation.");
+				}
 			} else {
 				xerr('a', "Invalid Addressing Mode.");
+			}
+		} else if (t1 == S_CREG) {		/* and/or/xor sc,#nn ; cp br,#hh */
+			if (v1 == CR_SC && t2 == S_IMMED &&
+			    (rf == S_AND || rf == S_OR || rf == S_XOR)) {
+				outab(rf == S_AND ? 0x9C : rf == S_OR ? 0x9D : 0x9E);
+				outrb(&e2, 0);
+			} else if (v1 == CR_BR && t2 == S_IMMED && rf == S_CP) {
+				outab(0xCE); outab(0xBF); outrb(&e2, 0);
+			} else {
+				xerr('a', "Invalid control-register ALU form.");
 			}
 		} else {
 			xerr('a', "Invalid Addressing Mode.");
@@ -198,6 +247,8 @@ struct mne *mp;
 				outab(rf == S_INC ? 0x87 : 0x8F);	/* inc/dec sp */
 			else
 				outab((rf == S_INC ? 0x90 : 0x98) + v1);/* inc/dec ba/hl/ix/iy */
+		} else if (t1 == S_CREG && v1 == CR_BR) {
+			outab(rf == S_INC ? 0x84 : 0x8C);		/* inc/dec br */
 		} else {
 			xerr('a', "Invalid Addressing Mode.");
 		}
@@ -209,6 +260,16 @@ struct mne *mp;
 		v1 = (int) (e1.e_addr & 0xFF);
 		if (t1 == S_R16 && v1 <= IY) {
 			outab((rf == S_PUSH ? 0xA0 : 0xA8) + v1);	/* push/pop ba/hl/ix/iy */
+		} else if (t1 == S_R8) {
+			outab(0xCF);					/* push/pop a/b/l/h */
+			outab((rf == S_PUSH ? 0xB0 : 0xB4) + v1);
+		} else if (t1 == S_CREG) {				/* push/pop br/ep/ip/sc */
+			base = (v1 == CR_BR) ? 0 : (v1 == CR_EP) ? 1 :
+			       (v1 == CR_IP) ? 2 : (v1 == CR_SC) ? 3 : -1;
+			if (base < 0)
+				xerr('a', "Only br/ep/ip/sc are stackable control registers.");
+			else
+				outab((rf == S_PUSH ? 0xA4 : 0xAC) + base);
 		} else {
 			xerr('a', "Invalid Addressing Mode.");
 		}

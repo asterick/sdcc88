@@ -43,6 +43,19 @@
 #define	SP	4
 
 /*
+ * Control / system registers (operand mode S_CREG; ids are backend-internal —
+ * machine() maps each to its specific opcode, the encodings aren't a clean field).
+ * NB/EP/XP/YP share the CE,C4..CF block (index = id - CR_NB).
+ */
+#define	CR_BR	0
+#define	CR_SC	1
+#define	CR_NB	2
+#define	CR_EP	3
+#define	CR_XP	4
+#define	CR_YP	5
+#define	CR_IP	6
+
+/*
  * Branch condition codes (CARS/JRS/CARL/JRL): C=0, NC=1, Z=2, NZ=3.
  */
 #define	CC_C	0
@@ -63,6 +76,7 @@
 #define	S_IDXIX	37		/* d(ix)       displacement in expr */
 #define	S_IDXIY	38		/* d(iy)       displacement in expr */
 #define	S_INDM	39		/* (hhll) / (label)   absolute     */
+#define	S_CREG	40		/* control register br/sc/nb/ep/xp/yp/ip (e_addr = CR_*) */
 
 /*
  * Instruction classes (mne.m_type -> the machine() switch).
@@ -108,6 +122,7 @@ struct adsym {
 extern	struct	adsym	R8[];
 extern	struct	adsym	R16[];
 extern	struct	adsym	CND[];
+extern	struct	adsym	CR[];
 
 	/* s1c88adr.c */
 extern	int	addr();
