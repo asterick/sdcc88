@@ -8084,8 +8084,8 @@ genPlus (iCode * ic)
         }
       else if (left == PAIR_HL && (isPairDead (PAIR_DE, ic) || isPairDead (PAIR_BC, ic)))
         {
-          PAIR_ID pair = (isPairDead (PAIR_DE, ic) ? PAIR_DE : PAIR_BC);
-          asmop *raop = isPairDead (PAIR_DE, ic) ? ASMOP_DE : ASMOP_BC;
+          PAIR_ID pair = isPairDead (PAIR_BA, ic) ? PAIR_BA : (isPairDead (PAIR_DE, ic) ? PAIR_DE : PAIR_BC);
+          asmop *raop = isPairDead (PAIR_BA, ic) ? ASMOP_BA : (isPairDead (PAIR_DE, ic) ? ASMOP_DE : ASMOP_BC);
           genMove (raop, ic->right->aop, false, false, false, false);
           emit2 ("add hl, %s", _pairs[pair].name);
           cost2 (1 + IS_TLCS90, 11, 7, 2, 8, 8, 1, 1);
@@ -8093,8 +8093,8 @@ genPlus (iCode * ic)
         }
       else if (right == PAIR_HL && (isPairDead (PAIR_DE, ic) || isPairDead (PAIR_BC, ic)))
         {
-          PAIR_ID pair = (isPairDead (PAIR_DE, ic) ? PAIR_DE : PAIR_BC);
-          asmop *raop = isPairDead (PAIR_DE, ic) ? ASMOP_DE : ASMOP_BC;
+          PAIR_ID pair = isPairDead (PAIR_BA, ic) ? PAIR_BA : (isPairDead (PAIR_DE, ic) ? PAIR_DE : PAIR_BC);
+          asmop *raop = isPairDead (PAIR_BA, ic) ? ASMOP_BA : (isPairDead (PAIR_DE, ic) ? ASMOP_DE : ASMOP_BC);
           genMove (raop, leftop, false, false, false, false);
           emit2 ("add hl, %s", _pairs[pair].name);
           cost2 (1 + IS_TLCS90, 11, 7, 2, 8, 8, 1, 1);
@@ -8108,9 +8108,9 @@ genPlus (iCode * ic)
   else if (!maskedtopbyte && size == 2 && getPairId (ic->result->aop) == PAIR_HL && (isPairDead (PAIR_DE, ic) || isPairDead (PAIR_BC, ic)) &&
     (ic->right->aop->type == AOP_LIT || ic->right->aop->type == AOP_IMMD || ic->left->aop->type == AOP_IMMD && (ic->right->aop->type == AOP_HL || ic->right->aop->type == AOP_IY)))
     {
-      PAIR_ID extrapair = isPairDead (PAIR_DE, ic) ? PAIR_DE : PAIR_BC;
+      PAIR_ID extrapair = isPairDead (PAIR_BA, ic) ? PAIR_BA : (isPairDead (PAIR_DE, ic) ? PAIR_DE : PAIR_BC);
       genMove (ASMOP_HL, ic->left->aop, isRegDead (A_IDX, ic), true, isRegDead (DE_IDX, ic), isRegDead (IY_IDX, ic));
-      genMove (extrapair == PAIR_DE ? ASMOP_DE : ASMOP_BC, ic->right->aop, isRegDead (A_IDX, ic), false, isRegDead (DE_IDX, ic), isRegDead (IY_IDX, ic));
+      genMove (extrapair == PAIR_BA ? ASMOP_BA : (extrapair == PAIR_DE ? ASMOP_DE : ASMOP_BC), ic->right->aop, isRegDead (A_IDX, ic), false, isRegDead (DE_IDX, ic), isRegDead (IY_IDX, ic));
       emit2 ("add hl, %s", _pairs[extrapair].name);
       cost2 (1 + IS_TLCS90, 11, 7, 2, 8, 8, 1, 1);
       goto release;
