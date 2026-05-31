@@ -82,3 +82,37 @@ replace {
 	carl	%1, %5
 	; peephole s1c88-j6 z80 call cc -> s1c88 carl cc
 } if same(%1 'C' 'NC' 'NZ' 'Z')
+
+// genCmp emits the native signed-condition branches as `jp LT`/`jp GE` (and the
+// peephole shortens them here). The S1C88 signed conditions exist ONLY as short
+// relative (jrs/cars, 8-bit ±127) — there is no long signed branch — so only the
+// in-range form is produced. An out-of-range signed branch would need an
+// invert-and-skip (jrs <inv>,.+n; jrl target); rare, left for later, and it stays
+// as the flagged `jp LT` until then.
+replace {
+	jp	LT, %5
+} by {
+	jrs	LT, %5
+	; peephole s1c88-j7 signed less-than -> jrs LT
+} if labelInRange(%5)
+
+replace {
+	jp	GE, %5
+} by {
+	jrs	GE, %5
+	; peephole s1c88-j8 signed greater-or-equal -> jrs GE
+} if labelInRange(%5)
+
+replace {
+	jp	GT, %5
+} by {
+	jrs	GT, %5
+	; peephole s1c88-j9 signed greater-than -> jrs GT
+} if labelInRange(%5)
+
+replace {
+	jp	LE, %5
+} by {
+	jrs	LE, %5
+	; peephole s1c88-j10 signed less-or-equal -> jrs LE
+} if labelInRange(%5)

@@ -1644,6 +1644,24 @@ int z80instructionSize(lineNode *pl)
   if(ISINST(pl->line, "jr") || ISINST(pl->line, "djnz"))
     return(2);
 
+  /* S1C88 PC-relative branches.  jrs/cars are 2 bytes for the basic conditions
+     (c/nc/z/nz) and the unconditional form, but 3 bytes for the CE-prefixed
+     signed/flag conditions (lt/le/gt/ge/v/nv/p/m/f0..nf3).  jrl/carl are 3 bytes;
+     djr is 2.  Sizing these keeps labelInRange() accurate so the peephole can
+     shorten jp/jrl -> jrs across them. */
+  if(ISINST(pl->line, "jrs") || ISINST(pl->line, "cars"))
+    {
+      if(op2start &&
+         STRNCASECMP(op1start, "c,", 2) && STRNCASECMP(op1start, "nc,", 3) &&
+         STRNCASECMP(op1start, "z,", 2) && STRNCASECMP(op1start, "nz,", 3))
+        return(3);	/* signed/flag condition -> CE-prefixed */
+      return(2);
+    }
+  if(ISINST(pl->line, "jrl") || ISINST(pl->line, "carl"))
+    return(3);
+  if(ISINST(pl->line, "djr"))
+    return(2);
+
   if(ISINST(pl->line, "jp"))
     {
       if(!STRNCASECMP(op1start, "(hl)", 4))

@@ -9862,6 +9862,10 @@ genIfxJump (iCode * ic, char *jval)
         {
           inst = "PE";
         }
+      else if (!strcmp (jval, "lt"))	/* S1C88 native signed less-than */
+        {
+          inst = "LT";
+        }
       else
         {
           /* The buffer contains the bit on A that we should test */
@@ -9911,6 +9915,10 @@ genIfxJump (iCode * ic, char *jval)
         {
           inst = "PO";
         }
+      else if (!strcmp (jval, "lt"))	/* S1C88 native signed: false when >= */
+        {
+          inst = "GE";
+        }
       else
         {
           /* The buffer contains the bit on A that we should test */
@@ -9944,6 +9952,7 @@ genCmp (operand * left, operand * right, operand * result, iCode * ifx, int sign
   int a_always_byte = -1;
   bool started = false;
   bool inv = false;
+  bool signed_native = false;	/* S1C88: branch on the native signed condition (jrs LT/GE) */
 
   /* if left & right are bit variables */
   if (left->aop->type == AOP_CRY && right->aop->type == AOP_CRY)
@@ -10333,7 +10342,19 @@ fix:
         {
           if (!IS_SM83)           /* Directly check for overflow, can't be done on SM83 */
             {
-              if (!regalloc_dry_run)
+              /* The S1C88 has native signed-condition branches (jrs LT/GE test
+                 S xor V), and the byte/word subtract above already left S and V
+                 set correctly for the signed compare.  So for an ifx (the result
+                 is a conditional branch) we branch on those flags directly and
+                 skip the z80 PO/xor sign-correction entirely — see the release
+                 block, which emits genIfxJump(ifx, "lt").  The non-ifx / boolean
+                 case still needs the sign materialised in A, so it keeps the
+                 z80 fixup for now (a later slice retargets it). */
+              if (ifx && !(result->aop->type == AOP_CRY && result->aop->size))
+                {
+                  signed_native = true;
+                }
+              else if (!regalloc_dry_run)
                 {
                   symbol *tlbl = newiTempLabel (NULL);
                   emit2 (IS_RAB ? "jp LZ, !tlabel" : "jp PO, !tlabel", labelKey2num (tlbl->key));
@@ -10397,7 +10418,9 @@ release:
           if (!result_in_carry)
             {
               wassert (!inv);
-              if (!IS_SM83)
+              if (signed_native)
+                genIfxJump (ifx, "lt");		/* S1C88 native signed branch (jrs LT/GE) */
+              else if (!IS_SM83)
                 genIfxJump (ifx, "m");
               else
                 {
