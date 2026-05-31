@@ -64,10 +64,10 @@ file suffix and invoking the stages in order — analogous to `gcc` driving `cpp
 - **Motorola S-records** — `S0`/`S2`/`S8` with 3-byte (24-bit) addresses for the S1C88's address space;
   layout + checksum in [utilities.md](utilities.md) (Appendix I).
 
-## Relationship to this project (skip-c)
+## Relationship to this project (sdcc88)
 
-- **Decided (2026-05-31): skip-c targets SDCC's own `sdas`/`sdld`** (its in-tree ASxxxx fork), not the
-  Epson `as88`/`lk88`/`lc88` chain. skip-c already emits sdas-dialect assembly; we **add an S1C88 backend
+- **Decided (2026-05-31): sdcc88 targets SDCC's own `sdas`/`sdld`** (its in-tree ASxxxx fork), not the
+  Epson `as88`/`lk88`/`lc88` chain. sdcc88 already emits sdas-dialect assembly; we **add an S1C88 backend
   to `sdas`** — `build/sdcc-4.5.0/sdas/as88/` (binary `sdas88`), modeled on `sdas/asz80/`. That `sdas88`
   doubles as the **codegen validator** (assemble emitted `.asm` as-is). See
   [`abi-decision.md`](abi-decision.md) → "Toolchain & validator". (Note: our `sdas88` ≠ Epson `as88`; the

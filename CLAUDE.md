@@ -9,11 +9,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-**skip-c** retargets [SDCC](https://sdcc.sourceforge.net/) (the Small Device C Compiler) **4.5.0** to the
+**sdcc88** retargets [SDCC](https://sdcc.sourceforge.net/) (the Small Device C Compiler) **4.5.0** to the
 **Epson S1C88** — the 8-bit core of the **Pokémon Mini**. It inherits SDCC's C frontend and
 machine-independent middle-end unchanged and adds one backend code-generator **port** in `src/s1c88/`.
 
-skip-c is an **overlay on upstream SDCC, built with SDCC's own autotools build** (`configure` + `make`) —
+sdcc88 is an **overlay on upstream SDCC, built with SDCC's own autotools build** (`configure` + `make`) —
 *not* a reimplemented build system. `build.sh` fetches SDCC, drops our port into its tree, registers it,
 and builds the compiler.
 
@@ -73,7 +73,7 @@ printf 'int add1(int x){return x+1;}\n' | \
 3. **Register** the port via `third_party/sdcc/register_s1c88_port.patch` — adds `TARGET_ID_S1C88`,
    `TARGET_IS_S1C88`, **`S1C88` to `TARGET_Z80_LIKE`** (SDCC core gates real behavior on it; the z80
    codegen needs it), `extern PORT s1c88_port`, and the `_ports[]` entry. **Applied with `patch -p1`, NOT
-   `git apply`** — `build/` is nested inside skip-c's own git repo, so `git apply` resolves paths against
+   `git apply`** — `build/` is nested inside sdcc88's own git repo, so `git apply` resolves paths against
    the outer repo and **silently no-ops (exit 0)**, leaving the build to fail later with
    `TARGET_ID_S1C88 undeclared`. `build.sh` now hard-fails if the patch didn't land. Regenerate the patch
    with `git diff` against pristine extracted sources — never hand-edit hunk headers.
@@ -113,4 +113,4 @@ of the distilled ISA — the Epson manuals in `docs/s1c88/` are the authority.
 - Work on the **`s1c88-retarget`** branch. Commit green checkpoints; clearly label any intentionally-red
   WIP. The build working in-sandbox means you can (and should) verify each change before committing.
 - Convert the design/strategy in `docs/s1c88/abi-decision.md` into action — keep it current as decisions
-  evolve. Keep the auto-loaded memory (`skip-c-bringup-status`) accurate; it's the fastest way to resume.
+  evolve. Keep the auto-loaded memory (`sdcc88-bringup-status`) accurate; it's the fastest way to resume.

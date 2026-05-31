@@ -1,6 +1,6 @@
 # S1C88 backend: base-port & ABI decision
 
-> **Status:** decided 2026-05-29. Fixes the *target ABI* and the *base port* for skip-c's S1C88 backend.
+> **Status:** decided 2026-05-29. Fixes the *target ABI* and the *base port* for sdcc88's S1C88 backend.
 > Codegen conformance to this ABI lands in later milestones — the current build is a **z80-flavored
 > skeleton** (see *Skeleton divergences* below).
 > **Sources:** SDCC 4.5.0 `src/z80`; the Epson C ABI in [c-compiler.md](c-compiler.md); the S1C88
@@ -8,7 +8,7 @@
 
 ## Decision
 
-skip-c's `src/s1c88/` backend is a **standalone clone of SDCC 4.5.0's `z80` port** (was a clone of the
+sdcc88's `src/s1c88/` backend is a **standalone clone of SDCC 4.5.0's `z80` port** (was a clone of the
 `stm8` port). Rationale: the z80 register/allocator model is the closest match to the S1C88 —
 
 - a **carry flag** as a condition register,
@@ -50,7 +50,7 @@ addressable) align with z80's `IX`/`IY` index-register treatment.
 
 ## Target C ABI (from the Epson reference, [c-compiler.md](c-compiler.md))
 
-This is the ABI skip-c *aims* to emit. It is a reference design, not a hard mandate — divergences are
+This is the ABI sdcc88 *aims* to emit. It is a reference design, not a hard mandate — divergences are
 allowed where they simplify the backend, as long as they're documented.
 
 - **Endianness:** little-endian.
@@ -217,7 +217,7 @@ list. The A/BA overlap is handled by construction (once `A` is taken, no char pi
   `IYP/IXP/HLP` and far-ptr return `HLP`.
 
 Until phases 2-3 land the ABI diverges from Epson for args that need IX/IY/YP/XP (they're stacked / use a
-lower-priority byte reg). This is safe — the convention is skip-c-internal (caller+callee both read
+lower-priority byte reg). This is safe — the convention is sdcc88-internal (caller+callee both read
 `aopArg`); there is no Epson-object interop yet.
 
 ### Verification meter (interim, until the assembler validates output)
@@ -227,8 +227,8 @@ catches wrong *register names*, not wrong *encodings/flags/sizes* — the assemb
 
 ## Toolchain & validator: target sdas / sdld (decided 2026-05-31)
 
-**Decision:** skip-c's binary handoff is **SDCC's own `sdas`/`sdld`** (its in-tree fork of the ASxxxx
-cross-assembler suite — the toolchain almost every SDCC port uses, and the dialect skip-c already emits).
+**Decision:** sdcc88's binary handoff is **SDCC's own `sdas`/`sdld`** (its in-tree fork of the ASxxxx
+cross-assembler suite — the toolchain almost every SDCC port uses, and the dialect sdcc88 already emits).
 **We retarget them for the S1C88** rather than bridging to an external assembler. `../skiploom` (AS88) is
 *not* the toolchain; its opcode table (`src/util/s1c88.csv`) stays only an independent ISA cross-check
 (per `CLAUDE.md`).

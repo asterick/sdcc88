@@ -1,6 +1,6 @@
 # S1C88 backend port
 
-The SDCC backend port for the Epson S1C88 — the only compiler code skip-c writes. Everything else is
+The SDCC backend port for the Epson S1C88 — the only compiler code sdcc88 writes. Everything else is
 inherited from upstream SDCC (see `../../CLAUDE.md`). Built by `../../build.sh`, which overlays this
 directory into SDCC's tree and builds it with SDCC's `port.mk`.
 

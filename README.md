@@ -1,7 +1,7 @@
-# skip-c
+# sdcc88
 
 A retarget of **SDCC 4.5.0** (Small Device C Compiler) to the **Epson S1C88**, the 8-bit core of the
-**Pokémon Mini**. skip-c reuses SDCC's C frontend and middle-end and adds a backend port in `src/s1c88/`.
+**Pokémon Mini**. sdcc88 reuses SDCC's C frontend and middle-end and adds a backend port in `src/s1c88/`.
 It's an **overlay on upstream SDCC, built with SDCC's own autotools** — `build.sh` fetches SDCC, drops in
 our port, registers it, and builds.
 
@@ -37,4 +37,4 @@ end-to-end yet (see CLAUDE.md).
 
 ## License
 
-SDCC is GPL-2.0-or-later; as an SDCC derivative, skip-c is GPL-compatible.
+SDCC is GPL-2.0-or-later; as an SDCC derivative, sdcc88 is GPL-compatible.

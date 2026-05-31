@@ -29,27 +29,27 @@ cp "${REPO}"/src/s1c88/*.c "${REPO}"/src/s1c88/*.h "${REPO}"/src/s1c88/*.cc \
    "${REPO}"/src/s1c88/Makefile.in "${SDCC}/src/s1c88/"
 
 echo ">> make -C src"
-if ! make -C "${SDCC}/src" > /tmp/skipc-build.log 2>&1; then
+if ! make -C "${SDCC}/src" > /tmp/sdcc88-build.log 2>&1; then
   echo "!! BUILD FAILED — last errors:"
-  grep -iE "error:|Error [0-9]+" /tmp/skipc-build.log | head -20
-  echo "   (full log: /tmp/skipc-build.log)"
+  grep -iE "error:|Error [0-9]+" /tmp/sdcc88-build.log | head -20
+  echo "   (full log: /tmp/sdcc88-build.log)"
   exit 1
 fi
-warns=$(grep -c "warning:" /tmp/skipc-build.log || true)
+warns=$(grep -c "warning:" /tmp/sdcc88-build.log || true)
 echo ">> build OK (${warns} warnings) — $(${SDCCBIN} --version 2>&1 | head -1)"
 
 SRC="${1:-}"
 echo ">> codegen smoke test"
 if [ -n "${SRC}" ]; then
-  "${SDCCBIN}" -ms1c88 --c1mode -o /tmp/skipc-smoke.asm < "${SRC}" 2>/tmp/skipc-smoke.err
+  "${SDCCBIN}" -ms1c88 --c1mode -o /tmp/sdcc88-smoke.asm < "${SRC}" 2>/tmp/sdcc88-smoke.err
 else
   printf 'int add1(int x){return x+1;}\nchar g; void store(char c){g=c;}\n' \
-    | "${SDCCBIN}" -ms1c88 --c1mode -o /tmp/skipc-smoke.asm 2>/tmp/skipc-smoke.err
+    | "${SDCCBIN}" -ms1c88 --c1mode -o /tmp/sdcc88-smoke.asm 2>/tmp/sdcc88-smoke.err
 fi
 rc=$?
 if [ ${rc} -ne 0 ]; then
-  echo "!! codegen failed (exit ${rc}):"; cat /tmp/skipc-smoke.err; exit 1
+  echo "!! codegen failed (exit ${rc}):"; cat /tmp/sdcc88-smoke.err; exit 1
 fi
-echo ">> codegen OK -> /tmp/skipc-smoke.asm"
-awk '/^_[a-z]/{f=1} f{print} /\tret/{if(f)print "---"; f=0}' /tmp/skipc-smoke.asm | head -40
+echo ">> codegen OK -> /tmp/sdcc88-smoke.asm"
+awk '/^_[a-z]/{f=1} f{print} /\tret/{if(f)print "---"; f=0}' /tmp/sdcc88-smoke.asm | head -40
 echo ">> GREEN"

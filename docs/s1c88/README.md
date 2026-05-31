@@ -44,14 +44,14 @@ the extraction note at the bottom.)
 | [utilities.md](utilities.md) | `ar88` librarian, `cc88` control program, `mk88` make, `pr88` object reader; **file formats**: IEEE-695/MUFOM (full binary opcode tables), Motorola S-records | Ch 6 + App · pp 221–331 |
 | [toolchain.md](toolchain.md) | How the tools fit together: the build pipeline, file extensions, and intermediate/output formats | synthesis |
 
-## skip-c backend decisions
+## sdcc88 backend decisions
 
 - [abi-decision.md](abi-decision.md) — the base-port choice (clone of SDCC's **z80** port) and the
   target S1C88 C ABI / z80→s1c88 register mapping the backend retarget follows.
 
 ## ABI quick-reference (for the SDCC retarget)
 
-From [c-compiler.md](c-compiler.md) — the official S1C88 C ABI, useful as a model for the skip-c backend:
+From [c-compiler.md](c-compiler.md) — the official S1C88 C ABI, useful as a model for the sdcc88 backend:
 
 - **Endianness:** little-endian. **Sizes:** `char` 1, `short`/`int` 2, `long` 4, `float`/`double` 4
   (single precision). `_near` pointer = 2 bytes (16-bit), `_far` pointer = 3 bytes (24-bit).
@@ -63,7 +63,7 @@ From [c-compiler.md](c-compiler.md) — the official S1C88 C ABI, useful as a mo
 - **Convention:** caller-saves; stack grows down (≤ 64 K); interrupt functions save all clobbered
   registers and return via `RETE`.
 
-> skip-c does **not** have to match the Epson ABI — but it's the reference design for an S1C88 C ABI.
+> sdcc88 does **not** have to match the Epson ABI — but it's the reference design for an S1C88 C ABI.
 
 ## Regenerating the text extraction
 

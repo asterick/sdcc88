@@ -2,7 +2,7 @@
 #
 # build-sdas.sh — build a sdas assembler backend in the configured SDCC tree.
 #
-# skip-c targets SDCC's own sdas/sdld (see docs/s1c88/abi-decision.md "Toolchain & validator").
+# sdcc88 targets SDCC's own sdas/sdld (see docs/s1c88/abi-decision.md "Toolchain & validator").
 # build.sh only does `make -C src` (the compiler); the sdas assemblers are separate. This script
 # builds a backend against the shared sdas/asxxsrc/ core, producing build/sdcc-4.5.0/bin/sdas<arch>.
 #
@@ -11,7 +11,7 @@
 #
 # Two cases:
 #  - stock backend (asz80, …): configure already knows it; generate its Makefile via config.status.
-#  - our overlaid backend (as88): sources live in skip-c/sdas/as88/; overlay them into the build tree
+#  - our overlaid backend (as88): sources live in sdcc88/sdas/as88/; overlay them into the build tree
 #    and derive the Makefile from asz80's generated one (config.status doesn't know our port) — the
 #    same trick build.sh uses to inject src/s1c88/Makefile.
 set -euo pipefail
@@ -26,7 +26,7 @@ BIN="sdas${BACKEND#as}"   # asz80->sdasz80, as88->sdas88
 
 cd "${SDCC}"
 if [ -d "${OVERLAY}" ]; then
-  echo ">> overlaying skip-c/sdas/${BACKEND} -> build tree"
+  echo ">> overlaying sdcc88/sdas/${BACKEND} -> build tree"
   mkdir -p "${DIR}"
   cp "${OVERLAY}"/* "${DIR}/"
   # config.status doesn't know our backend; derive its Makefile from asz80's generated one,

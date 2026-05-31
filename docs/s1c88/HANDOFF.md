@@ -10,7 +10,7 @@ Step 1 of the reshape is **DONE** (commit `b606833`); current action is **Step 2
 
 ## TL;DR state
 
-- **What skip-c is:** SDCC 4.5.0 retargeted to the Epson S1C88 (Pokémon Mini). See `CLAUDE.md`.
+- **What sdcc88 is:** SDCC 4.5.0 retargeted to the Epson S1C88 (Pokémon Mini). See `CLAUDE.md`.
 - **`src/s1c88/` is a clone of SDCC's `z80` port** (re-based from an earlier stm8 clone). It builds,
   links, and `sdcc -ms1c88` compiles C to assembly — but **the emitted code is still z80-flavored**.
 - **The job in progress:** retarget the codegen to the real S1C88 ISA. Design is fully decided and
@@ -108,7 +108,7 @@ running `check-s1c88.sh` after each batch.
 - `docs/s1c88/` — distilled Epson manuals (architecture, ISA, addressing, toolchain).
 - `src/s1c88/README.md` — per-file roles + retargeting checklist.
 - `scripts/dev.sh` — fast build + smoke-test loop.
-- Auto-loaded memory `skip-c-bringup-status` — same state summary, loads every session.
+- Auto-loaded memory `sdcc88-bringup-status` — same state summary, loads every session.
 - Tasks #17–19 (if the task list is still present) — the milestone breakdown.
 
 ## Commit history (branch `s1c88-retarget`, all green unless noted)

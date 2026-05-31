@@ -30,7 +30,7 @@
 #include "asxxxx.h"
 #include "s1c88.h"
 
-char    *cpu    = "Epson S1C88 (skip-c; z80-encoding clone, retarget in progress)";
+char    *cpu    = "Epson S1C88 (sdcc88; z80-encoding clone, retarget in progress)";
 char    *dsft   = "asm";
 
 char    imtab[3] = { 0x46, 0x56, 0x5E };

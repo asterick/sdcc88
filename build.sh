@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 #
-# build.sh — build skip-c: SDCC 4.5.0 retargeted to the Epson S1C88 (Pokémon Mini).
+# build.sh — build sdcc88: SDCC 4.5.0 retargeted to the Epson S1C88 (Pokémon Mini).
 #
-# Strategy: skip-c is an OVERLAY on upstream SDCC, built with SDCC's own autotools build system
+# Strategy: sdcc88 is an OVERLAY on upstream SDCC, built with SDCC's own autotools build system
 # (configure + make) rather than a reimplemented build. This script fetches SDCC, drops our
 # src/s1c88 port into its tree, registers the port, and builds the `sdcc` compiler driver.
 #
@@ -53,7 +53,7 @@ cp "${REPO}"/src/s1c88/*.c  "${REPO}"/src/s1c88/*.h  "${REPO}"/src/s1c88/*.cc \
    "${REPO}"/src/s1c88/Makefile.in  "${SDCC}/src/s1c88/"
 
 # 4. Register the port in SDCC's core (port.h + SDCCmain.c). Idempotent: skip if already applied.
-#    Use patch(1), NOT `git apply`: build/ is nested inside skip-c's own git repo, so `git apply`
+#    Use patch(1), NOT `git apply`: build/ is nested inside sdcc88's own git repo, so `git apply`
 #    resolves the patch paths against the OUTER repo and silently no-ops (exits 0 without touching the
 #    files), which then fails the build later with a confusing "TARGET_ID_S1C88 undeclared" error.
 if ! grep -q 'TARGET_ID_S1C88' "${SDCC}/src/port.h"; then
@@ -69,7 +69,7 @@ grep -q 'TARGET_ID_S1C88' "${SDCC}/src/port.h" \
 cd "${SDCC}"
 if [ ! -f config.status ]; then
   echo ">> configure"
-  # Disable ALL stock ports — skip-c is an s1c88-only compiler, and our port is a clone of stm8, so
+  # Disable ALL stock ports — sdcc88 is an s1c88-only compiler, and our port is a clone of stm8, so
   # building stm8 too would cause duplicate-symbol link errors. s1c88 is injected below.
   ./configure \
     --disable-mcs51-port --disable-z80-port --disable-z180-port --disable-z80n-port \

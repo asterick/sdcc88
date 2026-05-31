@@ -11,13 +11,13 @@
 # assembler is the eventual validator (see docs/s1c88/abi-decision.md, "Step 2").
 # As gen.c is retargeted function-by-function, TOTAL should trend to 0.
 #
-#   scripts/check-s1c88.sh [file.asm]        # default: /tmp/skipc-smoke.asm
+#   scripts/check-s1c88.sh [file.asm]        # default: /tmp/sdcc88-smoke.asm
 #   scripts/check-s1c88.sh --gate [file.asm] # exit non-zero if any residue remains
 #
 set -uo pipefail
 GATE=0
 [ "${1:-}" = "--gate" ] && { GATE=1; shift; }
-ASM="${1:-/tmp/skipc-smoke.asm}"
+ASM="${1:-/tmp/sdcc88-smoke.asm}"
 [ -f "$ASM" ] || { echo "!! no asm file: $ASM" >&2; exit 2; }
 
 # label -> extended regex (emitted asm is lowercase; match instruction operands only)
