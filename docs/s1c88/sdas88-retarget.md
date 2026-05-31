@@ -1,15 +1,27 @@
 # sdas88 — retargeting the assembler backend (z80 clone → real S1C88)
 
-> **Status:** `sdas/as88/` builds `bin/sdas88` and encodes **real S1C88** for the **register/immediate
-> subset (v0, byte-verified vs App. A — commit `16a9bd4`)**: `ld8`/`ld16` (reg-reg, reg-#imm, rr-rr),
-> 8-bit + 16-bit ALU, `inc`/`dec`, `push`/`pop`, `ex`, `ret`/`nop`. **v1 (commit `dad7745`) adds the
-> memory-indirect operands** — `(hl)`/`(ix)`/`(iy)`, `d(ix)`/`d(iy)`, `(hhll)`/`(label)` absolute (byte-
-> verified). Run on real codegen (args.c, 70 insns) it assembles every valid instruction and flags only
-> genuine codegen z80-isms (`sub a,l`, `push af`, `pop de`, `add ix,sp`, `jp (hl)`/`jp label`). **Next
-> (v2): the branch instructions** (`jp hl`/`call`/`jrs`/`jrl`/`cars`/`carl` with PC-relative) + rotates,
-> then wire into `check-s1c88.sh`. Build with
-> `scripts/build-sdas.sh as88`. Authority: [`instruction-set.md`](instruction-set.md) (App. A opcode map
-> + the `CE`/`CF` prefix pages) and [`addressing-modes.md`](addressing-modes.md).
+> **Status: COMPLETE (2026-05-31).** `sdas/as88/` builds `bin/sdas88` (via `scripts/build-sdas.sh as88`)
+> and encodes the **full practical S1C88 ISA**, every form byte-verified against [`instruction-set.md`](instruction-set.md)
+> Appendix A and committed green. Build history:
+> - **v0** (`16a9bd4`) register/immediate: `ld8`/`ld16` (reg-reg, reg-#imm, rr-rr), 8+16-bit ALU,
+>   `inc`/`dec`, `push`/`pop`, `ex`, `ret`/`nop`.
+> - **v1** (`dad7745`) memory operands: `(hl)`/`(ix)`/`(iy)`, `d(ix)`/`d(iy)`, `(hhll)`/`(label)`.
+> - **v2** (`a566840`) branches + PC-relative: `jp hl`/`call`/`jrs`/`jrl`/`cars`/`carl`/`djr` (c/nc/z/nz).
+> - **Batch A** rotates/shifts/`cpl`/`neg` (CE,80-A7), `swap`, `mlt`/`div`/`sep`/`halt`/`slp`, `pack`/`upck`.
+> - **Batch B** 16-bit ALU/LD completeness (IX/IY/SP dest, adc/sbc/imm, `ld sp`) + control/system registers
+>   `br`/`sc`/`nb`/`ep`/`xp`/`yp`/`ip` (`S_CREG` mode + `CR[]`) + `push`/`pop` byte regs.
+> - **Batch C** 16-bit register-indirect LDs (CF,C0-DF), SP-relative `dd(sp)` (`S_IDXSP`), `ld (mem),#nn`,
+>   `push`/`pop all`/`ale` (`S_PALL`).
+> - **Batch D** CE-page signed/flag-condition branches `jrs`/`cars` (`lt le gt ge v nv p m f0-f3 nf0-nf3`,
+>   `CNDE[]`).
+> - **Batch E1** `bit`, ALU `[hl]`-dest, `ex a,(hl)`, `jp`/`int (kk)`.
+> - **Batch E2** `(br:ll)` base-page mode (`S_BRLL`) + its whole family + `inc`/`dec (hl)`.
+>
+> Run on real codegen, sdas88 assembles every legal S1C88 instruction and flags only genuine codegen
+> z80-isms (`sub a,l`, `rr l`, `push af`, `add ix,sp`, `jr`/`jp label`, `jp P,`/`jp PO,`) — i.e. it is now
+> the byte-exact validator for the codegen retarget (`scripts/validate-s1c88.sh`). **Known ISA gaps**
+> (rare, codegen never emits): `[ix+L]`/`[iy+L]` register-offset index, the CE-page mem-to-mem LD block
+> (60-7B), `ld rr,pc`.
 >
 > **Two framework gotchas (cost real time):** (1) the `mne[]` table's **last entry must have
 > `m_flag = S_EOL`** (octal 040) — the loader (`assym.c`) hashes entries until it sees it; without it the
@@ -84,10 +96,12 @@ by *opcode* (rare — most differ)**; the authority is App. A.
    `inc/dec`, `push/pop`, `ret/jp/jr`, `ex ba,hl`). Trim the `mne[]` table to those + the pseudo-ops.
    Build; assemble a hand-written S1C88 `.asm` and check bytes against App. A (e.g. `ld a,#5`→`B0 05`,
    `inc hl`→`91`, `ret`→? , `add hl,ba`→`CF 20`).
-3. **Wire validation:** point `scripts/check-s1c88.sh` (or a new `--assemble`) at `sdas88` to assemble the
-   codegen smoke output; iterate until it's clean.
-4. **Grow:** add the remaining classes (branches `jrs/jrl/cars/carl`, `mlt/div`, `pack/upck`, `rete`,
-   control regs, far/`[br:ll]`) as Step 3 emission lands.
+3. **Wire validation:** ✅ `scripts/validate-s1c88.sh [file.asm]` assembles the codegen smoke output and
+   exits 0 iff clean, else freq-ranks the rejected instructions.
+4. **Grow:** ✅ DONE (Batches A–E2 above) — branches `jrs/jrl/cars/carl` + signed conditions, `mlt/div`,
+   `pack/upck`, `swap`, `rete`, rotates/shifts, control regs, `(br:ll)`, 16-bit indirect/SP-relative LDs,
+   `bit`, the full 16-bit ALU. The whole emitted-and-then-some ISA assembles; the only rejects are the
+   codegen z80-isms the retarget still has to fix.
 
 ## Verification
 
