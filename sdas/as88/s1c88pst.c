@@ -176,6 +176,13 @@ struct  mne     mne[] = {
     {	NULL,	"ret",	S_INH,	0,	0xF8	},
     {	NULL,	"rete",	S_INH,	0,	0xF9	},
     {	NULL,	"rets",	S_INH,	0,	0xFA	},
+    {	NULL,	"jp",	S_JP,	0,	0xF4	},
+    {	NULL,	"call",	S_CALL,	0,	0xFB	},
+    {	NULL,	"jrs",	S_JRS,	0,	0xF1	},
+    {	NULL,	"jrl",	S_JRL,	0,	0xF3	},
+    {	NULL,	"cars",	S_CARS,	0,	0xF0	},
+    {	NULL,	"carl",	S_CARL,	0,	0xF2	},
+    {	NULL,	"djr",	S_DJR,	0,	0xF5	},
     {	NULL,	"nop",	S_INH,	S_EOL,	0xFF	},
 };
 

@@ -83,6 +83,13 @@
 #define	S_POP	72
 #define	S_EX	73
 #define	S_INH	74		/* inherent (ret/rete/nop/...): m_valu = full opcode */
+#define	S_JP	75		/* jp hl                                  */
+#define	S_CALL	76		/* call (hhll)                            */
+#define	S_JRS	77		/* jrs  — m_valu = F1 (uncond), cond base E4 */
+#define	S_JRL	78		/* jrl  — m_valu = F3 (uncond), cond base EC */
+#define	S_CARS	79		/* cars — m_valu = F0 (uncond), cond base E0 */
+#define	S_CARL	80		/* carl — m_valu = F2 (uncond), cond base E8 */
+#define	S_DJR	81		/* djr nz — F5                            */
 
 /*
  * Register / condition tables (defined in s1c88adr.c).

@@ -28,6 +28,25 @@ minit()
 	exprmasks(4);		/* set up expression/address masks (≤ 4-byte space) */
 }
 
+/*
+ * PC-relative helper: returns 1 if the target is in the current area (so the
+ * displacement can be computed here), else sets up the relocation base and
+ * returns 0 (the linker resolves it via R_PCR).
+ */
+int
+mchpcr(esp)
+struct expr *esp;
+{
+	if (esp->e_base.e_ap == dot.s_area) {
+		return(1);
+	}
+	if (esp->e_flag == 0 && esp->e_base.e_ap == NULL) {
+		esp->e_flag = 1;
+		esp->e_base.e_sp = &sym[1];	/* the absolute symbol '.__.ABS.' */
+	}
+	return(0);
+}
+
 VOID
 machine(mp)
 struct mne *mp;
@@ -207,6 +226,82 @@ struct mne *mp;
 			outab(0xCC);			/* ex a,b */
 		} else {
 			xerr('a', "Invalid Addressing Mode.");
+		}
+		break;
+
+	case S_JP:				/* jp hl */
+		t1 = addr(&e1);
+		v1 = (int) (e1.e_addr & 0xFF);
+		if (t1 == S_R16 && v1 == HL)
+			outab(0xF4);
+		else
+			xerr('a', "Only `jp hl' supported (use jrl for a label target).");
+		break;
+
+	case S_CALL:				/* call (hhll)  — absolute indirect */
+		t1 = addr(&e1);
+		if (t1 == S_INDM) {
+			outab(0xFB);
+			outrw(&e1, 0);
+		} else {
+			xerr('a', "Only `call (hhll)' supported (use carl for a label target).");
+		}
+		break;
+
+	case S_JRS:				/* jrs [cc,] e  — short relative, 8-bit disp */
+	case S_CARS:				/* cars [cc,] e */
+		cfb = (rf == S_JRS) ? 0xE4 : 0xE0;
+		if ((v1 = admode(CND)) != 0) {
+			outab(cfb + (v1 & 0xFF));	/* E4..E7 / E0..E3 */
+			comma(1);
+		} else {
+			outab(op);			/* F1 / F0 unconditional */
+		}
+		expr(&e2, 0);
+		if (mchpcr(&e2)) {
+			v2 = (int) (e2.e_addr - dot.s_addr - 1);
+			if (pass == 2 && ((v2 < -128) || (v2 > 127)))
+				xerr('a', "Branching Range Exceeded.");
+			outab(v2);
+		} else {
+			outrb(&e2, R_PCR);
+		}
+		break;
+
+	case S_JRL:				/* jrl [cc,] e  — long relative, 16-bit disp */
+	case S_CARL:				/* carl [cc,] e */
+		cfb = (rf == S_JRL) ? 0xEC : 0xE8;
+		if ((v1 = admode(CND)) != 0) {
+			outab(cfb + (v1 & 0xFF));	/* EC..EF / E8..EB */
+			comma(1);
+		} else {
+			outab(op);			/* F3 / F2 unconditional */
+		}
+		expr(&e2, 0);
+		if (mchpcr(&e2)) {
+			v2 = (int) (e2.e_addr - dot.s_addr - 2);
+			outab(v2 & 0xFF);
+			outab((v2 >> 8) & 0xFF);
+		} else {
+			outrw(&e2, R_PCR);
+		}
+		break;
+
+	case S_DJR:				/* djr nz, e */
+		if ((v1 = admode(CND)) != 0 && (v1 & 0xFF) == CC_NZ) {
+			outab(0xF5);
+			comma(1);
+		} else {
+			xerr('a', "djr requires the NZ condition.");
+		}
+		expr(&e2, 0);
+		if (mchpcr(&e2)) {
+			v2 = (int) (e2.e_addr - dot.s_addr - 1);
+			if (pass == 2 && ((v2 < -128) || (v2 > 127)))
+				xerr('a', "Branching Range Exceeded.");
+			outab(v2);
+		} else {
+			outrb(&e2, R_PCR);
 		}
 		break;
 
