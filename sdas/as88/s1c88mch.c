@@ -99,8 +99,13 @@ struct mne *mp;
 			case S_IDXIX: outab(0xCE); outab(0x40 + (v1 << 3)); outrb(&e2, R_SGND); break;
 			case S_IDXIY: outab(0xCE); outab(0x41 + (v1 << 3)); outrb(&e2, R_SGND); break;
 			case S_INDM:  outab(0xCE); outab(0xD0 + v1); outrw(&e2, 0); break;
+			case S_BRLL:  outab(0x44 + (v1 << 3)); outrb(&e2, 0);	break;	/* ld r8,(br:ll) */
 			default:      xerr('a', "Invalid Addressing Mode.");	break;
 			}
+		} else if (t1 == S_BRLL && t2 == S_R8) {
+			outab(0x78 + v2); outrb(&e1, 0);		/* ld (br:ll),r8 — 78..7B */
+		} else if (t1 == S_BRLL && t2 == S_IMMED) {
+			outab(0xDD); outrb(&e1, 0); outrb(&e2, 0);	/* ld (br:ll),#nn */
 		} else if ((t1 == S_INDHL || t1 == S_INDIX || t1 == S_INDIY) && t2 == S_R8) {
 			outab((t1 == S_INDHL ? 0x68 : t1 == S_INDIX ? 0x60 : 0x70) + v2);
 		} else if ((t1 == S_IDXIX || t1 == S_IDXIY) && t2 == S_R8) {
@@ -211,6 +216,8 @@ struct mne *mp;
 				outab(0xCE); outab(op + 0); outrb(&e2, R_SGND);	/* op a,d(ix) */
 			} else if (t2 == S_IDXIY) {
 				outab(0xCE); outab(op + 1); outrb(&e2, R_SGND);	/* op a,d(iy) */
+			} else if (t2 == S_BRLL) {
+				outab(op + 4); outrb(&e2, 0);		/* op a,(br:ll) */
 			} else {
 				xerr('a', "Invalid Addressing Mode.");
 			}
@@ -250,6 +257,16 @@ struct mne *mp;
 			} else {
 				xerr('a', "Invalid Addressing Mode.");
 			}
+		} else if (t1 == S_BRLL) {		/* and/or/xor/cp (br:ll),#nn — D8/D9/DA/DB */
+			if (t2 == S_IMMED &&
+			    (rf == S_AND || rf == S_OR || rf == S_XOR || rf == S_CP)) {
+				outab(rf == S_AND ? 0xD8 : rf == S_OR ? 0xD9 :
+				      rf == S_XOR ? 0xDA : 0xDB);
+				outrb(&e1, 0);		/* ll */
+				outrb(&e2, 0);		/* nn */
+			} else {
+				xerr('a', "Only and/or/xor/cp (br:ll),#nn.");
+			}
 		} else if (t1 == S_INDHL) {		/* op [hl],src — CE,op+{a:4,#nn:5,(ix):6,(iy):7} */
 			if (t2 == S_R8 && v2 == A)	{ outab(0xCE); outab(op + 4); }
 			else if (t2 == S_IMMED)		{ outab(0xCE); outab(op + 5); outrb(&e2, 0); }
@@ -284,6 +301,10 @@ struct mne *mp;
 				outab((rf == S_INC ? 0x90 : 0x98) + v1);/* inc/dec ba/hl/ix/iy */
 		} else if (t1 == S_CREG && v1 == CR_BR) {
 			outab(rf == S_INC ? 0x84 : 0x8C);		/* inc/dec br */
+		} else if (t1 == S_INDHL) {
+			outab(rf == S_INC ? 0x86 : 0x8E);		/* inc/dec (hl) */
+		} else if (t1 == S_BRLL) {
+			outab(rf == S_INC ? 0x85 : 0x8D); outrb(&e1, 0);	/* inc/dec (br:ll) */
 		} else {
 			xerr('a', "Invalid Addressing Mode.");
 		}
@@ -427,10 +448,12 @@ struct mne *mp;
 			{ outab(0xCE); outab(op + 0); }
 		else if (t1 == S_R8 && v1 == B)
 			{ outab(0xCE); outab(op + 1); }
+		else if (t1 == S_BRLL)
+			{ outab(0xCE); outab(op + 2); outrb(&e1, 0); }
 		else if (t1 == S_INDHL)
 			{ outab(0xCE); outab(op + 3); }
 		else
-			xerr('a', "Operand must be a, b, or (hl).");
+			xerr('a', "Operand must be a, b, (br:ll) or (hl).");
 		break;
 
 	case S_SWAP:		/* swap a (F6) / swap (hl) (F7) — unprefixed */
@@ -463,6 +486,8 @@ struct mne *mp;
 			{ outab(0x97); outrb(&e2, 0); }		/* bit b,#nn */
 		else if (t1 == S_INDHL && t2 == S_IMMED)
 			{ outab(0x95); outrb(&e2, 0); }		/* bit (hl),#nn */
+		else if (t1 == S_BRLL && t2 == S_IMMED)
+			{ outab(0xDC); outrb(&e1, 0); outrb(&e2, 0); }	/* bit (br:ll),#nn */
 		else
 			xerr('a', "Invalid bit form.");
 		break;

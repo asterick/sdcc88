@@ -34,7 +34,7 @@ struct expr *esp;
 		expr(esp, 0);
 		esp->e_mode = S_IMMED;
 	} else
-	if (c == LFIND) {			/* (hl) / (ix) / (iy) / (hhll) */
+	if (c == LFIND) {			/* (hl)/(ix)/(iy)/(br:ll)/(hhll) */
 		if ((indx = admode(R16)) != 0) {
 			r = indx & 0xFF;
 			if (r == HL)
@@ -49,8 +49,16 @@ struct expr *esp;
 			}
 			esp->e_base.e_ap = NULL;
 		} else {
-			expr(esp, 0);
-			esp->e_mode = S_INDM;		/* (hhll) absolute */
+			char *save = ip;
+			if ((indx = admode(CR)) != 0 && (indx & 0xFF) == CR_BR &&
+			    (c = getnb()) == ':') {
+				expr(esp, 0);		/* (br:ll) base-page direct */
+				esp->e_mode = S_BRLL;
+			} else {
+				ip = save;		/* not (br:ll) — absolute (hhll) */
+				expr(esp, 0);
+				esp->e_mode = S_INDM;
+			}
 		}
 		if ((c = getnb()) != RTIND)
 			xerr('a', "Missing ')'.");
