@@ -28,11 +28,32 @@ int
 addr(esp)
 struct expr *esp;
 {
-	int c, indx;
+	int c, indx, r;
 
 	if ((c = getnb()) == '#') {
 		expr(esp, 0);
 		esp->e_mode = S_IMMED;
+	} else
+	if (c == LFIND) {			/* (hl) / (ix) / (iy) / (hhll) */
+		if ((indx = admode(R16)) != 0) {
+			r = indx & 0xFF;
+			if (r == HL)
+				esp->e_mode = S_INDHL;
+			else if (r == IX)
+				esp->e_mode = S_INDIX;
+			else if (r == IY)
+				esp->e_mode = S_INDIY;
+			else {
+				xerr('a', "Only (hl), (ix), (iy) are register-indirect.");
+				esp->e_mode = S_INDHL;
+			}
+			esp->e_base.e_ap = NULL;
+		} else {
+			expr(esp, 0);
+			esp->e_mode = S_INDM;		/* (hhll) absolute */
+		}
+		if ((c = getnb()) != RTIND)
+			xerr('a', "Missing ')'.");
 	} else {
 		unget(c);
 		if ((indx = admode(R8)) != 0) {
@@ -45,8 +66,20 @@ struct expr *esp;
 			esp->e_addr = indx & 0xFF;
 			esp->e_base.e_ap = NULL;
 		} else {
-			expr(esp, 0);
+			expr(esp, 0);			/* displacement, or a bare label */
 			esp->e_mode = S_USER;
+		}
+		if ((c = getnb()) == LFIND) {		/* d(ix) / d(iy) — displacement now in esp */
+			if ((indx = admode(R16)) != 0 &&
+			    (((indx & 0xFF) == IX) || ((indx & 0xFF) == IY))) {
+				esp->e_mode = ((indx & 0xFF) == IX) ? S_IDXIX : S_IDXIY;
+			} else {
+				xerr('a', "Register IX or IY required.");
+			}
+			if ((c = getnb()) != RTIND)
+				xerr('a', "Missing ')'.");
+		} else {
+			unget(c);
 		}
 	}
 	return (esp->e_mode);

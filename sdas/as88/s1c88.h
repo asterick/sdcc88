@@ -57,6 +57,12 @@
 #define	S_IMMED	30		/* #nn / #mmnn                     */
 #define	S_R8	31		/* byte register a/b/l/h           */
 #define	S_R16	33		/* 16-bit register ba/hl/ix/iy/sp  */
+#define	S_INDHL	34		/* (hl)                            */
+#define	S_INDIX	35		/* (ix)        no displacement     */
+#define	S_INDIY	36		/* (iy)        no displacement     */
+#define	S_IDXIX	37		/* d(ix)       displacement in expr */
+#define	S_IDXIY	38		/* d(iy)       displacement in expr */
+#define	S_INDM	39		/* (hhll) / (label)   absolute     */
 
 /*
  * Instruction classes (mne.m_type -> the machine() switch).

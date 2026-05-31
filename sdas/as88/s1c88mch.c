@@ -54,32 +54,52 @@ struct mne *mp;
 		t2 = addr(&e2);
 		v1 = (int) (e1.e_addr & 0xFF);
 		v2 = (int) (e2.e_addr & 0xFF);
-		if (t1 == S_R8 && t2 == S_R8) {
-			outab(0x40 + (v1 << 3) + v2);		/* ld r8,r8' (40..5F)   */
-		} else if (t1 == S_R8 && t2 == S_IMMED) {
-			outab(0xB0 + v1);			/* ld r8,#nn  (B0..B3)  */
-			outrb(&e2, 0);
-		} else if (t1 == S_R16 && t2 == S_IMMED) {
-			if (v1 == SP) {
-				xerr('a', "ld sp,#imm not yet supported.");
-			} else {
-				outab(0xC4 + v1);		/* ld rr,#mmnn (C4..C7) */
-				outrw(&e2, 0);
+		if (t1 == S_R8) {			/* ld r8, <src> */
+			switch (t2) {
+			case S_R8:    outab(0x40 + (v1 << 3) + v2);		break;
+			case S_IMMED: outab(0xB0 + v1); outrb(&e2, 0);		break;
+			case S_INDHL: outab(0x40 + (v1 << 3) + 5);		break;
+			case S_INDIX: outab(0x40 + (v1 << 3) + 6);		break;
+			case S_INDIY: outab(0x40 + (v1 << 3) + 7);		break;
+			case S_IDXIX: outab(0xCE); outab(0x40 + (v1 << 3)); outrb(&e2, R_SGND); break;
+			case S_IDXIY: outab(0xCE); outab(0x41 + (v1 << 3)); outrb(&e2, R_SGND); break;
+			case S_INDM:  outab(0xCE); outab(0xD0 + v1); outrw(&e2, 0); break;
+			default:      xerr('a', "Invalid Addressing Mode.");	break;
 			}
-		} else if (t1 == S_R16 && t2 == S_R16) {
-			if (v1 <= IY && v2 <= IY) {
-				outab(0xCF);			/* ld rr,rr' (CF,E0..EF) */
-				outab(0xE0 + (v1 << 2) + v2);
-			} else if (v2 == SP) {			/* ld rr,sp */
-				outab(0xCF);
-				outab(v1 == BA ? 0xF8 : v1 == HL ? 0xF4 :
-				      v1 == IX ? 0xFA : 0xFE);
-			} else if (v1 == SP) {			/* ld sp,rr (CF,F0..F3) */
-				outab(0xCF);
-				outab(0xF0 + v2);
+		} else if ((t1 == S_INDHL || t1 == S_INDIX || t1 == S_INDIY) && t2 == S_R8) {
+			outab((t1 == S_INDHL ? 0x68 : t1 == S_INDIX ? 0x60 : 0x70) + v2);
+		} else if ((t1 == S_IDXIX || t1 == S_IDXIY) && t2 == S_R8) {
+			outab(0xCE);
+			outab(0x44 + (v2 << 3) + (t1 == S_IDXIY ? 1 : 0));
+			outrb(&e1, R_SGND);
+		} else if (t1 == S_INDM && t2 == S_R8) {
+			outab(0xCE); outab(0xD4 + v2); outrw(&e1, 0);
+		} else if (t1 == S_R16) {		/* ld rr, <src> */
+			if (t2 == S_IMMED) {
+				if (v1 == SP)
+					xerr('a', "ld sp,#imm not yet supported.");
+				else { outab(0xC4 + v1); outrw(&e2, 0); }	/* ld rr,#mmnn */
+			} else if (t2 == S_INDM) {
+				outab(0xB8 + v1); outrw(&e2, 0);		/* ld rr,(hhll) */
+			} else if (t2 == S_R16) {
+				if (v1 <= IY && v2 <= IY) {
+					outab(0xCF);			/* ld rr,rr' (CF,E0..EF) */
+					outab(0xE0 + (v1 << 2) + v2);
+				} else if (v2 == SP) {			/* ld rr,sp */
+					outab(0xCF);
+					outab(v1 == BA ? 0xF8 : v1 == HL ? 0xF4 :
+					      v1 == IX ? 0xFA : 0xFE);
+				} else if (v1 == SP) {			/* ld sp,rr (CF,F0..F3) */
+					outab(0xCF);
+					outab(0xF0 + v2);
+				} else {
+					xerr('a', "Invalid Addressing Mode.");
+				}
 			} else {
 				xerr('a', "Invalid Addressing Mode.");
 			}
+		} else if (t1 == S_INDM && t2 == S_R16) {
+			outab(0xBC + v2); outrw(&e1, 0);		/* ld (hhll),rr */
 		} else {
 			xerr('a', "Invalid Addressing Mode.");
 		}
@@ -109,8 +129,20 @@ struct mne *mp;
 				else
 					xerr('a', "8-bit ALU source must be A or B.");
 			} else if (t2 == S_IMMED) {
-				outab(op + 2);
+				outab(op + 2);			/* op a,#nn */
 				outrb(&e2, 0);
+			} else if (t2 == S_INDHL) {
+				outab(op + 3);			/* op a,(hl) */
+			} else if (t2 == S_INDIX) {
+				outab(op + 6);			/* op a,(ix) */
+			} else if (t2 == S_INDIY) {
+				outab(op + 7);			/* op a,(iy) */
+			} else if (t2 == S_INDM) {
+				outab(op + 5); outrw(&e2, 0);	/* op a,(hhll) */
+			} else if (t2 == S_IDXIX) {
+				outab(0xCE); outab(op + 0); outrb(&e2, R_SGND);	/* op a,d(ix) */
+			} else if (t2 == S_IDXIY) {
+				outab(0xCE); outab(op + 1); outrb(&e2, R_SGND);	/* op a,d(iy) */
 			} else {
 				xerr('a', "Invalid Addressing Mode.");
 			}
