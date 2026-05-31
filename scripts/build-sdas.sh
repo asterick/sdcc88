@@ -3,37 +3,45 @@
 # build-sdas.sh — build a sdas assembler backend in the configured SDCC tree.
 #
 # skip-c targets SDCC's own sdas/sdld (see docs/s1c88/abi-decision.md "Toolchain & validator").
-# The compiler build (build.sh) only does `make -C src`; the sdas assemblers are separate. This
-# script generates a backend's Makefile (config.status) and builds it against the shared asxxsrc
-# core, producing build/sdcc-4.5.0/bin/sdas<arch>.
+# build.sh only does `make -C src` (the compiler); the sdas assemblers are separate. This script
+# builds a backend against the shared sdas/asxxsrc/ core, producing build/sdcc-4.5.0/bin/sdas<arch>.
 #
-#   scripts/build-sdas.sh            # default: asz80 -> sdasz80 (proves the pipeline)
-#   scripts/build-sdas.sh as88       # the S1C88 backend -> sdas88 (once sdas/as88/ exists)
+#   scripts/build-sdas.sh            # default: as88 -> sdas88 (our S1C88 backend = the validator)
+#   scripts/build-sdas.sh asz80      # stock z80 backend -> sdasz80 (proves the pipeline)
 #
-# For a backend configure doesn't know about (e.g. our new as88), this generates its Makefile from
-# Makefile.in by substitution from a sibling backend's Makefile — analogous to how build.sh injects
-# src/s1c88/Makefile.
+# Two cases:
+#  - stock backend (asz80, …): configure already knows it; generate its Makefile via config.status.
+#  - our overlaid backend (as88): sources live in skip-c/sdas/as88/; overlay them into the build tree
+#    and derive the Makefile from asz80's generated one (config.status doesn't know our port) — the
+#    same trick build.sh uses to inject src/s1c88/Makefile.
 set -euo pipefail
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 SDCC="${REPO}/build/sdcc-4.5.0"
-BACKEND="${1:-asz80}"
+BACKEND="${1:-as88}"
 DIR="${SDCC}/sdas/${BACKEND}"
+OVERLAY="${REPO}/sdas/${BACKEND}"
+BIN="sdas${BACKEND#as}"   # asz80->sdasz80, as88->sdas88
 
 [ -f "${SDCC}/config.status" ] || { echo "!! tree not configured — run ./build.sh first" >&2; exit 1; }
-[ -d "${DIR}" ] || { echo "!! no sdas backend dir: sdas/${BACKEND}" >&2; exit 1; }
 
 cd "${SDCC}"
-if [ ! -f "sdas/${BACKEND}/Makefile" ]; then
-  echo ">> generating sdas/${BACKEND}/Makefile"
-  if grep -q "sdas/${BACKEND}/Makefile" config.status; then
-    ./config.status --file="sdas/${BACKEND}/Makefile:sdas/${BACKEND}/Makefile.in"
-  else
-    # configure doesn't know this backend (new port): derive the Makefile from asz80's, fixing paths.
-    echo "   (backend not in config.status — deriving from asz80)"
-    sed "s|asz80|${BACKEND}|g" "sdas/asz80/Makefile" > "sdas/${BACKEND}/Makefile"
-  fi
+if [ -d "${OVERLAY}" ]; then
+  echo ">> overlaying skip-c/sdas/${BACKEND} -> build tree"
+  mkdir -p "${DIR}"
+  cp "${OVERLAY}"/* "${DIR}/"
+  # config.status doesn't know our backend; derive its Makefile from asz80's generated one,
+  # fixing the backend dir, the source filenames, and the output binary name.
+  [ -f sdas/asz80/Makefile ] || ./config.status --file=sdas/asz80/Makefile:sdas/asz80/Makefile.in
+  sed -e "s/asz80/${BACKEND}/g" \
+      -e 's/z80pst\.c/s1c88pst.c/g; s/z80mch\.c/s1c88mch.c/g; s/z80adr\.c/s1c88adr.c/g' \
+      -e "s/sdasz80/${BIN}/g" \
+      sdas/asz80/Makefile > "${DIR}/Makefile"
+else
+  echo ">> stock backend — generating Makefile via config.status"
+  [ -d "${DIR}" ] || { echo "!! no sdas backend: sdas/${BACKEND}" >&2; exit 1; }
+  ./config.status --file="sdas/${BACKEND}/Makefile:sdas/${BACKEND}/Makefile.in"
 fi
 
 echo ">> make -C sdas/${BACKEND}"
 make -C "sdas/${BACKEND}"
-echo ">> built: $(ls -la "${SDCC}/bin/sdas${BACKEND#as}" 2>/dev/null | awk '{print $NF" ("$5" bytes)"}')"
+echo ">> built: $(ls -la "${SDCC}/bin/${BIN}" 2>/dev/null | awk '{print $NF" ("$5" bytes)"}')"
