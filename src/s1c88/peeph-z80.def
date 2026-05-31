@@ -26,3 +26,59 @@ replace restart {
 	ld	%1 (%2), #0
 	; peephole 178 direct load zero constant to memory addressed by index register
 } if notUsed('a'), canAssign(%1 %2 '#0')
+
+// --- S1C88: all control transfers are PC-relative --------------------------
+// The z80 model emits absolute jp/call; the generic peeph.def shortens jp->jr
+// when in range. The S1C88 has no absolute jp/call — short relative is jrs/cars
+// (8-bit), long relative is jrl/carl (16-bit). Map the residual z80 branch
+// mnemonics to their S1C88 equivalents. These run after the generic jp->ret and
+// jp->jr passes, so an in-range jump becomes jp->jr->jrs (2 bytes) and only the
+// out-of-range / external ones fall through to jrl (3 bytes).
+//
+// Conditional forms convert only for the basic flags c/nc/z/nz — jrl/jrs encode
+// just those; the signed po/p/m/pe come from the genCmp synthesis and will be
+// retargeted there (they stay as `jp` for now, still flagged by the validator).
+// The notSame() guards keep the computed jp hl / jp (iy) / call (iy) forms from
+// being mis-rewritten into a relative branch.
+
+replace {
+	jr	%5
+} by {
+	jrs	%5
+	; peephole s1c88-j1 z80 jr -> s1c88 jrs (8-bit relative)
+}
+
+replace {
+	jr	%1, %5
+} by {
+	jrs	%1, %5
+	; peephole s1c88-j2 z80 jr cc -> s1c88 jrs cc
+} if same(%1 'C' 'NC' 'NZ' 'Z')
+
+replace {
+	jp	%5
+} by {
+	jrl	%5
+	; peephole s1c88-j3 z80 jp -> s1c88 jrl (16-bit relative)
+} if notSame(%5 'hl' 'ix' 'iy')
+
+replace {
+	jp	%1, %5
+} by {
+	jrl	%1, %5
+	; peephole s1c88-j4 z80 jp cc -> s1c88 jrl cc
+} if same(%1 'C' 'NC' 'NZ' 'Z')
+
+replace {
+	call	%5
+} by {
+	carl	%5
+	; peephole s1c88-j5 z80 call -> s1c88 carl (16-bit relative call)
+} if notSame(%5 'hl' 'ix' 'iy')
+
+replace {
+	call	%1, %5
+} by {
+	carl	%1, %5
+	; peephole s1c88-j6 z80 call cc -> s1c88 carl cc
+} if same(%1 'C' 'NC' 'NZ' 'Z')
