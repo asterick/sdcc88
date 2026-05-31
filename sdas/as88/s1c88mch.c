@@ -250,6 +250,12 @@ struct mne *mp;
 			} else {
 				xerr('a', "Invalid Addressing Mode.");
 			}
+		} else if (t1 == S_INDHL) {		/* op [hl],src — CE,op+{a:4,#nn:5,(ix):6,(iy):7} */
+			if (t2 == S_R8 && v2 == A)	{ outab(0xCE); outab(op + 4); }
+			else if (t2 == S_IMMED)		{ outab(0xCE); outab(op + 5); outrb(&e2, 0); }
+			else if (t2 == S_INDIX)		{ outab(0xCE); outab(op + 6); }
+			else if (t2 == S_INDIY)		{ outab(0xCE); outab(op + 7); }
+			else xerr('a', "Invalid [hl]-destination ALU form.");
 		} else if (t1 == S_CREG) {		/* and/or/xor sc,#nn ; cp br,#hh */
 			if (v1 == CR_SC && t2 == S_IMMED &&
 			    (rf == S_AND || rf == S_OR || rf == S_XOR)) {
@@ -317,18 +323,30 @@ struct mne *mp;
 			outab(0xC7 + v2);		/* ex ba,hl/ix/iy/sp = C8..CB */
 		} else if (t1 == S_R8 && v1 == A && t2 == S_R8 && v2 == B) {
 			outab(0xCC);			/* ex a,b */
+		} else if (t1 == S_R8 && v1 == A && t2 == S_INDHL) {
+			outab(0xCD);			/* ex a,(hl) */
 		} else {
 			xerr('a', "Invalid Addressing Mode.");
 		}
 		break;
 
-	case S_JP:				/* jp hl */
+	case S_JP:				/* jp hl / jp (kk) */
 		t1 = addr(&e1);
 		v1 = (int) (e1.e_addr & 0xFF);
 		if (t1 == S_R16 && v1 == HL)
-			outab(0xF4);
+			outab(0xF4);		/* jp hl */
+		else if (t1 == S_INDM)
+			{ outab(0xFD); outrb(&e1, 0); }	/* jp (kk) — 8-bit vector */
 		else
-			xerr('a', "Only `jp hl' supported (use jrl for a label target).");
+			xerr('a', "jp takes hl or a (kk) vector (use jrl for a label).");
+		break;
+
+	case S_INT:				/* int (kk) — FC,kk */
+		t1 = addr(&e1);
+		if (t1 == S_INDM)
+			{ outab(0xFC); outrb(&e1, 0); }
+		else
+			xerr('a', "int takes a (kk) vector operand.");
 		break;
 
 	case S_CALL:				/* call (hhll)  — absolute indirect */
@@ -429,6 +447,24 @@ struct mne *mp;
 	case S_INHE:		/* CE-prefixed inherent: mlt/div/sep/halt/slp */
 		outab(0xCE);
 		outab(op);
+		break;
+
+	case S_BIT:		/* bit a,b (94) / bit a,#nn (96) / bit b,#nn (97) / bit (hl),#nn (95) */
+		t1 = addr(&e1);
+		comma(1);
+		t2 = addr(&e2);
+		v1 = (int) (e1.e_addr & 0xFF);
+		v2 = (int) (e2.e_addr & 0xFF);
+		if (t1 == S_R8 && v1 == A && t2 == S_R8 && v2 == B)
+			outab(0x94);				/* bit a,b */
+		else if (t1 == S_R8 && v1 == A && t2 == S_IMMED)
+			{ outab(0x96); outrb(&e2, 0); }		/* bit a,#nn */
+		else if (t1 == S_R8 && v1 == B && t2 == S_IMMED)
+			{ outab(0x97); outrb(&e2, 0); }		/* bit b,#nn */
+		else if (t1 == S_INDHL && t2 == S_IMMED)
+			{ outab(0x95); outrb(&e2, 0); }		/* bit (hl),#nn */
+		else
+			xerr('a', "Invalid bit form.");
 		break;
 
 	default:
