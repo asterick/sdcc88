@@ -2,10 +2,12 @@
 
 > **Status:** `sdas/as88/` builds `bin/sdas88` and encodes **real S1C88** for the **register/immediate
 > subset (v0, byte-verified vs App. A — commit `16a9bd4`)**: `ld8`/`ld16` (reg-reg, reg-#imm, rr-rr),
-> 8-bit + 16-bit ALU, `inc`/`dec`, `push`/`pop`, `ex`, `ret`/`nop`. It already works as a validator
-> (`add1` codegen → `50 59 91 4B 42 F8`; the invalid z80-ism `sub a,l` is rejected). **Next: the
-> memory-indirect operands** (`(hl)`/`(ix+d)`/`(hhll)`), the rest of the LD/ALU memory forms, and the
-> branches (`jrs`/`jrl`/`cars`/`carl`), then wire into `check-s1c88.sh`. Build with
+> 8-bit + 16-bit ALU, `inc`/`dec`, `push`/`pop`, `ex`, `ret`/`nop`. **v1 (commit `dad7745`) adds the
+> memory-indirect operands** — `(hl)`/`(ix)`/`(iy)`, `d(ix)`/`d(iy)`, `(hhll)`/`(label)` absolute (byte-
+> verified). Run on real codegen (args.c, 70 insns) it assembles every valid instruction and flags only
+> genuine codegen z80-isms (`sub a,l`, `push af`, `pop de`, `add ix,sp`, `jp (hl)`/`jp label`). **Next
+> (v2): the branch instructions** (`jp hl`/`call`/`jrs`/`jrl`/`cars`/`carl` with PC-relative) + rotates,
+> then wire into `check-s1c88.sh`. Build with
 > `scripts/build-sdas.sh as88`. Authority: [`instruction-set.md`](instruction-set.md) (App. A opcode map
 > + the `CE`/`CF` prefix pages) and [`addressing-modes.md`](addressing-modes.md).
 >
