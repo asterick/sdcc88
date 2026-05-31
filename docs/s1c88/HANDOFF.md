@@ -46,12 +46,22 @@ Step 1 of the reshape is **DONE** (commit `b606833`); current action is **Step 2
        Verified `f2/fc/fi/f3/pp/fl` + a caller; the A/BA overlap is handled by construction.
      - `z80IsReturned`/`z80IsRegArg`, `genSend`/`genReceive` are all data-driven off aopRet/aopArg, so
        they followed automatically.
-     **Next, in order:** (a) **arg ABI phase 2** — add `IX,IY` (int 3rd/4th, near-ptr 1st/2nd) + the S1C88
-     index-register move codegen (`ASMOP_IX`, `ld ix,hl`, non-byte handling); (b) the **central DE-scratch
-     retarget** (`_pairs[]`, `fetchPairLong`'s `PAIR_DE?ASMOP_E:ASMOP_C` ternaries, `ex de,hl`→`ex ba,hl`,
-     push/pop) — clears the bulk of internal `de` residue (genPlus/genMinus); (c) mop up direct byte-C/D/E
-     sites; drop `asmop_iyl/iyh`. Run `scripts/check-s1c88.sh` after each batch (realistic input now ~9,
-     was 18 at Step 1; pure call-ABI tests are at 0).
+   - **Central DE→BA scratch retarget — IN PROGRESS** (the "make emitted code actually S1C88" work).
+     Additive strategy: add `PAIR_BA` as a first-class pair, then flip scratch *selection* to prefer it,
+     gated by `isPairDead(PAIR_BA)` (= A,B dead → no A/BA overlap). Meter catches missed byte ternaries.
+     - **slice 4a DONE (`a13bc77`):** `PAIR_BA` in the enum + `_pairs[]` + isPairInUse/isPairDead +
+       genMovePairPair; `push ba`/`pop ba` valid. Additive no-op.
+     - **slice 4b-i DONE (`aee2ed0`):** genPlus 16-bit add prefers BA → emits `add hl, ba` (3 sites);
+       `fc`/`fi` shed the z80 DE copy. Meter t3 9→6, no regressions.
+     - **Next:** genMinus `sbc hl,ba` (gen.c ~8953/10677 — **A-overlap trap:** force `a_dead=false` when
+       pair==BA, since the intervening left-load would else clobber the operand in A); then wire
+       `fetchPairLong` for PAIR_BA (`ex de,hl`→`ex ba,hl` SP tricks, opt gates) to unlock the fetchPair
+       selections + the getFreePairId/getDeadPairId flip (~13 callers). Then mop up direct byte-C/D/E
+       sites + the epilogue `pop de`; drop `asmop_iyl/iyh`. Revert point `a13bc77`.
+   - **Also pending:** arg ABI phase 2 (IX/IY index-register passing — `ASMOP_IX`, `ld ix,hl`, non-byte
+     handling). Run `scripts/check-s1c88.sh` after each batch (realistic input now ~6, was 18 at Step 1;
+     pure call-ABI tests at 0). **HIGH-RISK area** (silent miscompile w/o assembler) — the skiploom
+     validator (task #4) is the real de-risker for this stretch.
    - **Step 3 (task #19):** finish emission — S1C88 register names + any S1C88-specific mnemonics that
      differ from z80 (sdas style). Verify the smoke-test output looks like valid S1C88.
 3. Commit **green** checkpoints as you go; clearly label any intentionally-red WIP.
