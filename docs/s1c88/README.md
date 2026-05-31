@@ -7,15 +7,14 @@ re-deriving the ISA each session.
 These files are distilled from the **Epson official PDFs**, transcribed from machine-extracted text.
 Figures/diagrams in the source were lost in extraction and have been reconstructed as tables or
 descriptions, marked `*(figure not captured)*`. Where the extraction was garbled, the affected spot is
-flagged inline (often `[OCR?]`) rather than guessed. The sibling [`../../../skiploom`] assembler's
-opcode table (`src/util/s1c88.csv`) was used as an independent cross-check, **not** as a source.
+flagged inline (often `[OCR?]`) rather than guessed.
 
 ## Source documents
 
 | Doc | File | Pages | What it is |
 |-----|------|-------|------------|
 | **Core CPU Manual** (MF658-05) | `docs/s1c88-core-cpu-manual.pdf` | 226 | The S1C88 core architecture and ISA |
-| **Tool Package Manual I** (S5U1C88000C) | `../skiploom/docs/id000920.pdf` | 331 | Official C compiler, assembler, linker, locator, utilities |
+| **Tool Package Manual I** (S5U1C88000C) | Epson manual (not bundled) | 331 | Official C compiler, assembler, linker, locator, utilities |
 
 (Raw per-page text extraction lives in the git-ignored `docs/_extract/`; regenerate with PyMuPDF — see
 the extraction note at the bottom.)
@@ -74,7 +73,7 @@ python3 -m pip install --user --break-system-packages pymupdf
 python3 - <<'PY'
 import fitz, os
 for src, out in [("docs/s1c88-core-cpu-manual.pdf","docs/_extract/core-cpu"),
-                 ("../skiploom/docs/id000920.pdf","docs/_extract/id000920")]:
+                 ("docs/id000920.pdf","docs/_extract/id000920")]:
     os.makedirs(out, exist_ok=True); d = fitz.open(src)
     if d.needs_pass: d.authenticate("")          # id000920 is empty-password RC4 encrypted
     for i in range(d.page_count):

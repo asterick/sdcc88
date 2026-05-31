@@ -41,8 +41,7 @@ The base-port choice and the target ABI / z80→s1c88 register mapping are docum
 
 Drive every change from `../../docs/s1c88/` (distilled Epson manuals) — especially
 [`instruction-set.md`](../../docs/s1c88/instruction-set.md), [`addressing-modes.md`](../../docs/s1c88/addressing-modes.md),
-and [`abi-decision.md`](../../docs/s1c88/abi-decision.md) — cross-checked against
-`../../../skiploom/src/util/s1c88.csv`.
+and [`abi-decision.md`](../../docs/s1c88/abi-decision.md).
 
 1. **`ralloc.c` / `ralloc.h` / `ralloc2.cc`** — reshape the z80 register file (`a,c,b,e,d,l,h,iyl,iyh` +
    pairs) into the real S1C88 set (`A`, `B`/`BA`, `L`/`H`/`HL`, `IX`, `IY`, carry, `SP`) and update the

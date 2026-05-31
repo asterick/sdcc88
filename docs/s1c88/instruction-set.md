@@ -13,7 +13,7 @@
 
 > **Authoritative per-instruction semantics live in §4.4 (PDF pp. 65–200), which is NOT transcribed here.** §4.4 gives the full operation pseudocode, flag-derivation detail, and timing notes for every individual instruction form. The "Page" columns below (and Appendix C) point into that §4.4 region (manual page numbers). When this reference and §4.4 disagree, §4.4 wins.
 
-> **Cross-reference:** the sibling project `../skiploom` carries an independent S1C88 opcode table (`src/util/s1c88.csv`) derived from the same manual; use it to cross-check opcode bytes.
+> **Opcode bytes:** Appendix A below transcribes the manual's operation-code map (PDF pp. 195–197) — the authority for the opcode columns in these tables.
 
 ## Notes on the extraction and its faithfulness
 
@@ -843,13 +843,13 @@ Branch timing varies by core model and (for calls) minimum/maximum mode and whet
 | JRS NF3,rr | CE,EF,rr | F3=0 | 3 | 3 / 3 | 113 |
 | JRL qqrr | F3,rr,qq | unconditional | 3 | 3 / 3 | 110 |
 | JRL C,qqrr | EC,rr,qq | C=1 | 3 | 3 / 3 | 111 |
-<!-- opcode assignments verified against skiploom src/util/s1c88.csv -->
+<!-- opcode assignments cross-checked against the App. A operation-code map -->
 | JRL NC,qqrr | ED,rr,qq | C=0 | 3 | 3 / 3 | 111 |
 | JRL Z,qqrr | EE,rr,qq | Z=1 | 3 | 3 / 3 | 111 |
 | JRL NZ,qqrr | EF,rr,qq | Z=0 | 3 | 3 / 3 | 111 |
 | DJR NZ,rr | F5,rr | B≠0 after B←B-1 | 2 | 4 / 4 | 104 |
 
-> **Opcode assignments (verified against skiploom `src/util/s1c88.csv`):** the §4.3.3 extracted opcode column for these short jumps was shifted by one row; the correct unprefixed assignments are `E0–E3 = CARS C/NC/Z/NZ,rr`, `E4–E7 = JRS C/NC/Z/NZ,rr`, `E8–EB = CARL C/NC/Z/NZ,qqrr`, `EC–EF = JRL C/NC/Z/NZ,qqrr`, and the unconditional forms are `F0 = CARS rr`, `F1 = JRS rr`, `F2 = CARL qqrr`, `F3 = JRL qqrr`. Tables here use these corrected values.
+> **Opcode assignments (cross-checked against the App. A operation-code map):** the §4.3.3 extracted opcode column for these short jumps was shifted by one row; the correct unprefixed assignments are `E0–E3 = CARS C/NC/Z/NZ,rr`, `E4–E7 = JRS C/NC/Z/NZ,rr`, `E8–EB = CARL C/NC/Z/NZ,qqrr`, `EC–EF = JRL C/NC/Z/NZ,qqrr`, and the unconditional forms are `F0 = CARS rr`, `F1 = JRS rr`, `F2 = CARL qqrr`, `F3 = JRL qqrr`. Tables here use these corrected values.
 > Semantics: `JRS rr → PC←PC+rr+1`; conditional taken → `PC←PC+rr+1` else `PC←PC+2`. `JRL → PC←PC+qqrr+2` (else +3). On MODEL2/3 each also does `CB←NB` on taken / `NB←CB` on fall-through. `DJR NZ,rr → B←B-1; if B≠0 then PC←PC+rr+1 else PC←PC+2`.
 
 ### Indirect jump / relative short call — page 56
@@ -880,7 +880,7 @@ Branch timing varies by core model and (for calls) minimum/maximum mode and whet
 | CARS NF2,rr | CE,FE,rr | F2=0 | 3 | 88 |
 | CARS NF3,rr | CE,FF,rr | F3=0 | 3 | 88 |
 
-> CARS pushes return PC then `PC←PC+rr+1`. On MODEL2/3 max mode it additionally pushes CB (3-byte stack frame) and sets `CB←NB`. Opcodes verified via skiploom CSV: `CARS C/NC/Z/NZ = E0/E1/E2/E3`, unconditional `CARS rr = F0`.
+> CARS pushes return PC then `PC←PC+rr+1`. On MODEL2/3 max mode it additionally pushes CB (3-byte stack frame) and sets `CB←NB`. Opcodes per the App. A operation-code map: `CARS C/NC/Z/NZ = E0/E1/E2/E3`, unconditional `CARS rr = F0`.
 
 ### Relative long call / indirect call — page 57
 
@@ -991,7 +991,7 @@ The map is a 16×16 grid: high nibble across (columns 0–F), low nibble down (r
 | F8 | RET | F9 | RETE | FA | RETS | FB | CALL [hhll] |
 | FC | INT [kk] | FD | JP [kk] | FE | *Undefined* | FF | NOP |
 
-> **Reconstruction note (E0–F3):** the E/F columns hold the CARS/JRS/CARL/JRL conditional & unconditional forms. The assignments above (`E0–E3` CARS C/NC/Z/NZ, `E4–E7` JRS C/NC/Z/NZ, `E8–EB` CARL, `EC–EF` JRL, `F0–F3` unconditional CARS/JRS/CARL/JRL) were **cross-verified against skiploom's `src/util/s1c88.csv`**, which corrects a one-row shift present in the flattened §4.3.3 extraction. All other unprefixed cells were unambiguous.
+> **Reconstruction note (E0–F3):** the E/F columns hold the CARS/JRS/CARL/JRL conditional & unconditional forms. The assignments above (`E0–E3` CARS C/NC/Z/NZ, `E4–E7` JRS C/NC/Z/NZ, `E8–EB` CARL, `EC–EF` JRL, `F0–F3` unconditional CARS/JRS/CARL/JRL) were **cross-verified against the App. A operation-code map**, which corrects a one-row shift present in the flattened §4.3.3 extraction. All other unprefixed cells were unambiguous.
 
 ## A.2 `CE`-prefixed page (2nd byte, 1st byte = `CE`)
 

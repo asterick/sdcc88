@@ -104,10 +104,6 @@ macros), `mappings.i` (asm-dialect tables), `peep.c`/`peeph*.def` (peephole). Se
 memory model, addressing modes, instruction set, the C ABI, and the assembler/linker/locator toolchain.
 Start at `docs/s1c88/README.md`; the backend decisions are in `docs/s1c88/abi-decision.md`.
 
-The sibling project [`../skiploom`](../skiploom) is a backward-compatible JS reimplementation of the Epson
-AS88 assembler/linker. Use its opcode table (`src/util/s1c88.csv`) only as an **independent cross-check**
-of the distilled ISA — the Epson manuals in `docs/s1c88/` are the authority.
-
 ## Conventions
 
 - Work on the **`s1c88-retarget`** branch. Commit green checkpoints; clearly label any intentionally-red

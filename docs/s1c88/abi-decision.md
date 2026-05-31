@@ -229,16 +229,14 @@ catches wrong *register names*, not wrong *encodings/flags/sizes* — the assemb
 
 **Decision:** sdcc88's binary handoff is **SDCC's own `sdas`/`sdld`** (its in-tree fork of the ASxxxx
 cross-assembler suite — the toolchain almost every SDCC port uses, and the dialect sdcc88 already emits).
-**We retarget them for the S1C88** rather than bridging to an external assembler. `../skiploom` (AS88) is
-*not* the toolchain; its opcode table (`src/util/s1c88.csv`) stays only an independent ISA cross-check
-(per `CLAUDE.md`).
+**We retarget them for the S1C88** rather than bridging to an external assembler.
 
 Concretely:
 - **Assembler — add an `sdas/as88/` backend** modeled on `build/sdcc-4.5.0/sdas/asz80/` (`z80.h`,
   `z80adr.c` addressing modes, `z80mch.c` the opcode/encoding table, `z80pst.c` mnemonics). This holds the
-  real S1C88 encodings (incl. the `CE`/`CF` 2nd-page prefix scheme; see `instruction-set.md` App. A and
-  the skiploom CSV as cross-check). Built incrementally — start with the instruction subset the codegen
-  currently emits and grow it alongside the codegen.
+  real S1C88 encodings (incl. the `CE`/`CF` 2nd-page prefix scheme; see `instruction-set.md` App. A).
+  Built incrementally — start with the instruction subset the codegen currently emits and grow it
+  alongside the codegen.
 - **Linker — `sdld`** is largely architecture-independent (the `.rel` relocatable format is generic);
   retarget is mostly registering the S1C88 target + any arch-specific bits.
 - **The `as88` IS the validator:** assemble the emitted `.asm`/`.src` as-is (sdas syntax — no bridge),
@@ -257,7 +255,7 @@ generates the backend Makefile (`config.status --file=`) and builds `bin/sdasz80
 
 **Building `as88` (next):** create `sdas/as88/` (`s1c88.h`, `s1c88adr.c`, `s1c88pst.c`, `s1c88mch.c`,
 `Makefile.in`) modeled on `asz80`, with S1C88 encodings from `instruction-set.md` (App. A opcode map +
-the `CE`/`CF` 2nd-page prefixes; skiploom CSV cross-check). Build incrementally — cover the instruction
+the `CE`/`CF` 2nd-page prefixes). Build incrementally — cover the instruction
 subset the codegen emits first (ld/add/adc/sub/sbc/inc/dec/push/pop/ret/call/jp/jr/ex/cp + the 16-bit
 ops), wire into `check-s1c88.sh` to assemble the smoke output, then grow it as codegen emits more.
 `build-sdas.sh` already handles building a config-unknown backend (derives its Makefile from asz80).

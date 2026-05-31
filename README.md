@@ -30,11 +30,6 @@ end-to-end yet (see CLAUDE.md).
 - `third_party/sdcc/register_s1c88_port.patch` — registers the port in SDCC's core.
 - `docs/s1c88.md` — S1C88 ISA references.
 
-## Related
-
-- [`../skiploom`](../skiploom) — the S1C88 assembler/linker (AS88-compatible); source of the opcode table
-  (`src/util/s1c88.csv`) and CPU manual (`docs/id000920.pdf`) used as the encoding reference here.
-
 ## License
 
 SDCC is GPL-2.0-or-later; as an SDCC derivative, sdcc88 is GPL-compatible.

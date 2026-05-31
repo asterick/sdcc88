@@ -74,5 +74,3 @@ file suffix and invoking the stages in order — analogous to `gcc` driving `cpp
   `sdas` prefix disambiguates.)
 - The **Epson chain** (`as88`/`lk88`/`lc88`, IEEE-695/S-record) and these docs remain the **authoritative
   ISA/ABI reference**, but are no longer the build target.
-- **skiploom** (`../../../skiploom`) — a JS reimplementation of the Epson AS88 assembler/linker — stays an
-  **independent ISA cross-check** only (its opcode table `src/util/s1c88.csv`), not the toolchain.

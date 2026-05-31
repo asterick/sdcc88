@@ -60,7 +60,7 @@ Step 1 of the reshape is **DONE** (commit `b606833`); current action is **Step 2
        sites + the epilogue `pop de`; drop `asmop_iyl/iyh`. Revert point `a13bc77`.
    - **Also pending:** arg ABI phase 2 (IX/IY index-register passing — `ASMOP_IX`, `ld ix,hl`, non-byte
      handling). Run `scripts/check-s1c88.sh` after each batch (realistic input now ~6, was 18 at Step 1;
-     pure call-ABI tests at 0). **HIGH-RISK area** (silent miscompile w/o assembler) — the skiploom
+     pure call-ABI tests at 0). **HIGH-RISK area** (silent miscompile w/o assembler) — the **sdas88**
      validator (task #4) is the real de-risker for this stretch.
    - **Step 3 (task #19):** finish emission — S1C88 register names + any S1C88-specific mnemonics that
      differ from z80 (sdas style). Verify the smoke-test output looks like valid S1C88.

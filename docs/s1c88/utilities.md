@@ -989,7 +989,7 @@ The function-code column lists `@F`, `@T`, `@ABS`, `@NEG`, `@NOT`, `+`, `-`, `/`
 > (`0xA0 … 0xB9`) are printed as two separate parallel columns and their precise 1-to-1 pairing is not
 > unambiguous from the text alone. The first ~5 align as `@F=0xA0, @T=0xA1, @ABS=0xA2, @NEG=0xA3,
 > @NOT=0xA4`, and the ranges (functions `0xA0–0xBF`) are reliable; verify exact mid-list pairings against
-> the IEEE-695 standard / `../skiploom` before encoding.
+> the IEEE-695 standard before encoding.
 
 #### Command codes (`0xE0`–`0xF9`)
 
