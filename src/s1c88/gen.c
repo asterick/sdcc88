@@ -64,6 +64,7 @@ typedef enum
   PAIR_HL,
   PAIR_IY,
   PAIR_IX,
+  PAIR_BA,        // S1C88 B:A — the 2nd ALU pair (replaces z80 DE as 16-bit scratch)
   NUM_PAIRS
 } PAIR_ID;
 
@@ -96,6 +97,9 @@ static struct
   },
   {
     "ix", "ixl", "ixh", -1, -1
+  },
+  {
+    "ba", "a", "b", A_IDX, B_IDX
   }
 };
 
@@ -639,9 +643,13 @@ isPairInUse (PAIR_ID id, const iCode * ic)
     {
       return bitVectBitValue (ic->rMask, B_IDX) || bitVectBitValue (ic->rMask, C_IDX);
     }
+  else if (id == PAIR_BA)
+    {
+      return bitVectBitValue (ic->rMask, B_IDX) || bitVectBitValue (ic->rMask, A_IDX);
+    }
   else
     {
-      wassertl (0, "Only implemented for DE and BC");
+      wassertl (0, "Only implemented for DE, BC and BA");
       return TRUE;
     }
 }
@@ -659,8 +667,10 @@ isPairDead (PAIR_ID id, const iCode * ic)
       return isRegDead (H_IDX, ic) && isRegDead (L_IDX, ic);
     case PAIR_IY:
       return isRegDead (IYH_IDX, ic) && isRegDead (IYL_IDX, ic);
+    case PAIR_BA:
+      return isRegDead (B_IDX, ic) && isRegDead (A_IDX, ic);
     default:
-      wassertl (0, "Only implemented for DE, BC, HL and IY");
+      wassertl (0, "Only implemented for DE, BC, HL, IY and BA");
       return FALSE;
     }
 }
@@ -1646,6 +1656,7 @@ genMovePairPair (PAIR_ID srcPair, PAIR_ID dstPair)
     case PAIR_BC:
     case PAIR_DE:
     case PAIR_HL:
+    case PAIR_BA:
       if (srcPair == PAIR_IX || srcPair == PAIR_IY)
         {
           _push (srcPair);
