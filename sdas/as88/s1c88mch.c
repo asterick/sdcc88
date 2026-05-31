@@ -305,6 +305,35 @@ struct mne *mp;
 		}
 		break;
 
+	case S_ROT:		/* sla/sll/sra/srl/rl/rlc/rr/rrc/cpl/neg — CE,op+{a:0,b:1,[hl]:3} */
+		t1 = addr(&e1);
+		v1 = (int) (e1.e_addr & 0xFF);
+		if (t1 == S_R8 && v1 == A)
+			{ outab(0xCE); outab(op + 0); }
+		else if (t1 == S_R8 && v1 == B)
+			{ outab(0xCE); outab(op + 1); }
+		else if (t1 == S_INDHL)
+			{ outab(0xCE); outab(op + 3); }
+		else
+			xerr('a', "Operand must be a, b, or (hl).");
+		break;
+
+	case S_SWAP:		/* swap a (F6) / swap (hl) (F7) — unprefixed */
+		t1 = addr(&e1);
+		v1 = (int) (e1.e_addr & 0xFF);
+		if (t1 == S_R8 && v1 == A)
+			outab(0xF6);
+		else if (t1 == S_INDHL)
+			outab(0xF7);
+		else
+			xerr('a', "swap operand must be a or (hl).");
+		break;
+
+	case S_INHE:		/* CE-prefixed inherent: mlt/div/sep/halt/slp */
+		outab(0xCE);
+		outab(op);
+		break;
+
 	default:
 		xerr('a', "Unknown instruction class.");
 		break;

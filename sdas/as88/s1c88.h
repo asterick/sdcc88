@@ -90,6 +90,12 @@
 #define	S_CARS	79		/* cars — m_valu = F0 (uncond), cond base E0 */
 #define	S_CARL	80		/* carl — m_valu = F2 (uncond), cond base E8 */
 #define	S_DJR	81		/* djr nz — F5                            */
+#define	S_ROT	82		/* sla/sll/sra/srl/rl/rlc/rr/rrc/cpl/neg — CE,base+{a:0,b:1,[br:ll]:2,[hl]:3} */
+#define	S_SWAP	83		/* swap a (F6) / swap (hl) (F7) — unprefixed */
+#define	S_INHE	84		/* CE-prefixed inherent: mlt/div/sep/halt/slp (m_valu = 2nd byte) */
+#define	S_BIT	85		/* bit a,b / bit (hl),#nn / bit a,#nn / bit b,#nn / bit (br:ll),#nn */
+#define	S_INT	86		/* int [kk] — FC,kk                       */
+#define	S_LDC	87		/* (reserved — control-register ld handled in S_LD) */
 
 /*
  * Register / condition tables (defined in s1c88adr.c).
