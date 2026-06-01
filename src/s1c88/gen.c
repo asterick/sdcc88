@@ -10015,7 +10015,7 @@ genIfxJump (iCode * ic, char *jval)
       else
         {
           /* The buffer contains the bit on A that we should test */
-          emit2 ("bit %s, a", jval);
+          emit2 ("bit a, #0x%02x", 1u << atoi (jval));   // S1C88: bit reg,#mask
           cost2 (2, 8, 6, 4, 8, 4, 2, 2);
           inst = "NZ";
         }
@@ -10068,7 +10068,7 @@ genIfxJump (iCode * ic, char *jval)
       else
         {
           /* The buffer contains the bit on A that we should test */
-          emit2 ("bit %s, a", jval);
+          emit2 ("bit a, #0x%02x", 1u << atoi (jval));   // S1C88: bit reg,#mask
           cost2 (2, 8, 6, 4, 8, 4, 2, 2);
           inst = "Z";
         }
@@ -10189,6 +10189,48 @@ emit3_incdec (enum asminst inst, asmop *aop, int offset, const iCode *ic)
     }
 }
 
+/* S1C88: BIT is `bit {a,b,[hl],[br:ll]},#nn` — a logical AND-with-mask that sets
+   Z = !(operand & mask). The z80 `bit n,r` (test bit n of r) maps to
+   `bit r,#(1<<n)`: for a single-bit mask the Z result is identical. The operand
+   must be A or B (we don't fast-path [HL]); an L/H/[ix+d]/abs operand is copied
+   into a free byte reg (A or B) first. LD/PUSH/POP are flag-neutral, so the Z
+   set by `bit` reaches a following branch. */
+static void
+emitBitTest (int bitno, asmop *aop, int offset, const iCode *ic)
+{
+  unsigned mask = 1u << (bitno & 7);
+  if (aopInReg (aop, offset, A_IDX) || aopInReg (aop, offset, B_IDX))
+    {
+      cost2 (2, 8, 6, 4, 8, 4, 2, 2);
+      if (!regalloc_dry_run)   /* aopGet asserts !regalloc_dry_run */
+        emit2 ("bit %s, #0x%02x", aopGet (aop, offset, false), mask);
+      return;
+    }
+
+  bool a_used = aop->regs[A_IDX] >= 0;
+  bool b_used = aop->regs[B_IDX] >= 0;
+  if (a_used && b_used)
+    {
+      UNIMPLEMENTED;            /* value spans A and B and spills into L/H */
+      return;
+    }
+  asmop *scr = !a_used ? ASMOP_A : ASMOP_B;
+  bool save = !(scr == ASMOP_A ? isRegDead (A_IDX, ic) : isRegDead (B_IDX, ic));
+  if (save)
+    {
+      emit2 (scr == ASMOP_A ? "push a" : "push b");
+      cost2 (2, 11, 11, 7, 12, 10, 3, 3);
+    }
+  cheapMove (scr, 0, aop, offset, false);          /* ld scr, <byte>  — flag-neutral */
+  emit2 ("bit %s, #0x%02x", scr == ASMOP_A ? "a" : "b", mask);
+  cost2 (2, 8, 6, 4, 8, 4, 2, 2);
+  if (save)
+    {
+      emit2 (scr == ASMOP_A ? "pop a" : "pop b");
+      cost2 (2, 10, 9, 7, 12, 10, 3, 3);
+    }
+}
+
 /** Generic compare for > or <
  */
 static void
@@ -10276,8 +10318,7 @@ genCmp (operand * left, operand * right, operand * result, iCode * ifx, int sign
               if (!(result->aop->type == AOP_CRY && result->aop->size) && ifx &&
                 (left->aop->type == AOP_REG || left->aop->type == AOP_STK && !IS_SM83))
                 {
-                  if (!regalloc_dry_run)
-                    emit2 ("bit 7, %s", aopGet (left->aop, left->aop->size - 1, FALSE));
+                  emitBitTest (7, left->aop, left->aop->size - 1, ic);   // S1C88: bit reg,#0x80 (route L/H via A/B)
                   if (left->aop->type == AOP_REG)
                     cost2 (2, 8, 6, 4, 8, 4, 2, 2);
                   else
@@ -11610,12 +11651,7 @@ genAnd (const iCode * ic, iCode * ifx)
             {
               if (requiresHL (left->aop) && left->aop->type != AOP_REG)
                 _push (PAIR_HL);
-              if (!regalloc_dry_run)
-                emit2 ("bit %d, %s", isLiteralBit (bytelit), aopGet (left->aop, offset, FALSE));
-              if (left->aop->type == AOP_REG)
-                cost2 (2, 8, 6, 4, 8, 4, 2, 2);
-              else
-                cost2 (4, 20 , 15, 10, 6, 10, 5, 5);
+              emitBitTest (isLiteralBit (bytelit), left->aop, offset, ic);   // S1C88: bit reg,#mask (route L/H/[ix+d] via A/B)
               if (requiresHL (left->aop) && left->aop->type != AOP_REG)
                 _pop (PAIR_HL);
               sizel--;
@@ -14402,7 +14438,7 @@ unpackMaskA(sym_link *type, int len)
         }
       else
         {
-          emit2 ("bit %d, a", len - 1);
+          emit2 ("bit a, #0x%02x", 1u << (len - 1));   // S1C88: bit reg,#mask
           cost2 (2, 8, 6, 4, 8, 4, 2, 2);
           if (!regalloc_dry_run)
             {
@@ -15754,12 +15790,9 @@ genIfx (iCode *ic, iCode *popIc)
   /* Special case: Condition is bool */
   if (IS_BOOL (operandType (cond)) && !aopInReg (cond->aop, 0, A_IDX) && !aopInReg (cond->aop, 0, IYL_IDX) && !aopInReg (cond->aop, 0, IYH_IDX))
     {
+      emitBitTest (0, cond->aop, 0, ic);   // S1C88: bit reg,#0x01 (route L/H/mem via A/B)
       if (!regalloc_dry_run)
-        {
-          emit2 ("bit 0, %s", aopGet (cond->aop, 0, FALSE));
-          genIfxJump (ic, "nz");
-        }
-      bit8_cost (cond->aop); // todo: fix, bit has different cost!
+        genIfxJump (ic, "nz");
 
       goto release;
     }
@@ -16326,7 +16359,7 @@ genCast (const iCode *ic)
       if (!SPEC_USIGN (resulttype)) // Sign-extend
         {
           symbol *tlbl = regalloc_dry_run ? 0 : newiTempLabel (0);
-          emit2 ("bit %d, a", (int)(SPEC_BITINTWIDTH (resulttype) % 8 - 1));
+          emit2 ("bit a, #0x%02x", 1u << (int)(SPEC_BITINTWIDTH (resulttype) % 8 - 1));   // S1C88: bit reg,#mask
           cost2 (2, 8, 6, 4, 8, 4, 2, 2);
           if (!regalloc_dry_run)
             emit2 ("jr z, !tlabel", labelKey2num (tlbl->key));
