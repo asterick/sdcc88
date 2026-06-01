@@ -785,14 +785,10 @@ replace restart {
 	ld	(hl), %4
 } if notUsed(%3 'hl'), operandsNotRelated(%4 'hl')
 
-replace restart {
-	ld	%4, #%1
-	%5	%2, %3 (%4)
-} by {
-	; common peephole 61 used hl instead of %4.
-	ld	hl, #%1 + %3
-	%5	%2, (hl)
-} if same(%5 'bit' 'res' 'set'), notUsed(%4 'hl')
+// NB: z80 peephole 61 (fold `ld r,#a; bit/res/set n,d(r)` -> `ld hl,#a+d;
+// bit/res/set n,(hl)`) REMOVED for the S1C88: there is no RES/SET instruction at
+// all, and BIT is `bit {a,b,(hl)},#mask` (not z80 `bit n,reg`). The input form is
+// never emitted, and the output form is illegal. (Same reason 75/76 below.)
 
 
 
@@ -849,26 +845,10 @@ replace restart {
 
 
 
-replace restart {
-	ld	a, %1
-	%3	%2, a
-	ld	%1, a
-} by {
-	; common peephole 75 %3 bit %2 of %1 directly instead of going through a.
-	%3	%2, %1
-	ld	a, %1
-} if same(%3 'set' 'res'), canAssign(%1 'b'), notSame(%1 '(hl+)' '(hl-)')
-// canAssign(%1 'b') is true, iff set b, %1 is possible.
-
-replace restart {
-	ld	a, %1 (%2)
-	%4	%3, a
-	ld	%1 (%2), a
-} by {
-	; common peephole 76 %4 bit %3 of %1 (%2) directly instead of going through a.
-	%4	%3, %1 (%2)
-	ld	a, %1 (%2)
-} if same(%4 'set' 'res')
+// NB: z80 peepholes 75 and 76 (fold `ld a,X; set/res n,a; ld X,a` -> `set/res
+// n,X`) REMOVED for the S1C88: there is no RES/SET instruction (bit clears/sets
+// are done with `and/or X,#mask`), so both the input and output forms are illegal
+// here. gen.c never emits set/res.
 
 replace restart {
 	ld	%1, #%2 + %3

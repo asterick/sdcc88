@@ -5508,7 +5508,7 @@ _toBoolean (const operand *oper, bool needflag)
     {
       if (skipbyte != size - 1)
         UNIMPLEMENTED;
-      emit2 ("res 7, a");   // clear sign bit
+      emit2 ("and a, #0x7f");   // clear sign bit (S1C88 has no res)
       cost2 (2, 8, 7, 4, 8, 4, 2, 2);
       skipbyte = size - 1;
     }
@@ -11769,18 +11769,16 @@ genAnd (const iCode * ic, iCode * ifx)
         {
           bytelit = byteOfVal (right->aop->aopu.aop_lit, i);
 
+          // S1C88 has no RES; clear bits with `and a,#mask`. AND's destination is
+          // only A (no `and b`/`and (ix+d),#imm`) — other result aops fall through
+          // to the general AND path.
           if (isLiteralBit (~bytelit & 0xffu) >= 0 && aopSame (result->aop, i, left->aop, i, 1) &&
-            (result->aop->type == AOP_STK || result->aop->type == AOP_DIR || result->aop->type == AOP_REG && !aopInReg (result->aop, i, IYL_IDX) && !aopInReg (result->aop, i, IYH_IDX)))
+            aopInReg (result->aop, i, A_IDX))
             {
               cheapMove (result->aop, i, left->aop, i, a_free);
               if (!regalloc_dry_run)
-                emit2 ("res %d, %s", isLiteralBit (~bytelit & 0xffu), aopGet (result->aop, i, false));
-              if (result->aop->type == AOP_STK && !IS_SM83)
-                cost2 (4, 23, 19, 13, 0, 14, 5, 7); // res b, d(ix)
-              else if (result->aop->type == AOP_DIR)
-                cost2 (2, 15, 13, 10, 16, 10, 3 , 5); // res b, (hl)
-              else
-                cost2 (2, 8, 6, 4, 8, 4, 2, 2); // res b, r
+                emit2 ("and %s, #0x%02x", aopGet (result->aop, i, false), bytelit);
+              cost2 (2, 8, 6, 4, 8, 4, 2, 2); // and r, #n
               if (aopInReg (result->aop, i, A_IDX))
                 a_free = false;
               i++;
@@ -12097,18 +12095,15 @@ genOr (const iCode * ic, iCode * ifx)
         {
           int bytelit = byteOfVal (right->aop->aopu.aop_lit, i);
 
+          // S1C88 has no SET; set bits with `or a,#mask`. OR's destination is only
+          // A — other result aops fall through to the general OR path.
           if (isLiteralBit (bytelit) >= 0 && aopSame (result->aop, i, left->aop, i, 1) &&
-            (result->aop->type == AOP_STK || result->aop->type == AOP_DIR || result->aop->type == AOP_REG && !aopInReg (result->aop, i, IYL_IDX) && !aopInReg (result->aop, i, IYH_IDX)))
+            aopInReg (result->aop, i, A_IDX))
             {
               cheapMove (result->aop, i, left->aop, i, a_free);
               if (!regalloc_dry_run)
-                emit2 ("set %d, %s", isLiteralBit (bytelit), aopGet (result->aop, i, false));
-              if (result->aop->type == AOP_STK && !IS_SM83)
-                cost2 (4, 23, 19, 13, 0, 14, 5, 7); // set b, d(ix)
-              else if (result->aop->type == AOP_DIR)
-                cost2 (2, 15, 13, 10, 16, 10, 3 , 5); // set b, (hl)
-              else
-                cost2 (2, 8, 6, 4, 8, 4, 2, 2); // set b, r
+                emit2 ("or %s, #0x%02x", aopGet (result->aop, i, false), bytelit);
+              cost2 (2, 8, 6, 4, 8, 4, 2, 2); // or r, #n
               if (aopInReg (result->aop, i, A_IDX))
                 a_free = false;
               i++;
