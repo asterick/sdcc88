@@ -80,15 +80,17 @@ retarget** (z80→S1C88 emission cleanup)._
      (`ld c,l`/`dec c` — genuinely needs a 5th storage slot when left=BA+result=HL use all 4 byte regs →
      stack or IX/IY counter, a real restructure); `ld c,a`/`push bc` (BC scratch). Per `abi-decision.md`
      Step 2.
-   - **Accumulator rotates** `rla`/`rlca`/`rra`/`rrca` → `rl a`/`rlc a`/… **SPRAWLING, carry-safe but
-     spread:** ~38 `emit3(A_RLA…)` sites in gen.c (all accumulator-implicit, carry-centric — the shift/
-     bitfield/bit-write idioms move *carry*, never read Z/S after), 1 live raw `emit2("rla")` (3743,
-     carry→bit), the dead-`#if 0` flag-intent site (6122, ignore), **and peephole rules that emit
-     `rlca`/`rla` in their `by{}` replacements** (would re-introduce illegal forms). Cleanest: change
-     `asminstnames[A_RLA…]`→`"rl a"…` (or substitute `A_RL`+`ASMOP_A` to also fix the cost), fix raw 3743,
-     and scrub the peeph `by{}` blocks. `outBitC`'s use is already done.
-   - Misc: `set 7,l`/bit set-res-test on L/H (S1C88 bit ops only on A/B/[HL]); `inc -N(ix)` (indexed-memory
-     INC illegal); `neg` form. Lower frequency.
+   - ~~Accumulator rotates~~ **DONE** (`644576e`): all 41 `emit3(A_RLA/RLCA/RRA/RRCA…)` sites + the live
+     raw `emit2("rla")` substituted to the operand form `rl a`/`rlc a`/`rr a`/`rrc a` (also fixes the
+     cost). Verified no site reads Z/S/V/P after a rotate (all carry-centric), so the operand forms' extra
+     Z/S effects are unused. The peeph.def rotate rules match on the old output, so they just go dead (a
+     couple micro-opts lost, no illegal output).
+   - ~~`push af`/`pop af`~~ **DONE** (`4038be3`): `_push/_pop(PAIR_AF)` now emit `push a; push sc` /
+     `pop sc; pop a` (no AF reg; SC = flag register; preserves A *and* flags). Covers the reachable
+     callers. A few raw `emit2("push af")` sites remain in dead/rare paths (adjustStack's unreachable z80
+     tail, the `#if 0` block) — none hit by fresh codegen; mop up if they ever surface.
+   - Misc: `ex (sp),hl` (no S1C88 stack-exchange — arg/spill shuffle); `set 7,l`/bit set-res-test on L/H
+     (S1C88 bit ops only on A/B/[HL]); `inc -N(ix)` (indexed-memory INC illegal); `neg` form. Lower freq.
    - **KNOWN GAP (verified 2026-05-31, deferred): out-of-range local signed conditional branch.** The
      CE-page signed conditions (`LT/LE/GT/GE/V/NV/P/M`, F-flags) are **short-only** — there is *no*
      `jrl LT`/`carl LT`. The peephole shortens `jp LT → jrs LT` only `if labelInRange`; out of ±127 B it
@@ -144,8 +146,9 @@ the broader operand-placement work so the allocator keeps 16-bit operands in BA/
 
 ## Commit history (branch `main`, all green)
 
-Recent (codegen): `1e860c8` genAnd/genOr/genEor L/H operand via B (emit3_8alu always-safe) ·
-`ad12cb5` shifts route L/H/[ix+d] through A/B + drop peephole 21 (killed `rr l`/
+Recent (codegen): `4038be3` _push/_pop(PAIR_AF) → push a;push sc (killed `push af`) · `644576e` acc-rotates
+→ operand form `rl a`… (killed `rla`/`rlca`) · `1e860c8` genAnd/genOr/genEor L/H operand via B
+(emit3_8alu always-safe) · `ad12cb5` shifts route L/H/[ix+d] through A/B + drop peephole 21 (killed `rr l`/
 `sla -N(ix)`) · `a7e7235` genPlus/genSub L/H byte-ALU via B · `6c49c73` genCmp/gencjne route L/H operand
 through B (killed 8-bit `sub a,l`) · `eb3adcc` genCmp non-ifx signed/bool native (killed `jp PO`/`rlca`) ·
 `a69a11f`
