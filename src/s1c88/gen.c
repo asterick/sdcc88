@@ -6196,6 +6196,12 @@ genIpush (const iCode *ic)
             /* hl has lower priority on GB, because it's needed for stack access */
             if (!IS_SM83 && hl_free)
               pair = ASMOP_HL;
+            /* S1C88: de/bc are phantom (the z80 D/E/B/C bytes don't exist), so when
+               BA/HL are busy load+push through the real index pair IY instead. Only
+               for non-literal sources — the literal-caching loop below writes pair
+               byte halves, which IY (not byte-addressable) doesn't have. */
+            else if (!IS_SM83 && !IY_RESERVED && isPairDead (PAIR_IY, ic) && IC_LEFT (ic)->aop->type != AOP_LIT)
+              pair = ASMOP_IY;
             else if (de_free)
               pair = ASMOP_DE;
             else if (bc_free)
