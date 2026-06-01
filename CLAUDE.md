@@ -96,7 +96,9 @@ printf 'int add1(int x){return x+1;}\n' | \
 5. **Inject** the port: append `s1c88` to `ports.build`/`ports.all` and generate `src/s1c88/Makefile`
    from `Makefile.in` via `./config.status --file=...`.
 6. **`make -C src`** builds the `sdcc` driver. `port.mk` turns every `*.def` into a `*.rul` via
-   `gawk -f ../SDCCpeeph.awk`; `main.c` `#include`s `peeph.rul` + `peeph-z80.rul`.
+   `gawk -f ../SDCCpeeph.awk`; `main.c` `#include`s the single `peeph.rul` (the port has one peephole
+   file, `peeph.def` — the z80 `peeph-z80.def` was merged into it and the dead variant `peeph-*.def`
+   removed, since sdcc88 is a standalone S1C88 port, not a z80 variant).
 
 ## The S1C88 port (`src/s1c88/`)
 

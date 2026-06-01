@@ -40,7 +40,7 @@ The base-port choice and the target ABI / z80→s1c88 register mapping are docum
 | `support.c` / `support.h` | Port support helpers. |
 | `mappings.i` | ASM-dialect mapping tables (`_asxxxx_z80`, …), `#include`d by `main.c`. |
 | `peep.c` / `peep.h` | Port-specific peephole helpers. |
-| `peeph.def`, `peeph-*.def` | Peephole rules. `port.mk` builds each `*.def` into `*.rul` via `gawk -f ../SDCCpeeph.awk`; `main.c` `#include`s `peeph.rul` + `peeph-z80.rul`. |
+| `peeph.def` | Peephole rules — the single, complete S1C88 definition file (the z80 `peeph-z80.def` was merged in; dead variant files removed). `port.mk` builds it into `peeph.rul` via `gawk -f ../SDCCpeeph.awk`; `main.c` `#include`s `peeph.rul`. |
 | `Makefile.in` | Per-port build stub (just `include ../port.mk`); `build.sh` instantiates it via `config.status`. |
 
 ## Retargeting checklist (replace z80 codegen with S1C88)

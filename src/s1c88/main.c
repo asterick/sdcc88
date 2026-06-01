@@ -47,9 +47,8 @@
 #define OPTION_SDCCCALL         "--sdcccall"
 #define OPTION_ALLOW_UNDOC_INST "--allow-undocumented-instructions"
 
-static char _z80_defaultRules[] = {
+static char _s1c88_defaultRules[] = {
 #include "peeph.rul"
-#include "peeph-z80.rul"
 };
 
 
@@ -838,7 +837,7 @@ PORT s1c88_port =
     _libs_z80,                  /* libs */
   },
   {                             /* Peephole optimizer */
-    _z80_defaultRules,
+    _s1c88_defaultRules,
     z80instructionSize,
     0,
     0,

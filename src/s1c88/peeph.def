@@ -1,4 +1,11 @@
-// peeph.def - Common Z80 and sm83 peephole rules
+// peeph.def - the S1C88 peephole rules (the single, complete definition file).
+//
+// sdcc88 is a standalone S1C88 port, NOT a z80 variant, so there is one peephole
+// file: this one. It began as SDCC's common z80 `peeph.def` and absorbed the
+// z80-port `peeph-z80.def` (the residual-branch -> jrs/jrl/carl mapping, now the
+// "S1C88 control-transfer mapping" section at the end). Rules that have no legal
+// S1C88 analog have been dropped and several were hardened for the S1C88 register
+// model; see docs/s1c88/HANDOFF.md "Peephole audit".
 //
 // (c) Philipp Klaus Krause (pkk@spth.de, philipp@colecovision.eu) 2006 - 2021
 // (c) Sebastian 'basxto' Riedel (sdcc@basxto.de) 2020 - 2022
@@ -142,12 +149,6 @@ replace restart {
 } if notUsed(%1), same(%3 'ix' 'iy')
 // Should probably check for notVolatile(), but gives many false positives and no regression tests fail.
 
-replace {
-	ex	de, hl
-	ex	de, hl
-} by {
-	; common peephole 8 removed double de/hl swap.
-}
 
 replace restart {
 	ld	%1, %2
@@ -342,69 +343,13 @@ replace restart {
 	; common peephole 25b loaded #%1 into (%8) instead of (%4).
 } if canJoinRegs(%2 %1 %5), same(%4 %5), canJoinRegs(%7 %6 %8)
 
-replace restart {
-	push	%1
-	ex	(sp), %2
-} by {
-	; common peephole 26a merged push and ex (sp), since %2 isn't used.
-	push	%2
-} if same(%2 'hl' 'ix' 'xy'), notUsed(%2)
 
-replace restart {
-	push	de
-	ex	de, hl
-} by {
-	; common peephole 26b moved push after de/hl swap.
-	ex	de, hl
-	push	hl
-}
 
-replace restart {
-	push	hl
-	ex	de, hl
-} by {
-	; common peephole 26c moved push after de/hl swap.
-	ex	de, hl
-	push	de
-}
 
-replace restart {
-	ex	de, hl
-	push	%1
-} by {
-	; common peephole 26d moved push %1 before de/hl swap.
-	push	%1
-	ex	de, hl
-} if notSame(%1 'hl' 'de')
 
-replace restart {
-	ex	de, hl
-	push	de
-} by {
-	; common peephole 26e pushed hl directly instead of going through de.
-	push	hl
-} if notUsed('de' 'hl')
 
-replace restart {
-	ld	l,%1
-	ld	h,d
-	push	hl
-} by {
-	; common peephole 27 pushed de instead of hl removing a load.
-	ld	e,%1
-	push	de
-} if notUsed('hl' 'e')
 
 //TODO: remove if unused
-replace restart {
-	ex	de, hl
-	push	%1
-	push	de
-} by {
-	; common peephole 28 pushed hl directly instead of going through de.
-	push	%1
-	push	hl
-} if notSame(%1 'hl' 'de'), notUsed('de' 'hl')
 
 replace restart {
 	ld	%4,%1
@@ -435,25 +380,7 @@ replace restart {
 	pop	%6
 } if canJoinRegs(%4 %2 %6), canJoinRegs(%5 %3 %7), same(%7 %1), notUsed(%1)
 
-replace restart {
-	ex	de, hl
-	ld	e, l
-	ld	d, h
-} by {
-	; common peephole 32a removed de/hl swap.
-	ld	l, e
-	ld	h, d
-}
 
-replace restart {
-	ex	de, hl
-	ld	l, e
-	ld	h, d
-} by {
-	; common peephole 32b removed de/hl swap.
-	ld	e, l
-	ld	d, h
-}
 
 replace restart {
 	ld	%1 (%4), %2
@@ -476,17 +403,6 @@ replace restart {
 	ld	%2, a
 } if same(%3 'ix' 'iy'), canAssign(%2 'a')
 
-replace restart {
-	push	af
-	inc	sp
-	ld	a,e
-	push	af
-	inc	sp
-} by {
-	; common peephole 35 pushed de instead of pushing a twice.
-	ld	d,a
-	push	de
-} if notUsed('d'), notUsed('a')
 
 replace restart {
 	pop	%1
@@ -575,17 +491,6 @@ replace restart {
 	ld	%1, %3
 } if notVolatile(%1), notVolatile(%2), notSame(%1 '(hl+)' '(hl-)'), notSame(%2 '(hl+)' '(hl-)'), operandsNotRelated(%1 %3)
 
-replace restart {
-	push	af
-	inc	sp
-	ld	a, c
-	push	af
-	inc	sp
-} by {
-	ld	b, a
-	; common peephole 42 combined pushing of a and c.
-	push	bc
-} if notUsed('b'), notUsed('a')
 
 replace restart {
 	push	%1
@@ -770,7 +675,9 @@ replace restart {
 	ld	%6, %4
 	ld	%5, %3
 	; common peephole 52a replaced push/pop pair by loads.
-} if canSplitReg(%1 %3 %4), canSplitReg(%2 %5 %6), notSame(%1 %2 'ix' 'iy'), notUsed(%1)
+	// S1C88: exclude de/bc — only ba/hl are byte-addressable; splitting de/bc
+	// would emit nonexistent d/e/c byte regs (ld e,l; ld d,h).
+} if canSplitReg(%1 %3 %4), canSplitReg(%2 %5 %6), notSame(%1 %2 'ix' 'iy' 'de' 'bc'), notUsed(%1)
 
 replace restart {
 	push	%1
@@ -789,7 +696,8 @@ replace restart {
 	ld	%5, %3
 	ld	%1, %7
 	; common peephole 52c replaced push/pop pair by loads.
-} if canSplitReg(%1 %3 %4), canSplitReg(%2 %5 %6), notSame(%1 %2 'ix' 'iy'), operandsNotRelated(%7 %1)
+	// S1C88: exclude de/bc (see 52a).
+} if canSplitReg(%1 %3 %4), canSplitReg(%2 %5 %6), notSame(%1 %2 'ix' 'iy' 'de' 'bc'), operandsNotRelated(%7 %1)
 
 replace restart {
 	ld	%3, #%1
@@ -886,122 +794,14 @@ replace restart {
 	%5	%2, (hl)
 } if same(%5 'bit' 'res' 'set'), notUsed(%4 'hl')
 
-replace restart {
-	ld	%4, #%1
-	add	%4, sp
-	ld	%2, %5 (%4)
-	ld	%3, %6 (%4)
-} by {
-	; common peephole 62 used hl instead of %4.
-	ld	hl, #%1 + %5
-	add	hl, sp
-	ld	%2, (hl)
-	inc	hl
-	ld	%3, (hl)
-} if operandsNotRelated(%2 'hl'), immdInRange(-128 127 '+' %5 1 %7), same(%7 %6), notUsed(%4 'hl')
 
-replace restart {
-	ld	%4, #%1
-	add	%4, sp
-	ld	%2, %3 (%4)
-} by {
-	; common peephole 63 used hl instead of %4.
-	ld	hl, #%1 + %3
-	add	hl, sp
-	ld	%2, (hl)
-} if notUsed(%4 'hl')
 
-replace restart {
-	ld	%4, #%1
-	add	%4, sp
-	ld	l, %2 (%4)
-	ld	h, %3 (%4)
-} by {
-	; common peephole 64 used hl instead of %4.
-	ld	hl, #%1 + %2
-	add	hl, sp
-	ld	a, (hl)
-	inc	hl
-	ld	h, (hl)
-	ld	l, a
-} if immdInRange(-128 127 '+' %2 1 %5), same(%5 %3), notUsed(%4 'a')
 
-replace restart {
-	ld	%4, #%1
-	add	%4, sp
-	ld	%5 (iy), #%2
-	ld	%6 (iy), #%3
-} by {
-	; common peephole 65 used hl instead of %4.
-	ld	hl, #%1 + %5
-	add	hl, sp
-	ld	(hl), #%2
-	inc	hl
-	ld	(hl), #%3
-} if immdInRange(-128 127 '+' %5 1 %7), same(%7 %6), notUsed(%4 'hl')
 
-replace restart {
-	ld	%4, #%1
-	add	%4, sp
-	ld	a, %2 (%4)
-	or	a, %3 (%4)
-} by {
-	ld	hl, #%1 + %2
-	add	hl, sp
-	ld	a, (hl)
-	inc	hl
-	or	a, (hl)
-	; common peephole 66a used hl instead of %4.
-} if immdInRange(-128 127 '+' %2 1 %5), same(%5 %3), notUsed(%4 'hl')
 
-replace restart {
-	ld	%4, #%1
-	add	%4, sp
-	ld	a, %2 (%4)
-	or	a, %3 (%4)
-} by {
-	ld	hl, #%1 + %3
-	add	hl, sp
-	ld	a, (hl)
-	inc	hl
-	or	a, (hl)
-	; common peephole 66b used hl instead of %4.
-} if immdInRange(-128 127 '-' %2 1 %5), same(%5 %3), notUsed(%4 'hl')
 
-replace restart {
-	ld	%4, #%1
-	add	%4, sp
-	%5	%2, %3 (%4)
-} by {
-	ld	hl, #%1 + %3
-	add	hl, sp
-	%5	%2, (hl)
-	; common peephole 67a used hl instead of %4.
-} if same(%5 'bit' 'res' 'set'), notUsed(%4 'hl')
 
-replace restart {
-	ld	%4, #%1
-	add	%4, sp
-	%5	%3, %2 (%4)
-} by {
-	ld	hl, #%1 + %2
-	add	hl, sp
-	%5	%3, (hl)
-	; common peephole 67b used hl instead of %4.
-} if same(%5 'adc' 'add' 'and' 'ld' 'or' 'sbc' 'sub' 'xor'), notUsed(%4 'hl')
 
-replace restart {
-	push	hl
-	ld	hl, #%1
-	add	hl, sp
-	ld	a, (hl)
-	inc	hl
-	ld	h, (hl)
-	ld	l, a
-} by {
-	; common peephole 67c removed load back from stack.
-	push	hl
-}if operandsLiteral(%1), immdInRange(0 0 '+' %1 0 %2)
 
 replace restart {
 	inc	hl
@@ -1046,29 +846,8 @@ replace restart {
 	inc	sp
 } if same(%1 'c' 'e' 'l' 'ixl' 'iyl'), canJoinRegs('' %1 %4), same(%3 %4), notUsed(%1)
 
-replace restart {
-	ld	a, %1 (%2)
-	bit	%3, a
-} by {
-	; common peephole 72 tested bit %3 of %1 (%2) directly instead of going through a.
-	bit	%3, %1 (%2)
-} if notUsed('a')
 
-replace restart {
-	ld	%1, (hl)
-	bit	%2, %1
-} by {
-	; common peephole 73 tested bit %2 of (hl) directly instead of going through %1.
-	bit	%2, (hl)
-} if notUsed(%1)
 
-replace restart {
-	ld	a, %1
-	bit	%2, a
-} by {
-	; common peephole 74 tested bit %2 of %1 directly instead of going through a.
-	bit	%2, %1
-} if notUsed('a'), canAssign(%1 'b')
 
 replace restart {
 	ld	a, %1
@@ -1220,19 +999,6 @@ replace restart {
 } if labelRefCountChange(%1 -1)
 
 // A peephole that makes the code longer. Let's hope it's worth it in speed gain and further optimization potential.
-replace restart {
-	ld	a, #0x00
-%1:
-	bit	%2, a
-	jp	Z, %3
-} by {
-	ld	a, #0x00
-	jp	%3
-	; common peephole 86 jumped directly to %3 instead of testing a first.
-%1:
-	bit	%2, a
-	jp	Z, %3
-} if labelRefCountChange(%3 +1)
 
 replace restart {
 	ld	%1, %2
@@ -1253,34 +1019,8 @@ replace restart {
 	jp	%1
 } if labelRefCount(%2 0), labelRefCountChange(%3 -1)
 
-replace restart {
-	ld	%1, #0x01
-	bit	0, %1
-	jp	Z, %2
-} by {
-	ld	%1, #0x01
-	; common peephole 89 removed impossible jump to %2.
-} if labelRefCountChange(%2 -1)
 
-replace restart {
-	rlca
-	and	a, #0x01
-	jp	Z, %1
-} by {
-	rlca
-	; common peephole 90a removed and by changing jump condition.
-	jp	NC, %1
-} if notUsed('a'), notUsedFrom(%1 'a')
 
-replace restart {
-	rlca
-	and	a, #0x01
-	jp	NZ, %1
-} by {
-	; common peephole 90b removed and by changing jump condition.
-	rlca
-	jp	C, %1
-} if notUsed('a'), notUsedFrom(%1 'a')
 
 replace {
 	ld	%5, #%1
@@ -1558,7 +1298,7 @@ replace restart {
 	ld	%1, a
 	or	a, %2
 	; common peephole 99 removed load by reordering or arguments.
-} if notVolatile(%1), canAssign('b' %2), notSame(%1 '(hl+)' '(hl-)')
+} if notVolatile(%1), canAssign('b' %2), notSame(%1 '(hl+)' '(hl-)'), notSame(%2 'l' 'h' 'c' 'd' 'e')
 // canAssign('b' %2) is true, iff or a,%2 is possible.
 
 replace restart {
@@ -1642,16 +1382,6 @@ replace restart {
 } if notUsed('cf')
 
 //TODO: check on other flags
-replace restart {
-	sbc	hl, %1
-	ld	a, h
-	or	a, l
-	jp	%2, %3
-} by {
-	sbc	hl, %1
-	jp	%2, %3
-	; common peephole 102c removed redundant or after sbc.
-} if same(%2 'NZ' 'Z')
 
 replace restart {
 	sub	a, %1
@@ -1705,27 +1435,7 @@ replace restart {
 	; common peephole 104b %3 %1 directly to remove redundant load from %2 into %1
 } if same(%1 'a' 'b' 'c' 'd' 'e' 'h' 'l' '(hl)'), same(%3 'inc' 'dec')
 
-replace restart {
-	push	de
-	inc	sp
-	ld	a,e
-	push	af
-	inc	sp
-} by {
-	push	de
-	; common peephole 105 pushed de
-} if notUsed('a')
 
-replace restart {
-	ld	iy,%1
-	add	iy,sp
-	ld	sp,iy
-} by {
-	ld	hl,%1
-	add	hl,sp
-	ld	sp,hl
-	; common peephole 106 fixed stack using hl instead of iy.
-} if notUsed('hl'), notUsed('iy')
 
 replace restart {
 	ld	a,%1
@@ -1757,15 +1467,6 @@ replace restart {
 } by {
 }
 
-replace restart {
-	rlca
-	ld	a,#0x00
-	rla
-} by {
-	rlca
-	and	a,#0x01
-	; common peephole 109 replaced zero load, rla by and since rlca writes the same value to carry bit and least significant bit.
-}
 
 replace restart {
 	ld	%1,%2
@@ -1790,37 +1491,7 @@ replace restart {
 	add	a,%4
 }
 
-replace restart {
-	ld	a, l
-	add	a, #%1
-	ld	e, a
-	ld	a, h
-	adc	a, #%2
-	ld	d, a
-} by {
-	ld	de, #%4
-	add	hl, de
-	; common peephole 112 used 16-bit addition.
-	ld	e, l
-	ld	d, h
-	ld	a, h
-} if operandsLiteral(%1 %2), immdInRange(0x00 0xffff '*' %2 0x100 %3), immdInRange(0x00 0xffff '|' %3 %1 %x4), notUsed('hl')
 
-replace restart {
-	ld	a, l
-	add	a, #%1
-	ld	c, a
-	ld	a, h
-	adc	a, #%2
-	ld	b, a
-} by {
-	ld	bc, #%4
-	add	hl,bc
-	; common peephole 113 used 16-bit addition.
-	ld	c, l
-	ld	b, h
-	ld	a, h
-} if operandsLiteral(%1 %2), immdInRange(0x00 0xffff '*' %2 0x100 %3), immdInRange(0x00 0xffff '|' %3 %1 %x4), notUsed('hl')
 
 replace restart {
 	ld	l,%1 (ix)
@@ -1880,30 +1551,10 @@ replace restart {
 	ld	%1, a
 	; common peephole 118 removed load by exploiting commutativity of addition.
 	add	a,%2
-} if notSame(%2 '(bc)' '(de)'), canAssign('b' %2)
+} if notSame(%2 '(bc)' '(de)'), canAssign('b' %2), notSame(%2 'l' 'h' 'c' 'd' 'e')
 // canAssign('b' %2) is true, iff add a,%2 is possible.
 
-replace restart {
-	ld	c, l
-	ld	b, h
-	ld	hl, #%1
-	add	hl, bc
-} by {
-	; common peephole 119 removed loads by exploiting commutativity of addition.
-	ld	bc, #%1
-	add	hl, bc
-} if notUsed('bc')
 
-replace restart {
-	ld	hl, #%1
-	add	hl, %2
-	ld	bc, #%4
-	add	hl, bc
-} by {
-	; common peephole 120 removed loads by exploiting commutativity of addition.
-	ld	hl, #%1 + %4
-	add	hl, %2
-} if notUsed('bc')
 
 replace restart {
 	or	a, %1
@@ -1977,7 +1628,7 @@ replace restart {
 	jp	NZ, %2
 	or	a, %3
 	; common peephole 126a shortened or using a (which has just been tested to be #0x00).
-} if canAssign('b' %3)
+} if canAssign('b' %3), notSame(%3 'l' 'h' 'c' 'd' 'e')
 // canAssign('b' %2) is true, iff or a,%2 is possible.
 
 replace restart {
@@ -1992,7 +1643,7 @@ replace restart {
 	jp	NZ, %2
 	or	a, %3
 	; common peephole 126b shortened or using a (which has just been tested to be #0x00).
-} if canAssign('b' %3)
+} if canAssign('b' %3), notSame(%3 'l' 'h' 'c' 'd' 'e')
 
 replace restart {
 	sub	a, %1
@@ -2004,7 +1655,7 @@ replace restart {
 	jp	NZ, %2
 	or	a, %3
 	; common peephole 127a shortened or using a (which has just been tested to be #0x00).
-} if canAssign('b' %3)
+} if canAssign('b' %3), notSame(%3 'l' 'h' 'c' 'd' 'e')
 // canAssign('b' %2) is true, iff or a,%2 is possible.
 
 replace restart {
@@ -2019,7 +1670,7 @@ replace restart {
 	jp	NZ, %2
 	or	a, %3
 	; common peephole 127b shortened or using a (which has just been tested to be #0x00).
-} if canAssign('b' %3)
+} if canAssign('b' %3), notSame(%3 'l' 'h' 'c' 'd' 'e')
 
 //TODO: check on other flags
 replace restart {
@@ -2213,16 +1864,6 @@ replace restart {
 	; common peephole 131a incremented in hl instead of iy.
 }
 
-replace restart {
-	push	bc
-	pop	iy
-	inc	iy
-} by {
-	inc	bc
-	push	bc
-	pop	iy
-	; common peephole 131b incremented in bc instead of iy.
-} if notUsed('bc')
 
 replace restart {
 	ld	hl,%1
@@ -2280,142 +1921,20 @@ replace restart {
 	; common peephole 137 removed load of #%2 into %1 since it's still there.
 } if notVolatile(%1), operandsNotRelated(%3 %1), notSame(%1 '(hl+)' '(hl-)')
 
-replace restart {
-	ld	hl,#%1
-	ld	de,#%1
-} by {
-	; common peephole 138 used #%1 from hl for load into de.
-	ld	hl,#%1
-	ld	e,l
-	ld	d,h
-}
 
-replace restart {
-	ld	sp,hl
-	ld	hl,#0x0002
-	add	hl,sp
-} by {
-	ld	sp, hl
-	inc	hl
-	inc	hl
-	; common peephole 139 replaced addition by increment.
-}
 
-replace restart {
-	ex	de, hl
-	ld	hl, #%1
-	add	hl, de
-} by {
-	; common peephole 140 removed ex exploiting commutativity of addition.
-	ld	de, #%1
-	add	hl, de
-} if notUsed('de')
 
-replace restart {
-	ex	de, hl
-	pop	de
-	add	hl, de
-} by {
-	; common peephole 140a removed ex exploiting commutativity of addition.
-	pop	hl
-	add	hl, de
-} if notUsed('de')
 
-replace restart {
-	ex	de, hl
-	pop	hl
-	add	hl, de
-} by {
-	; common peephole 140b removed ex exploiting commutativity of addition.
-	pop	de
-	add	hl, de
-} if notUsed('de')
 
-replace restart {
-	ex	de, hl
-	push	hl
-} by {
-	; common peephole 140c removed ex before push
-	push	de
-} if notUsed('de' 'hl')
 
-replace restart {
-	ex	de, hl
-	push	de
-} by {
-	; common peephole 140d removed ex before push
-	push	hl
-} if notUsed('de' 'hl')
 
-replace restart {
-	ld	hl, #%1
-	add	hl, %2
-	ex	de, hl
-	inc	de
-} by {
-	ld	hl, #%1+1
-	; common peephole 141 moved increment to constant.
-	add	hl, %2
-	ex	de, hl
-} if notUsed('hl')
 
 
 // those might work for tlcs90 too
-replace restart {
-	pop	af
-	push	hl
-} by {
-	; common peephole 142 used ex to move hl onto the stack.
-	ex	(sp),hl
-} if isPort('z80' 'ez80_z80' 'z180' 'z80n'), notUsed('a'), notUsed('hl')
 
-replace restart {
-	pop	af
-	ld	hl, #%1
-	push	hl
-} by {
-	ld	hl, #%1
-	; common peephole 143 used ex to move hl onto the stack.
-	ex	(sp),hl
-} if isPort('z80' 'ez80_z80' 'z180' 'z80n'), notUsed('a'), notUsed('hl')
 
-replace restart {
-	pop	af
-	inc	sp
-	ld	hl,#%1
-	push	hl
-} by {
-	inc	sp
-	ld	hl,#%1
-	; common peephole 144 used ex to move #%1 onto the stack.
-	ex	(sp),hl
-} if isPort('z80' 'ez80_z80' 'z180' 'z80n'), notUsed('a'), notUsed('hl')
 
-replace restart {
-	pop	af
-	inc	sp
-	ld	h, %1 (ix)
-	ld	l, %2 (ix)
-	push	hl
-} by {
-	inc	sp
-	ld	h, %1 (ix)
-	ld	l, %2 (ix)
-	; common peephole 145 used ex to move %1 (ix) %2 (ix) onto the stack.
-	ex	(sp),hl
-} if isPort('z80' 'ez80_z80' 'z180' 'z80n'), notUsed('a'), notUsed('hl')
 
-replace restart {
-	pop	af
-	ld	a,#%1
-	push	af
-	inc	sp
-} by {
-	ld	h,#%1
-	ex	(sp),hl
-	; common peephole 146 used ex to move #%1 onto the stack.
-	inc	sp
-} if isPort('z80' 'ez80_z80' 'z180' 'z80n'), notUsed('a'), notUsed('hl')
 
 replace restart {
 	ld	%1,#%2
@@ -2442,23 +1961,7 @@ replace restart {
 	ld	%1,#%5
 } if notSame(%3 'a')
 
-replace restart {
-	ld	%1,a
-	bit	%2,%1
-} by {
-	bit	%2,a
-	; common peephole 149 tested bit %2 of a directly instead of going through %1.
-} if notUsed(%1)
 
-replace restart {
-	sbc	a,%1
-	bit	7,a
-	jp	NZ,%2
-} by {
-	sbc	a,%1
-	jp	M,%2
-	; common peephole 150 used sign flag instead of testing bit 7.
-} if isPort('z80' 'ez80_z80' 'z180' 'z80n' 'tlcs90')
 
 replace restart {
 	ld	%1,a
@@ -2640,69 +2143,9 @@ replace restart {
 %1:
 } if labelRefCountChange(%2 -1)
 
-replace restart {
-	jp	Z, %2
-	ld	c, #%3
-	jp	%1
-%2:
-	ld	c, #%4
-%1:
-} by {
-	ld	c, #%3
-	jp	NZ, %1
-%2:
-	ld	c, #%4
-	; common peephole 170z used double assignment in case of Z condition.
-%1:
-} if labelRefCountChange(%2 -1)
 
-replace restart {
-	jp	NZ, %2
-	ld	c, #%3
-	jp	%1
-%2:
-	ld	c, #%4
-%1:
-} by {
-	ld	c, #%3
-	jp	Z, %1
-%2:
-	ld	c, #%4
-	; common peephole 170nz used double assignment in case of NZ condition.
-%1:
-} if labelRefCountChange(%2 -1)
 
-replace restart {
-	jp	Z, %2
-	ld	e, #%3
-	jp	%1
-%2:
-	ld	e, #%4
-%1:
-} by {
-	ld	e, #%3
-	jp	NZ, %1
-%2:
-	ld	e, #%4
-	; common peephole 171z used double assignment in case of Z condition.
-%1:
-} if labelRefCountChange(%2 -1)
 
-replace restart {
-	jp	NZ, %2
-	ld	e, #%3
-	jp	%1
-%2:
-	ld	e, #%4
-%1:
-} by {
-	ld	e, #%3
-	jp	Z, %1
-%2:
-	ld	e, #%4
-	; common peephole 171nz used double assignment in case of NZ condition.
-%1:
-} if labelRefCountChange(%2 -1)
 
 replace restart {
 	jp	Z, %2
@@ -2794,7 +2237,7 @@ replace restart {
 	; common peephole 176b remove unnecessary load back
 	or	a, %2
 	dec	%1
-} if canSplitReg(%1 %0 %0)
+} if canSplitReg(%1 %0 %0), notSame(%2 'l' 'h' 'c' 'd' 'e')
 
 replace restart {
 	ld	a, %1
@@ -2896,64 +2339,9 @@ replace restart {
 	ld	sp, %3
 } if notUsed(%3), same(%3 'hl' 'ix' 'iy'), immdInRange(0 0x7fff '+' %1 1 %2)
 
-replace restart {
-	inc	sp
-	inc	sp
-	inc	sp
-	inc	sp
-	inc	sp
-} by {
-	; common peephole 193: increase SP by addition
-	ld	hl, #5
-	add	hl, sp
-	ld	sp, hl
-} if notUsed('hl')
 
 //next rules optimized some checks
-replace restart {
-	ld	a, %1
-	sub	a, #%7
-	ld	a, %2
-	sbc	a, #0x00
-	ld	a, %3
-	sbc	a, #0x00
-	ld	a, %4
-	sbc	a, #0x00
-	%5	C, %6
-} by {
-	; common peephole 194-1: symplify 32-bit compare for 8 bit values
-	ld	a, %2
-	or	a, %3
-	or	a, %4
-	jp	NZ, %9
-	ld	a, %1
-	cp	a, #%7
-	%5	C, %6
-%9:
-} if same(%5 'jr' 'jp' 'call'), notUsed('a'), canAssign('b' %3), canAssign('b' %3), newLabel(%9)
 
-replace restart {
-	ld	a, %1
-	sub	a, #%7
-	ld	a, %2
-	sbc	a, #%8
-	ld	a, %3
-	sbc	a, #0x00
-	ld	a, %4
-	sbc	a, #0x00
-	%5	C, %6
-} by {
-	; common peephole 194-2: symplify 32-bit compare for 16 bit values
-	ld	a, %3
-	or	a, %4
-	jp	NZ, %9
-	ld	a, %1
-	sub	a, #%7
-	ld	a, %2
-	sbc	a, #%8
-	%5	C, %6
-%9:
-} if same(%5 'jr' 'jp' 'call'), notUsed('a'), canAssign('b' %3), newLabel(%9)
 
 replace restart {
 	ld	a, #0xff
@@ -2976,21 +2364,7 @@ replace restart {
 // These ex-generating rules should be among the last ones since ex counts as a read from both hl and de for notUsed().
 barrier
 
-replace restart {
-	ld	e,l
-	ld	d,h
-} by {
-	; common peephole 156 used ex to load hl into de.
-	ex	de,hl
-} if isPort('z80' 'ez80_z80' 'z180' 'z80n' 'r2k' 'r2ka' 'r3ka' 'tlcs90'), notUsed('hl')
 
-replace restart {
-	ld	l,e
-	ld	h,d
-} by {
-	; common peephole 157 used ex to load de into hl.
-	ex	de,hl
-} if isPort('z80' 'ez80_z80' 'z180' 'z80n' 'r2k' 'r2ka' 'r3ka' 'tlcs90'), notUsed('de')
 
 // We want this one, even if it doesn't trigger in regression tests, since it is geh last line
 // of defence against ld r, r in the compiler. ld r, r is not just an inefficiency, but dangerous
@@ -3023,14 +2397,10 @@ replace restart {
 	; common peephole 160 replaced jump by return.
 } if labelIsReturnOnly(%5), labelRefCountChange(%5 -1)
 
-// SM83 doesn't have ret cc for all flags, but it does for all flags for which is has JP CC.
-// This rules can be dangerous for Rabbits: it might trigger a hardware bug in the Rabbit 5000.
-replace restart {
-	jp	%1, %5
-} by {
-	ret	%1
-	; common peephole 161 replaced jump by return.
-} if labelIsReturnOnly(%5), labelRefCountChange(%5 -1)
+// NB: z80 peephole 161 (jp cc,retlabel -> ret cc) was REMOVED for the S1C88:
+// the S1C88 has NO conditional return (`ret C`/`ret Z`/... are "missing/improper
+// operator"), so the fold produced illegal output. It WAS firing on real codegen
+// (genIfx return paths) and miscompiling. Unconditional jp->ret (160) is kept.
 
 // Replace jp by ret before replacing jp by jr, since using ret can reduce the number of references to jump labels.
 barrier
@@ -3043,13 +2413,10 @@ replace restart {
 	jr	%5
 } if optimizeFor('!code-speed'), labelInRange(%5)
 
-// On Z180, eZ80, Rabbit and TLCS-90, jr is smaller, and at least as fast as jp.
-replace restart {
-	jp	%5
-} by {
-	; common peephole 162a changed absolute to relative unconditional jump.
-	jr	%5
-} if isPort('z180' 'ez80_z80' 'r2k' 'r2ka' 'r3ka' 'tlcs90' 'sm83' 'r800'), labelInRange(%5)
+// NB: z80 peephole 162a (jp->jr for z180/ez80/rabbit/tlcs90) was REMOVED: its
+// isPort() gate never matches 's1c88', so it was dead. 162 above covers us.
+// 162/163 feed the jr->jrs map in the control-transfer section below (in-range
+// jp -> jr -> jrs, 2 bytes).
 
 replace restart {
 	jp	%1, %5
@@ -3066,11 +2433,108 @@ replace restart {
 	; common peephole 164 eliminated relative conditional jump.
 } if labelRefCountChange(%5 -1)
 
-replace {
-	dec	b
-	jr	NZ, %5
-} by {
-	; common peephole 167 used djnz
-	djnz	%5
-} if isPort('z80' 'ez80_z80' 'z180' 'z80n' 'r2k' 'r2ka' 'r3ka' 'tlcs90')
 
+
+
+// ==========================================================================
+// S1C88 control-transfer mapping (was peeph-z80.def) -- KEEP LAST.
+// These run after the jp->ret (160) and jp->jr (162/163) passes above, so an
+// in-range jump becomes jp->jr->jrs (2 bytes) and only out-of-range/external
+// ones fall through to jrl/carl (3 bytes). Do not move these earlier.
+// ==========================================================================
+
+
+// NB: z80 peephole 178 (xor a,a; ld d(ix),a -> ld d(ix),#0) was REMOVED for the
+// S1C88: immediate-to-indexed-memory (and immediate-to-absolute) stores are
+// illegal on the S1C88 (only `ld (hl),#nn` exists; `ld d(ix),#nn`/`ld (hhll),#nn`
+// are "Invalid Addressing Mode"). The unfolded `xor a,a; ld d(ix),a` is legal.
+
+// --- S1C88: all control transfers are PC-relative --------------------------
+// The z80 model emits absolute jp/call; the generic peeph.def shortens jp->jr
+// when in range. The S1C88 has no absolute jp/call — short relative is jrs/cars
+// (8-bit), long relative is jrl/carl (16-bit). Map the residual z80 branch
+// mnemonics to their S1C88 equivalents. These run after the generic jp->ret and
+// jp->jr passes, so an in-range jump becomes jp->jr->jrs (2 bytes) and only the
+// out-of-range / external ones fall through to jrl (3 bytes).
+//
+// Conditional forms convert only for the basic flags c/nc/z/nz — jrl/jrs encode
+// just those; the signed po/p/m/pe come from the genCmp synthesis and will be
+// retargeted there (they stay as `jp` for now, still flagged by the validator).
+// The notSame() guards keep the computed jp hl / jp (iy) / call (iy) forms from
+// being mis-rewritten into a relative branch.
+
+replace {
+	jr	%5
+} by {
+	jrs	%5
+	; peephole s1c88-j1 z80 jr -> s1c88 jrs (8-bit relative)
+}
+
+replace {
+	jr	%1, %5
+} by {
+	jrs	%1, %5
+	; peephole s1c88-j2 z80 jr cc -> s1c88 jrs cc
+} if same(%1 'C' 'NC' 'NZ' 'Z')
+
+replace {
+	jp	%5
+} by {
+	jrl	%5
+	; peephole s1c88-j3 z80 jp -> s1c88 jrl (16-bit relative)
+} if notSame(%5 'hl' 'ix' 'iy')
+
+replace {
+	jp	%1, %5
+} by {
+	jrl	%1, %5
+	; peephole s1c88-j4 z80 jp cc -> s1c88 jrl cc
+} if same(%1 'C' 'NC' 'NZ' 'Z')
+
+replace {
+	call	%5
+} by {
+	carl	%5
+	; peephole s1c88-j5 z80 call -> s1c88 carl (16-bit relative call)
+} if notSame(%5 'hl' 'ix' 'iy')
+
+replace {
+	call	%1, %5
+} by {
+	carl	%1, %5
+	; peephole s1c88-j6 z80 call cc -> s1c88 carl cc
+} if same(%1 'C' 'NC' 'NZ' 'Z')
+
+// genCmp emits the native signed-condition branches as `jp LT`/`jp GE` (and the
+// peephole shortens them here). The S1C88 signed conditions exist ONLY as short
+// relative (jrs/cars, 8-bit ±127) — there is no long signed branch — so only the
+// in-range form is produced. An out-of-range signed branch would need an
+// invert-and-skip (jrs <inv>,.+n; jrl target); rare, left for later, and it stays
+// as the flagged `jp LT` until then.
+replace {
+	jp	LT, %5
+} by {
+	jrs	LT, %5
+	; peephole s1c88-j7 signed less-than -> jrs LT
+} if labelInRange(%5)
+
+replace {
+	jp	GE, %5
+} by {
+	jrs	GE, %5
+	; peephole s1c88-j8 signed greater-or-equal -> jrs GE
+} if labelInRange(%5)
+
+replace {
+	jp	GT, %5
+} by {
+	jrs	GT, %5
+	; peephole s1c88-j9 signed greater-than -> jrs GT
+} if labelInRange(%5)
+
+replace {
+	jp	LE, %5
+} by {
+	jrs	LE, %5
+	; peephole s1c88-j10 signed less-or-equal -> jrs LE
+} if labelInRange(%5)

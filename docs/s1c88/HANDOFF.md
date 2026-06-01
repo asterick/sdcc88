@@ -3,7 +3,7 @@
 **This is the single resume entry point.** If the prompt is *"let's pick up where you left off,"* do the
 steps under **NEXT ACTION**. Everything needed to continue is here or linked from here.
 
-_Last updated: 2026-05-31 (native 16-bit sub/cp, adjustStack, non-ifx compare slices). Branch: **`main`** (all work is on main;
+_Last updated: 2026-05-31 (peephole audit — see "Peephole audit" below; plus native 16-bit sub/cp, adjustStack, non-ifx compare slices). Branch: **`main`** (all work is on main;
 there is no `s1c88-retarget` branch anymore — CLAUDE.md's mention of it is stale). State: **GREEN** —
 compiler builds/links/runs, and the
 **binary toolchain (assembler + linker + banked ROM) is complete**. The remaining work is the **codegen
@@ -147,6 +147,43 @@ the broader operand-placement work so the allocator keeps 16-bit operands in BA/
 
 > A from-scratch big-bang reshape was tried and **reset** (unverifiable-red for the whole grind). The dead
 > WIP is in reflog `417bed5` — useful only as a reference for the *end-state* register defs.
+
+## Peephole audit (2026-05-31) — DONE
+
+Audited **all** peephole rules for S1C88 validity, then **collapsed everything into one file**:
+`src/s1c88/peeph.def` is now the single peephole definition (the z80 `peeph-z80.def` — the residual
+branch -> `jrs`/`jrl`/`carl` mapping — was merged into its end as the "S1C88 control-transfer mapping"
+section, kept LAST so it runs after the `jp->ret`/`jp->jr` passes; `main.c` now `#include`s only
+`peeph.rul`; symbol renamed `_z80_defaultRules`->`_s1c88_defaultRules`). The 5 other `peeph-*.def`
+variant files (ez80_z80/r2k/sm83/tlcs90/z80n) were never `#include`d — dead clutter — and were
+**deleted**. We are a standalone S1C88 port, not a z80 variant, so there is one rules file.
+Method: parsed every `replace…by…if` rule, ground-truthed each ambiguous form against `sdas88`
+(e.g. `ret cc`, `add hl,sp`, `ld mem,#imm`, the S1C88 `BIT`/shift operand classes — all illegal),
+then verified empirically by compiling a broad C corpus **with vs. without** peepholes and proving
+the with-peepholes illegal-instruction set is a strict **subset** of the gen.c (`--no-peep`) baseline.
+Invariant now holds: **peepholes introduce zero new illegal instruction forms.** Findings:
+
+- **Dropped 64 dead/illegal rules from `peeph.def`** (z80 idioms with no legal S1C88 analog): the
+  `ex de,hl`/DE-BC pair shuffles, `add hl,sp` frame-access folds (S1C88 uses `[SP+dd]`), `ex (sp),hl`
+  epilogue folds, z80 `bit n,reg` (S1C88 `BIT` is a different AND-test), `rlca`/`rrca`, the `ld c/e,#imm`
+  conditional-set variants, the 32-bit-compare folds (194-1/2), `isPort()`-dead rules (162a, 167/djnz),
+  and **peephole 161 `jp cc→ret cc`** — which was *live* and miscompiling (S1C88 has no conditional
+  return; it emitted illegal `ret Z`/`ret C`).
+- **Dropped `peeph-z80.def` rule 178** (`xor a,a; ld d(ix),a → ld d(ix),#0`) — immediate-to-indexed
+  (and -absolute) memory store is illegal on S1C88 (only `ld (hl),#nn` exists); it was live.
+- **Hardened 7 fold rules** (99, 118, 154x, 176b…) with `notSame(%N 'l' 'h' 'c' 'd' 'e')`: their z80
+  `canAssign('b' %N)` guard was a stale proxy for "`or a,%N` legal" — true on z80, **false** on S1C88
+  where `ld b,l` is legal but `or a,l` is not. The guard blocks promoting a `ld`-source into an illegal
+  8-bit-ALU source while keeping the fold for legal (memory/imm/a/b) operands.
+- **Guarded 52a/52c** (`push %1; pop %2 → ld split`) with `…'de' 'bc'`: `canSplitReg` still splits the
+  (always-green) `de`/`bc` into nonexistent `d/e/c` bytes, turning gen.c's illegal `push hl; pop de`
+  into illegal `ld e,l; ld d,h`. Now restricted to the byte-addressable pairs (ba/hl).
+- **Kept** the intentional `jp→jr→jrs` branch-shortening pipeline (160/162/163/164 + peeph-z80 j1–j10):
+  the scanner's `jr`/`jp` flags there are false alarms (peeph-z80 converts `jr→jrs`, `jp→jrl`).
+
+The remaining `--no-peep`-baseline illegal forms (`push/pop de`, `inc -N(ix)`, `ex (sp),hl`, `djnz`,
+`cpl`, `cp a,l`, `neg`, `add hl,de`, `bit 7,b`, out-of-range `jp GE`) are all **gen.c** residue (the
+register-model grind / the documented out-of-range-signed-branch gap), **not** peepholes.
 
 ## Verify / the tools
 
