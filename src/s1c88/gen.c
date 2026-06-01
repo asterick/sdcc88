@@ -2814,6 +2814,9 @@ makeFreePairId (const iCode * ic, bool * pisUsed)
 static void
 genMove_o (asmop *result, int roffset, asmop *source, int soffset, int size, bool a_dead_global, bool hl_dead_global, bool de_dead_global, bool iy_dead_global, bool f_dead);
 
+static void
+emit3_8alu (enum asminst inst, asmop *src, int soffset, const iCode *ic);
+
 /* If ic != 0, we can safely use isPairDead(). */
 /* By now, genMove / genMove_o is as good or better than this for nearly all uses. */
 static void
@@ -8761,7 +8764,7 @@ genPlus (iCode * ic)
             {
               _push (PAIR_HL);
               genMove (ASMOP_HL, rightop, false, true, false, false);
-              emit3 (started ? A_ADC : A_ADD, ASMOP_A, i ? ASMOP_H : ASMOP_L);
+              emit3_8alu (started ? A_ADC : A_ADD, i ? ASMOP_H : ASMOP_L, 0, ic);
               started = true;
               _pop (PAIR_HL);
             }
@@ -8769,7 +8772,7 @@ genPlus (iCode * ic)
             UNIMPLEMENTED;
           else
             {
-              emit3_o (started ? A_ADC : A_ADD, ASMOP_A, 0, rightop, i);
+              emit3_8alu (started ? A_ADC : A_ADD, rightop, i, ic);
               started = true;
             }
           if (maskedbyte)
@@ -9142,7 +9145,7 @@ genSub (const iCode *ic, asmop *result, asmop *left, asmop *right)
                   pushed_hl = true;
                 }
               genMove (ASMOP_HL, right, false, true, false, false);
-              emit3 (offset ? A_SBC : A_SUB, ASMOP_A, offset ? ASMOP_H : ASMOP_L);
+              emit3_8alu (offset ? A_SBC : A_SUB, offset ? ASMOP_H : ASMOP_L, 0, ic);
             }
           else if (!offset)
             {
@@ -9159,13 +9162,13 @@ genSub (const iCode *ic, asmop *result, asmop *left, asmop *right)
                       _pop (PAIR_HL);
                       pushed_hl = false;
                     }
-                  emit3_o (A_SUB, ASMOP_A, 0, right, offset);
+                  emit3_8alu (A_SUB, right, offset, ic);
                 }
             }
           else if (aopIsLitVal (left, offset, 1, 0x00) && !aopInReg (left, offset, A_IDX) && size == 1) // For the last byte, we can do an optimization that results in the same value in a, but different carry.
             {
               emit3 (A_SBC, ASMOP_A, ASMOP_A);
-              emit3_o (A_SUB, ASMOP_A, 0, right, offset);
+              emit3_8alu (A_SUB, right, offset, ic);
             }
           else
             {
@@ -9175,7 +9178,7 @@ genSub (const iCode *ic, asmop *result, asmop *left, asmop *right)
                   _pop (PAIR_HL);
                   pushed_hl = false;
                 }
-              emit3_o (A_SBC, ASMOP_A, 0, right, offset);
+              emit3_8alu (A_SBC, right, offset, ic);
             }
         }
       else // right is a literal.
@@ -10077,7 +10080,7 @@ emit3_8alu (enum asminst inst, asmop *src, int soffset, const iCode *ic)
       emit2 ("push b");
       cost2 (2, 11, 11, 7, 12, 10, 3, 3);
     }
-  cheapMove (ASMOP_B, 0, src, soffset, true);   /* ld b, l/h (no flag effect) */
+  cheapMove (ASMOP_B, 0, src, soffset, false);  /* ld b, l/h — src is a reg, A (left/acc) preserved */
   emit3 (inst, ASMOP_A, ASMOP_B);
   if (!b_dead)
     {
