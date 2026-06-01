@@ -3764,7 +3764,10 @@ aopPut (asmop *aop, const char *s, int offset)
         {
           if (aop->aopu.aop_stk >= 0)
             offset += _G.stack.param_offset;
-          if (!canAssignToPtr (s))
+          /* S1C88: `ld d(ix),<reg>` is legal but `ld d(ix),#imm` is not (only
+             `ld (hl),#nn` takes an immediate destination) — so route immediates
+             (and any non-register source) through A. */
+          if (!canAssignToPtr (s) || isConstantString (s))
             {
               emit2 ("ld a, %s", s);
               emit2 ("ld !*ixx, a", aop->aopu.aop_stk + offset);

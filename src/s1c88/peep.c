@@ -1279,7 +1279,11 @@ z80canAssign (const char *op1, const char *op2, const char *exotic)
     }
     else if(!strcmp(op2, "ix") || !strcmp(op2, "iy"))
     {
-      if(isReg(exotic) || exotic[0] == '#' || (IS_EZ80_Z80 && isRegPair(exotic)))
+      /* S1C88: `ld d(ix),<reg>` is legal but `ld d(ix),#imm` is NOT (only
+         `ld (hl),#nn` takes an immediate destination) — so do not report an
+         immediate source as assignable to indexed memory. Otherwise peepholes
+         like 9/9a fold `ld a,#0; ld d(ix),a` into the illegal `ld d(ix),#0`. */
+      if(isReg(exotic) || (IS_EZ80_Z80 && isRegPair(exotic)))
         return TRUE;
     }
 
