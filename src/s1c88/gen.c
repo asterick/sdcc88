@@ -10056,6 +10056,36 @@ _getPairIdName (PAIR_ID id)
 }
 #endif
 
+/* S1C88: emit an 8-bit ALU op `inst a, <src@soffset>` (sub/sbc/cp/...). Unlike
+   the z80, the S1C88 8-bit ALU can only source A, B, memory or an immediate —
+   never L or H. When src's byte is in L or H, route it through B (saving B if
+   it is live). A holds the left operand and is preserved; flags (incl. the
+   carry chain) survive the push/pop. For any other operand this is just
+   emit3_o. */
+static void
+emit3_8alu (enum asminst inst, asmop *src, int soffset, const iCode *ic)
+{
+  if (!aopInReg (src, soffset, L_IDX) && !aopInReg (src, soffset, H_IDX))
+    {
+      emit3_o (inst, ASMOP_A, 0, src, soffset);
+      return;
+    }
+
+  bool b_dead = isRegDead (B_IDX, ic);
+  if (!b_dead)
+    {
+      emit2 ("push b");
+      cost2 (2, 11, 11, 7, 12, 10, 3, 3);
+    }
+  cheapMove (ASMOP_B, 0, src, soffset, true);   /* ld b, l/h (no flag effect) */
+  emit3 (inst, ASMOP_A, ASMOP_B);
+  if (!b_dead)
+    {
+      emit2 ("pop b");                            /* preserves flags */
+      cost2 (2, 10, 9, 7, 12, 10, 3, 3);
+    }
+}
+
 /** Generic compare for > or <
  */
 static void
@@ -10489,7 +10519,7 @@ genCmp (operand * left, operand * right, operand * result, iCode * ifx, int sign
               if (!left_already_in_a)
                 cheapMove (ASMOP_A, 0, left->aop, offset, true);
               a_always_byte = -1;
-              emit3_o (started ? A_SBC : A_SUB, ASMOP_A, 0, right->aop, offset);
+              emit3_8alu (started ? A_SBC : A_SUB, right->aop, offset, ic);
               started = true;
               size--;
               offset++;
@@ -10952,7 +10982,7 @@ gencjneshort (operand *left, operand *right, symbol *lbl, const iCode *ic)
             }
           else
             {
-              emit3_o (A_SUB, ASMOP_A, 0, right->aop, offset);
+              emit3_8alu (A_SUB, right->aop, offset, ic);
               if (!regalloc_dry_run)
                 emit2 ("jp NZ, !tlabel", labelKey2num (lbl->key));
               cost2 (3, 10.0f, 7.5f, 7.0f, 14.0f,  11.0f, 3.5f, 3.0f); // Assume both branches equally likely, jp not optimzed into jr.
