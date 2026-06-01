@@ -27,9 +27,14 @@ and builds the compiler.
 > `==` via native `cp ba,hl`/`cp …,#imm` + `jrs LT/GE`), the 16-bit ALU (`sub ba,hl`), `adjustStack`
 > (native SP moves), 8-bit L/H ALU operands incl. AND/OR/XOR (routed through B), shifts (routed through
 > A/B — the S1C88 only shifts A/B/[HL]), accumulator rotates (`rla`→`rl a` etc.), `push af`→`push a;push
-> sc`, and the scratch-pair selectors (`getFreePairId`→BA). The broad-corpus validator error count is down
-> to the low tens. **Remaining:** the C/D/E + DE/BC register-model cleanup (the `gen.c`
-> scratch-asmop machinery + the variable-shift `C` loop counter). All
+> sc`, the scratch-pair selectors (`getFreePairId`→BA), `cpl a`/`neg a` operand forms, indexed/abs
+> `inc/dec` routed through A (`emit3_incdec`), `cp a,l`/`sub a,l` routed through B, `djnz`→`djr nz`,
+> `bit n,reg`→`bit reg,#mask` (`emitBitTest`), and **RES/SET elimination** (no such instruction — bits via
+> `and/or a,#mask`). The **peephole rules were audited for S1C88 validity and collapsed into one file**
+> (`peeph.def`; the z80 `peeph-z80.def` + 5 dead variant files removed) — see
+> `docs/s1c88/HANDOFF.md` "Peephole audit". **Remaining:** the C/D/E + DE/BC register-model cleanup (the
+> `gen.c` scratch-asmop machinery: `push de`/`pop de` stack-peek, `ex (sp),hl`, `add hl,sp`, `ld de`/`add
+> hl,de` scratch, `ldir` struct-copy) + the documented out-of-range `jp GE`. All
 > work is on **`main`**. The design, ABI, and step-by-step plan live in **`docs/s1c88/abi-decision.md`**;
 > the toolchain in `docs/s1c88/{sdas88-retarget,banked-branch}.md`. Read before touching `src/s1c88/`.
 

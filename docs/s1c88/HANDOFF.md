@@ -216,6 +216,15 @@ Invariant now holds: **peepholes introduce zero new illegal instruction forms.**
   into illegal `ld e,l; ld d,h`. Now restricted to the byte-addressable pairs (ba/hl).
 - **Kept** the intentional `jp→jr→jrs` branch-shortening pipeline (160/162/163/164 + peeph-z80 j1–j10):
   the scanner's `jr`/`jp` flags there are false alarms (peeph-z80 converts `jr→jrs`, `jp→jrl`).
+- **Follow-up (flag semantics):** the reorder rules **96a/b/c** (move `inc/dec hl` across a neighbouring
+  instruction) were safe on the z80 only because its 16-bit `inc/dec` are flag-transparent. On the S1C88
+  16-bit `inc/dec` set `Z/V/N` (only `C` preserved), so the reorder changes the live flags — added
+  `notUsed('f')` so they only fire when flags are dead. **96d** (push/pop) is flag-neutral, left as-is.
+  The hazard was *latent* (the existing `operandsNotRelated(…,hl)` guards already make these nearly-dead
+  on our register model — guarded-vs-disabled output is identical on the corpus). A scanner gap to note
+  for any future re-audit: rules can hide illegal/flag-unsafe ops behind a *placeholder operator*
+  (`same(%N 'bit' 'res' 'set' 'rl' …)`) — match those, not just literal mnemonics (this is how 61/75/76
+  slipped the first pass).
 
 The remaining `--no-peep`-baseline illegal forms (`push/pop de`, `inc -N(ix)`, `ex (sp),hl`, `djnz`,
 `cpl`, `cp a,l`, `neg`, `add hl,de`, `bit 7,b`, out-of-range `jp GE`) are all **gen.c** residue (the
