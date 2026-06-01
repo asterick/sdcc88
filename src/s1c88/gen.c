@@ -2817,6 +2817,9 @@ genMove_o (asmop *result, int roffset, asmop *source, int soffset, int size, boo
 static void
 emit3_8alu (enum asminst inst, asmop *src, int soffset, const iCode *ic);
 
+static void
+emit3_shift (enum asminst inst, asmop *aop, int offset, const iCode *ic);
+
 /* If ic != 0, we can safely use isPairDead(). */
 /* By now, genMove / genMove_o is as good or better than this for nearly all uses. */
 static void
@@ -10089,6 +10092,48 @@ emit3_8alu (enum asminst inst, asmop *src, int soffset, const iCode *ic)
     }
 }
 
+/* S1C88: emit a shift/rotate `inst <aop[offset]>`. Shifts/rotates only target
+   A, B, [HL] or [BR:ll] — never L, H, or [IX+d]. When the operand is anything
+   else, route it through a shiftable scratch byte reg (A or B, whichever is not
+   occupied by another byte of aop). `ld` is flag-neutral, so the carry chain
+   across a multi-byte shift is preserved by the move in/out (and by push/pop of
+   a live scratch). */
+static void
+emit3_shift (enum asminst inst, asmop *aop, int offset, const iCode *ic)
+{
+  if (aopInReg (aop, offset, A_IDX) || aopInReg (aop, offset, B_IDX))
+    {
+      emit3_o (inst, aop, offset, 0, 0);
+      return;
+    }
+
+  /* Pick a shiftable scratch (A or B) not used by another byte of aop. */
+  bool a_ok = (aop->regs[A_IDX] < 0);
+  bool b_ok = (aop->regs[B_IDX] < 0);
+  if (!a_ok && !b_ok)
+    {
+      UNIMPLEMENTED;          /* value occupies both A and B and spills into L/H */
+      return;
+    }
+  bool use_a = a_ok && (isRegDead (A_IDX, ic) || !b_ok || !isRegDead (B_IDX, ic));
+  asmop *scr = use_a ? ASMOP_A : ASMOP_B;
+  bool dead = use_a ? isRegDead (A_IDX, ic) : isRegDead (B_IDX, ic);
+
+  if (!dead)
+    {
+      emit2 (use_a ? "push a" : "push b");
+      cost2 (2, 11, 11, 7, 12, 10, 3, 3);
+    }
+  cheapMove (scr, 0, aop, offset, false);   /* ld scr, <byte>  — flag-neutral */
+  emit3 (inst, scr, 0);
+  cheapMove (aop, offset, scr, 0, false);   /* ld <byte>, scr  — flag-neutral */
+  if (!dead)
+    {
+      emit2 (use_a ? "pop a" : "pop b");
+      cost2 (2, 10, 9, 7, 12, 10, 3, 3);
+    }
+}
+
 /** Generic compare for > or <
  */
 static void
@@ -11532,8 +11577,8 @@ genAnd (const iCode * ic, iCode * ifx)
             }
           else if (!isRegDead (A_IDX, ic) && bytelit == 0x0ff && !aopInReg (left->aop, offset, A_IDX) && left->aop->type == AOP_REG && !aopInReg (left->aop, offset, IYL_IDX) && !aopInReg (left->aop, offset, IYH_IDX))
             {
-              emit3_o (A_RLC, left->aop, offset, 0, 0);
-              emit3_o (A_RRC, left->aop, offset, 0, 0);
+              emit3_shift (A_RLC, left->aop, offset, ic);
+              emit3_shift (A_RRC, left->aop, offset, ic);
               sizel--;
               offset++;
             }
@@ -12482,7 +12527,7 @@ genRRC (const iCode *ic)
       cheapMove (ASMOP_A, 0, left->aop, offset, true);
       emit3_o (A_RRA, 0, 0, 0, 0);
       while (--offset >= 0)
-        emit3_o (A_RR, left->aop, offset, 0, 0);
+        emit3_shift (A_RR, left->aop, offset, ic);
       if (IS_SM83 && requiresHL (left->aop))
         { /* ldhl sp,N changes CARRY */
           emit3_o (A_RRA, 0, 0, 0, 0);
@@ -12490,7 +12535,7 @@ genRRC (const iCode *ic)
             aopGet (left->aop, size - 1, false);
           emit3_o (A_RLA, 0, 0, 0, 0);
         }
-      emit3_o (A_RR, left->aop, size - 1, 0, 0);
+      emit3_shift (A_RR, left->aop, size - 1, ic);
       if (!operandsEqu (result, left))
         genMove_o (result->aop, 0, left->aop, 0, size, true, isPairDead (PAIR_HL, ic), isPairDead (PAIR_DE, ic), true, true);
     }
@@ -12592,7 +12637,7 @@ genRLC (const iCode *ic)
             }
           else
             {
-              emit3_o (A_RL, rotaop, i, 0, 0);
+              emit3_shift (A_RL, rotaop, i, ic);
               i++;
             }
         }
@@ -12729,16 +12774,16 @@ genGetAbit (const iCode * ic)
 }
 
 static void
-emitRsh2 (asmop * aop, int size, int is_signed)
+emitRsh2 (asmop * aop, int size, int is_signed, const iCode *ic)
 {
   int offset = 0;
 
   while (size--)
     {
       if (offset == 0)
-        emit3_o (is_signed ? A_SRA : A_SRL, aop, size, 0, 0);
+        emit3_shift (is_signed ? A_SRA : A_SRL, aop, size, ic);
       else
-        emit3_o (A_RR, aop, size, 0, 0);
+        emit3_shift (A_RR, aop, size, ic);
       offset++;
     }
 }
@@ -12876,7 +12921,7 @@ shiftR2Left2Result (const iCode *ic, operand *left, int offl, operand *result, i
   if (!optimize.codeSize || shCount <= 2)
     {
       while (shCount--)
-        emitRsh2 (result->aop, size, is_signed);
+        emitRsh2 (result->aop, size, is_signed, ic);
     }
   else
     {
@@ -12897,7 +12942,7 @@ shiftR2Left2Result (const iCode *ic, operand *left, int offl, operand *result, i
       if (!regalloc_dry_run)
         emitLabel (tlbl);
 
-      emitRsh2 (result->aop, size, is_signed);
+      emitRsh2 (result->aop, size, is_signed, ic);
 
       if (use_b)
         {
@@ -12931,11 +12976,11 @@ shiftL2Left2Result (operand *left, operand *result, int shCount, const iCode *ic
       genMove_o (result->aop, 1, left->aop, 0, 1, isRegDead(A_IDX, ic), false, false, false, true);
       bool reuse_zero = left->aop->type == AOP_REG && !aopInReg (left->aop, 1, IYL_IDX) && !aopInReg (left->aop, 1, IYH_IDX) && !aopInReg (left->aop, 1, result->aop->aopu.aop_reg[1]->rIdx);
       genMove_o (result->aop, 0, reuse_zero ? left->aop : ASMOP_ZERO, 1, 1, isRegDead(A_IDX, ic) && !aopInReg (result->aop, 1, A_IDX), false, false, false, true);
-      emit3_o (A_SRL, result->aop, 1, 0, 0);
+      emit3_shift (A_SRL, result->aop, 1, ic);
       if (aopInReg (result->aop, 0, A_IDX))
         emit3 (A_RRA, 0, 0);
       else
-        emit3 (A_RR, result->aop, 0);
+        emit3_shift (A_RR, result->aop, 0, ic);
       return;
     }
   /* For a shift of 7 we can use cheaper right shifts */
@@ -12950,15 +12995,15 @@ shiftL2Left2Result (operand *left, operand *result, int shCount, const iCode *ic
 
       if (special_a)
         emit3 (A_XOR, ASMOP_A, ASMOP_A);
-      emit3_o (A_RR, left->aop, 1, 0, 0);
+      emit3_shift (A_RR, left->aop, 1, ic);
       emit3_o (A_LD, result->aop, 1, left->aop, 0);
-      emit3_o (A_RR, result->aop, 1, 0, 0);
+      emit3_shift (A_RR, result->aop, 1, ic);
       if (!special_a)
         emit3_o (A_LD, result->aop, 0, ASMOP_ZERO, 0);
       if (aopInReg (lowbyte, 0, A_IDX))
         emit3 (A_RRA, 0, 0);
       else
-        emit3 (A_RR, lowbyte, 0);
+        emit3_shift (A_RR, lowbyte, 0, ic);
       if (special_a)
         cheapMove (result->aop, 0, lowbyte, 0, true);
       return;
@@ -13027,7 +13072,7 @@ shiftL2Left2Result (operand *left, operand *result, int shCount, const iCode *ic
                 if (aopInReg (shiftaop, offset, A_IDX))
                   emit3 (offset ? A_ADC : A_ADD, ASMOP_A, ASMOP_A);
                 else
-                  emit3_o (offset ? A_RL : A_SLA, shiftaop, offset, 0, 0);
+                  emit3_shift (offset ? A_RL : A_SLA, shiftaop, offset, ic);
             }
         }
       else
@@ -13051,7 +13096,7 @@ shiftL2Left2Result (operand *left, operand *result, int shCount, const iCode *ic
 
           while (size--)
             {
-              emit3_o (offset ? A_RL : A_SLA, shiftaop, offset, 0, 0);
+              emit3_shift (offset ? A_RL : A_SLA, shiftaop, offset, ic);
 
               offset++;
             }
@@ -13372,7 +13417,7 @@ shiftL1Left2Result (operand *left, int offl, operand *result, int offr, unsigned
   else if (!aopInReg(result->aop, 0, A_IDX) && sameRegs (left->aop, result->aop) && shCount <= 2 && offr == offl)
     {
       while (shCount--)
-        emit3 (A_SLA, result->aop, 0);
+        emit3_shift (A_SLA, result->aop, 0, ic);
     }
   else if ((IS_Z180 && !optimize.codeSpeed || IS_EZ80_Z80 || IS_Z80N) && // Try to use mlt
     (!IS_Z80N && aopInReg (result->aop, offr, C_IDX) && isPairDead(PAIR_BC, ic) || aopInReg (result->aop, offr, E_IDX) && isPairDead(PAIR_DE, ic) || !IS_Z80N && aopInReg (result->aop, offr, L_IDX) && isPairDead(PAIR_HL, ic)))
@@ -13809,7 +13854,7 @@ genLeftShift (const iCode *ic)
               if (aopInReg (shiftop, offset, A_IDX))
                 emit3 (started ? A_ADC : A_ADD, ASMOP_A, ASMOP_A);
               else
-                emit3_o (started ? A_RL : A_SLA, shiftop, offset, 0, 0);
+                emit3_shift (started ? A_RL : A_SLA, shiftop, offset, ic);
               started = true;
             }
           size--, offset++;
@@ -14238,13 +14283,13 @@ genRightShift (const iCode * ic)
         size--, offset--;
       else if (first)
         {
-          emit3_o (is_signed ? A_SRA : A_SRL, shiftop, offset, 0, 0);
+          emit3_shift (is_signed ? A_SRA : A_SRL, shiftop, offset, ic);
           first = 0;
           size--, offset--;
         }
       else
         {
-          emit3_o (A_RR, shiftop, offset, 0, 0);
+          emit3_shift (A_RR, shiftop, offset, ic);
           size--, offset--;
         }
     }

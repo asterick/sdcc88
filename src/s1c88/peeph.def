@@ -275,15 +275,10 @@ replace restart {
 	; common peephole 20 loaded (#%1) from a directly instead of using hl.
 } if notUsed('hl')
 
-replace restart {
-	ld	a, %1 (%2)
-	%3	a
-	ld	%1 (%2), a
-} by {
-	%3	%1 (%2)
-	ld	a, %1 (%2)
-	; common peephole 21 shifted in (%2) instead of a.
-} if same(%3 'srl' 'sla' 'rl' 'rr' 'rlc' 'rrc' 'sll')
+// common peephole 21 (fold `ld a,m(ix); SHIFT a; ld m(ix),a` -> `SHIFT m(ix)`)
+// REMOVED for the S1C88: shifts/rotates can only target A, B, [HL] or [BR:ll],
+// never [IX+d]/[IY+d]. The fold would re-introduce an illegal indexed-memory
+// shift that the codegen (emit3_shift) deliberately routes through A to avoid.
 
 replace restart {
 	ld	%1,(hl)
