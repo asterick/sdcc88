@@ -4352,7 +4352,24 @@ genCopy (asmop *result, int roffset, asmop *source, int soffset, int sizex, bool
       int fp_offset = result->aopu.aop_stk + (result->aopu.aop_stk > 0 ? _G.stack.param_offset : 0) + roffset + i;
       int sp_offset = fp_offset + _G.stack.pushed + _G.stack.offset;
 
-      if (!IS_SM83 && !IS_RAB && !(IS_TLCS90 && optimize.codeSpeed) && // The sm83 doesn't have ex (sp), hl. The Rabbits and tlcs90 have it, but ld 0 (sp), hl is faster. For the Rabbits, they are also the same size.
+      /* S1C88: direct SP-relative 16-bit store `ld dd(sp), {ba,hl}` (74/75, dd a
+         signed byte) — no `ex (sp),hl` swap, and it doesn't clobber the source
+         pair (so no hl_dead requirement). Only BA and HL have SP stores (IX/IY
+         have only SP loads), which aluPairId matches exactly. */
+      if (!IS_SM83 && i + 1 < n && aopOnStack (result, roffset + i, 2) &&
+        sp_offset >= -128 && sp_offset <= 127 &&
+        aluPairId (source, soffset + i) != PAIR_INVALID &&
+        !regalloc_dry_run) // Stack positions will change, so do not assume this is possible in the cost function.
+        {
+          emit2 ("ld %d (sp), %s", sp_offset, _pairs[aluPairId (source, soffset + i)].name);
+          cost (3, 6);
+          assigned[i] = true;
+          assigned[i + 1] = true;
+          regsize -= 2;
+          size -= 2;
+          i += 2;
+        }
+      else if (!IS_SM83 && !IS_RAB && !(IS_TLCS90 && optimize.codeSpeed) && // The sm83 doesn't have ex (sp), hl. The Rabbits and tlcs90 have it, but ld 0 (sp), hl is faster. For the Rabbits, they are also the same size.
         i + 1 < n && aopOnStack (result, roffset + i, 2) && !sp_offset &&
         aopInReg (source, soffset + i, HL_IDX) && hl_dead && // If we knew that iy was dead, we could also use ex (sp), iy here.
         !regalloc_dry_run) // Stack positions will change, so do not assume this is possible in the cost function.
@@ -4364,7 +4381,7 @@ genCopy (asmop *result, int roffset, asmop *source, int soffset, int sizex, bool
           assigned[i + 1] = true;
           regsize -= 2;
           size -= 2;
-          i += 2;        
+          i += 2;
         }
       else if (i + 1 < n && aopOnStack (result, roffset + i, 2) && (abs(fp_offset) <= 127 && !_G.omitFramePtr || IS_RAB && sp_offset <= 255 || IS_TLCS90 && sp_offset <= 127) &&
         ((aopInReg (source, soffset + i, HL_IDX) || aopInReg (source, soffset + i, IY_IDX)) && IS_RAB || (getPairId_o (source, soffset + i) != PAIR_INVALID && (IS_EZ80_Z80 || IS_TLCS90))))
