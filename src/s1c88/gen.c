@@ -1635,6 +1635,19 @@ swapPairs (PAIR_ID pair1Id, PAIR_ID pair2Id)
 static void
 _push (PAIR_ID pairId)
 {
+  if (pairId == PAIR_AF)
+    {
+      /* The S1C88 has no AF register. Save A and the flag register (SC)
+         separately — PUSH leaves all flags unchanged, so `push a` doesn't
+         disturb the flags that `push sc` then saves. 2 bytes on the stack,
+         matching z80 `push af`. */
+      emit2 ("push a");
+      cost2 (2, 11, 11, 10, 16, 8, 3, 4);
+      emit2 ("push sc");
+      cost2 (1, 11, 11, 10, 16, 8, 3, 4);
+      _G.stack.pushed += 2;
+      return;
+    }
   emit2 ("push %s", _pairs[pairId].name);
   if (pairId == PAIR_IX || pairId == PAIR_IY)
   	cost2 (2 - IS_TLCS90, 15, 14, 12, 16, 8, 4, 5);
@@ -1646,6 +1659,19 @@ _push (PAIR_ID pairId)
 static void
 _pop (PAIR_ID pairId)
 {
+  if (pairId == PAIR_AF)
+    {
+      /* Mirror of _push(PAIR_AF): restore flags then A. POP leaves flags
+         unchanged except POP SC (which reloads them), so `pop a` after keeps
+         the just-restored flags. */
+      emit2 ("pop sc");
+      cost2 (1, 10, 9, 7, 12, 10, 3, 3);
+      emit2 ("pop a");
+      cost2 (2, 10, 9, 7, 12, 10, 3, 3);
+      _G.stack.pushed -= 2;
+      spillPair (PAIR_AF);
+      return;
+    }
   if (pairId != PAIR_INVALID)
     {
       emit2 ("pop %s", _pairs[pairId].name);
