@@ -1,0 +1,95 @@
+--- a/sdas/asxxsrc/sdas.h
++++ b/sdas/asxxsrc/sdas.h
+@@ -26,6 +26,7 @@
+   TARGET_ID_DS390,
+   TARGET_ID_6808,
+   TARGET_ID_STM8,
++  TARGET_ID_S1C88,
+   TARGET_ID_PDK13 = 13,
+   TARGET_ID_PDK14 = 14,
+   TARGET_ID_PDK15 = 15,
+@@ -39,6 +40,7 @@
+ int is_sdas_target_z80_like(void);
+ int is_sdas_target_8051_like(void);
+ int is_sdas_target_stm8(void);
++int is_sdas_target_s1c88(void);
+ int is_sdas_target_pdk(void);
+ 
+ #endif  /* __SDAS_H */
+--- a/sdas/asxxsrc/sdas.c
++++ b/sdas/asxxsrc/sdas.c
+@@ -70,6 +70,8 @@
+     { "390", TARGET_ID_DS390 },
+     { "6808", TARGET_ID_6808 },
+     { "stm8", TARGET_ID_STM8 },
++    { "s1c88", TARGET_ID_S1C88 },
++    { "88", TARGET_ID_S1C88 },		/* sdas88 (the s1c88 backend binary) */
+     { "pdk13", TARGET_ID_PDK13 },
+     { "pdk14", TARGET_ID_PDK14 },
+     { "pdk15", TARGET_ID_PDK15 },
+@@ -152,6 +154,13 @@
+ }
+ 
+ int
++is_sdas_target_s1c88(void)
++{
++  check_init();
++  return target == TARGET_ID_S1C88;
++}
++
++int
+ is_sdas_target_pdk(void)
+ {
+   check_init();
+--- a/sdas/asxxsrc/asout.c
++++ b/sdas/asxxsrc/asout.c
+@@ -511,7 +511,7 @@
+                                 outatxb(i,esp->e_addr);
+                         }
+                 } else {
+-                        if ((i == 1) && (!is_sdas() || !(is_sdas_target_8051_like() || is_sdas_target_stm8()))) {
++                        if ((i == 1) && (!is_sdas() || !(is_sdas_target_8051_like() || is_sdas_target_stm8() || is_sdas_target_s1c88()))) {
+                                 r |= R_BYTE | R_BYTX | esp->e_rlcf;
+                                 if (r & R_MSB) {
+                                         out_lb(hibyte(esp->e_addr),r|R_RELOC|R_HIGH);
+@@ -641,7 +641,7 @@
+                                 out_lw(esp->e_addr,r|R_RELOC);
+                         }
+                         if (oflag) {
+-                                if (!is_sdas() || !(is_sdas_target_8051_like() || is_sdas_target_stm8())) {
++                                if (!is_sdas() || !(is_sdas_target_8051_like() || is_sdas_target_stm8() || is_sdas_target_s1c88())) {
+                                         outchk(2, 4);
+                                         out_txb(2, esp->e_addr);
+                                         if (esp->e_flag) {
+--- a/sdas/linksrc/lkrloc3.c
++++ b/sdas/linksrc/lkrloc3.c
+@@ -370,6 +370,29 @@
+                         reli = a[rindex]->a_addr;
+                 }
+ 
++/* sdcc88: S1C88 banked-branch bank field (R_S1C88_BANK = 0x800).  The slot is
++ *   CE C4 [bank] [pad] <carl|jrl> <disp16>
++ * with the [bank][pad] 2-byte field at rtp..rtp+1 (the 24-bit reloc path emits
++ * a_bytes=2 placeholder bytes).  Write the target's code bank into [bank] (its
++ * linker address >> 16, code areas placed at (bank<<16)|logic) and a NOP (FF)
++ * into [pad] — yielding `ld nb,#bank ; nop ; <branch>`.  When that bank is 0
++ * (common area) or the current area's bank, NOP the whole `ld nb`+pad instead
++ * (CE C4 at rtp-2..rtp-1 plus the field) so no bank switch happens. */
++                if (mode & 0x800) {
++                        int tbank = (int) ((reli >> 16) & 0xFF);
++                        int cbank = (int) (((pc + (rtp - rtofst)) >> 16) & 0xFF);
++                        /* Leave rtflg set on these bytes so lkout() emits them. */
++                        rtval[rtp+1] = 0xFF;            /* pad -> nop */
++                        if (tbank == 0 || tbank == cbank) {
++                                rtval[rtp-2] = 0xFF;    /* nop (was CE)   */
++                                rtval[rtp-1] = 0xFF;    /* nop (was C4)   */
++                                rtval[rtp]   = 0xFF;    /* nop (was bank) */
++                        } else {
++                                rtval[rtp]   = tbank;   /* ld nb,#bank */
++                        }
++                        continue;
++                }
++
+                 /*
+                  * R3_PCR addressing
+                  */

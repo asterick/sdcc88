@@ -521,9 +521,17 @@ struct mne *mp;
 		   takes the 16-bit path that truncates the mode.  Until a TARGET_ID_S1C88
 		   identity enables it, emit bank 0 (correct for common-area / single-bank
 		   targets); the displacement below already links correctly. */
-		outab(0x00);				/* bank #0 placeholder */
+		/* Bank field carrying R_S1C88_BANK — a 2-byte [bank][pad] field via
+		   outrw() (which emits exactly 2 bytes and advances the counter by 2, so
+		   nothing desyncs; the escape mode reaches the linker because the s1c88
+		   identity routes word relocations through the escape path).  sdld88
+		   writes the target's bank (its linker address >> 16; code areas at
+		   (bank<<16)|logic) into [bank] and a NOP (FF) into [pad] — giving
+		   `ld nb,#bank ; nop ; carl/jrl`.  When that bank is 0 (common) or the
+		   current area's, it NOPs the whole `ld nb`+pad instead. */
+		outrw(&e1, R_S1C88_BANK);		/* [bank][pad] */
 		outab(op);				/* carl/jrl opcode */
-		outrw(&e1, R_PCR);			/* disp16 (+ R_PCR reloc -> target) — links correctly */
+		outrw(&e1, R_PCR);			/* disp16 (+ R_PCR reloc -> target) — logic-relative */
 		break;
 
 	default:

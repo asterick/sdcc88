@@ -1,29 +1,28 @@
 # Banked `CALL` / `JUMP` — assembler + linker design (Phase 2)
 
-> **Status (impl in progress).** The base toolchain works (`build-sdld.sh` + `link-smoke.sh`). The
-> pseudo-ops **`bcall`/`bjump`** are implemented and committed: each emits the slot `ld nb,#bb ; carl|jrl
-> [cc,] target`, and **the displacement links correctly across areas/banks** (standard `R_PCR`; the 16-bit
-> write masks the bank difference → logic-relative disp). They work today for **common-area / single-bank
-> (bank 0)** targets.
+> **Status: AUTO-BANK WORKS.** `bcall`/`bjump` are implemented end-to-end. Each emits the slot
+> `ld nb,#bb ; nop ; carl|jrl [cc,] target`, the displacement links across areas/banks via the standard
+> `R_PCR` (the 16-bit write masks the bank difference → logic-relative disp), **and the linker now
+> resolves and writes the destination bank automatically.** Verified: with code areas placed at
+> `(bank<<16)|logic`, `bcall` to a bank-1 target links to `CE C4 01 FF F2 <disp>` (ld nb,#1 ; nop ; carl),
+> while a same-bank / bank-0 target links to `FF FF FF FF F3 <disp>` (the whole `ld nb` NOP'd, no switch).
 >
-> **Auto-bank — partially built, one blocker.** Prototyped in the build tree (not yet persisted as a
-> patch): a **`TARGET_ID_S1C88`** identity in `sdas.c`/`sdas.h` (binary "sdas88" → matches "88") routes
-> 1-byte relocations through the **24-bit/escape path** (`asout.c`, gated on the target) — needed because
-> the z80 16-bit reloc path *truncates* escape modes. With that, the bank field emits as `[bank][pad]`
-> (a_bytes=2) carrying **`R_S1C88_BANK` (0x800)**, and `lkrloc3.c` gets a dispatch case meant to write the
-> target's bank (`symval >> 16`, code areas at `(bank<<16)|logic`) into `[bank]`, a `nop` (FF) into
-> `[pad]`, or NOP the whole `ld nb` when bank is 0/current.
+> **How it's built** (shared-source changes persisted in `third_party/sdcc/s1c88_banked_branch.patch`,
+> applied idempotently by `build-sdas.sh`/`build-sdld.sh`):
+> - A **`TARGET_ID_S1C88`** identity in `sdas.c`/`sdas.h` (binary "sdas88" matches the "88" table entry)
+>   routes word relocations through the **escape path** in `asout.c` — needed because the z80 16-bit reloc
+>   path *truncates* escape modes (the bank mode `0x800` → `0x00`).
+> - `bcall`/`bjump` emit the bank as a **2-byte `[bank][pad]` field via `outrw`** (which emits exactly 2
+>   bytes and advances the location counter by 2 — `outrb` would over-emit `a_bytes`=4 bytes and desync
+>   the counter), carrying **`R_S1C88_BANK` (0x800)**.
+> - `lkrloc3.c` gets a dispatch case: write `symval >> 16` (the target's bank) into `[bank]` and `0xFF`
+>   (nop) into `[pad]`, or NOP the whole `ld nb`+pad when the bank is 0 or the current area's. **Key
+>   gotcha:** *do not clear* `rtflg[]` for these bytes — `rtflg[i]` is lkout's "emit this byte" flag, so
+>   clearing it drops the bytes from the output.
 >
-> **PROVEN:** the standard 24-bit `R_HIB` path *does* resolve and write the bank correctly (a test linked
-> `bcall` into bank 1 → `CE C4 01 …`). **BLOCKER:** the custom `lkrloc3.c` dispatch's writes to
-> `rtval[rtp]`/`rtval[rtp+1]` (the relocated positions) **don't persist to output** — writes to
-> `rtval[rtp-2]`/`[rtp-1]` do. The bytes *at* the reloc point are evidently re-emitted from elsewhere at
-> output time (not the raw `rtval[]` despite `adb_2b` writing it the same way + clearing `rtflg`). This is
-> a focused ASlink-internals issue: find where the T record's relocated bytes are finally written and why a
-> direct `rtval[]` write at `rtp` is overridden. Once fixed, the conditional-NB rewrite is complete.
->
-> Remaining after that: persist the shared-source changes as a patch (applied by `build-sdas.sh`/
-> `build-sdld.sh`), the bank `.lk` (areas at `(bank<<16)|logic`), and romgen.
+> **Remaining:** the bank `.lk` (areas at `(bank<<16)|logic`) and romgen (bank slices → flat `.min`).
+> Current cost: a `nop` pad per call (the 2-byte field) and always-long form — a later optimization can
+> reclaim those via the linker also choosing `cars`/`jrs`.
 >
 > This is the concrete plan for two **pseudo-instructions** that pick the short/long branch form *and*
 > insert the code-bank switch automatically:

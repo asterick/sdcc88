@@ -24,6 +24,15 @@ BIN="sdas${BACKEND#as}"   # asz80->sdasz80, as88->sdas88
 
 [ -f "${SDCC}/config.status" ] || { echo "!! tree not configured — run ./build.sh first" >&2; exit 1; }
 
+# Banked-branch toolchain patch: gives the shared asxxsrc a TARGET_ID_S1C88 identity that routes
+# relocations through the 24-bit/escape path (so bcall/bjump's R_S1C88_BANK survives), and adds the
+# bank-rewrite case to linksrc/lkrloc3.c. Applied idempotently (marker = TARGET_ID_S1C88 in sdas.h).
+if ! grep -q TARGET_ID_S1C88 "${SDCC}/sdas/asxxsrc/sdas.h" 2>/dev/null; then
+  echo ">> applying s1c88_banked_branch.patch"
+  ( cd "${SDCC}" && patch -p1 --forward < "${REPO}/third_party/sdcc/s1c88_banked_branch.patch" ) \
+    || { echo "!! s1c88_banked_branch.patch failed to apply" >&2; exit 1; }
+fi
+
 cd "${SDCC}"
 if [ -d "${OVERLAY}" ]; then
   echo ">> overlaying sdcc88/sdas/${BACKEND} -> build tree"

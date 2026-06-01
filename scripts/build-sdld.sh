@@ -21,6 +21,14 @@ SDCC="${REPO}/build/sdcc-4.5.0"
 
 [ -f "${SDCC}/config.status" ] || { echo "!! tree not configured — run ./build.sh first" >&2; exit 1; }
 
+# Banked-branch toolchain patch (see build-sdas.sh): adds the R_S1C88_BANK rewrite case to
+# linksrc/lkrloc3.c (and the asxxsrc identity). Idempotent; marker = TARGET_ID_S1C88 in sdas.h.
+if ! grep -q TARGET_ID_S1C88 "${SDCC}/sdas/asxxsrc/sdas.h" 2>/dev/null; then
+  echo ">> applying s1c88_banked_branch.patch"
+  ( cd "${SDCC}" && patch -p1 --forward < "${REPO}/third_party/sdcc/s1c88_banked_branch.patch" ) \
+    || { echo "!! s1c88_banked_branch.patch failed to apply" >&2; exit 1; }
+fi
+
 echo ">> make -C sdas/linksrc sdcc-ldz80"
 make -C "${SDCC}/sdas/linksrc" sdcc-ldz80 > /tmp/sdld88-build.log 2>&1 || {
   echo "!! linker build FAILED — last errors:"; grep -iE "error:|Error [0-9]+" /tmp/sdld88-build.log | head -20
