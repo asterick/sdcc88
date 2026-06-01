@@ -2842,6 +2842,9 @@ emit3_8alu (enum asminst inst, asmop *src, int soffset, const iCode *ic);
 static void
 emit3_shift (enum asminst inst, asmop *aop, int offset, const iCode *ic);
 
+static void
+emit3_incdec (enum asminst inst, asmop *aop, int offset, const iCode *ic);
+
 /* If ic != 0, we can safely use isPairDead(). */
 /* By now, genMove / genMove_o is as good or better than this for nearly all uses. */
 static void
@@ -7901,7 +7904,7 @@ genPlusIncr (const iCode *ic)
           if (!HAS_IYL_INST && (aopInReg (IC_RESULT (ic)->aop, offset, IYL_IDX) || aopInReg (IC_RESULT (ic)->aop, offset, IYH_IDX)))
             UNIMPLEMENTED;
           else
-            emit3_o (A_INC, IC_RESULT (ic)->aop, offset++, 0, 0);
+            emit3_incdec (A_INC, IC_RESULT (ic)->aop, offset++, ic);   // S1C88: route [ix+d]/abs INC through A
           if (size)
             {
               if (!regalloc_dry_run)
@@ -7941,7 +7944,7 @@ genPlusIncr (const iCode *ic)
   if (sameRegs (IC_LEFT (ic)->aop, IC_RESULT (ic)->aop))
     {
       while (icount--)
-        emit3 (A_INC, IC_LEFT (ic)->aop, 0);
+        emit3_incdec (A_INC, IC_LEFT (ic)->aop, 0, ic);   // S1C88: route [ix+d]/abs INC through A
       return TRUE;
     }
 
@@ -8740,7 +8743,7 @@ genPlus (iCode * ic)
             emit2 ("jp NC, !tlabel", labelKey2num (tlbl->key));
           cost2 (2 + IS_SM83, 12, 8, 5, 12, 12, 3, 3); // Assume branch is taken. Use cost of jr as the peephole optimizer can typically optimize this jp into jr. Do not emit jr directly to still allow jump-to-jump optimization.
           regalloc_dry_run_state_scale /= 256.0f; // Carry should be rare.
-          emit3_o (A_INC, leftop, i, 0, 0);
+          emit3_incdec (A_INC, leftop, i, ic);   // S1C88: route [ix+d]/abs INC through A
           i++;
         }
       else if (!started && !premoved && aopIsLitVal (leftop, i, 1, 0))
@@ -8927,7 +8930,7 @@ genMinusDec (const iCode *ic, asmop *result, asmop *left, asmop *right)
   if (sameRegs (left, result))
     {
       while (icount--)
-        emit3 (A_DEC, result, 0);
+        emit3_incdec (A_DEC, result, 0, ic);   // S1C88: route [ix+d]/abs DEC through A
       return true;
     }
 
@@ -10150,6 +10153,38 @@ emit3_shift (enum asminst inst, asmop *aop, int offset, const iCode *ic)
   if (!dead)
     {
       emit2 (use_a ? "pop a" : "pop b");
+      cost2 (2, 10, 9, 7, 12, 10, 3, 3);
+    }
+}
+
+/* S1C88: emit `inc`/`dec` of a single byte. The 8-bit INC/DEC target is only
+   A, B, L, H, [HL] or [BR:ll] — never [IX+d]/[IY+d] or absolute memory. For an
+   indexed/absolute operand, route through A (ld a,mem; inc/dec a; ld mem,a).
+   PUSH/POP and 8-bit LD are all flag-neutral on the S1C88 (only `inc/dec a`
+   touches Z), so the Z flag survives the store and any A save/restore — required
+   by the multi-byte memory-increment carry-skip idiom (inc low; jr NZ; inc high). */
+static void
+emit3_incdec (enum asminst inst, asmop *aop, int offset, const iCode *ic)
+{
+  if (aopInReg (aop, offset, A_IDX) || aopInReg (aop, offset, B_IDX) ||
+      aopInReg (aop, offset, L_IDX) || aopInReg (aop, offset, H_IDX))
+    {
+      emit3_o (inst, aop, offset, 0, 0);
+      return;
+    }
+
+  bool a_dead = isRegDead (A_IDX, ic);
+  if (!a_dead)
+    {
+      emit2 ("push a");
+      cost2 (2, 11, 11, 7, 12, 10, 3, 3);
+    }
+  cheapMove (ASMOP_A, 0, aop, offset, false);   /* ld a, <byte>   — flag-neutral */
+  emit3 (inst, ASMOP_A, 0);                      /* inc/dec a       — sets Z      */
+  cheapMove (aop, offset, ASMOP_A, 0, false);    /* ld <byte>, a    — flag-neutral */
+  if (!a_dead)
+    {
+      emit2 ("pop a");
       cost2 (2, 10, 9, 7, 12, 10, 3, 3);
     }
 }
