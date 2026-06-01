@@ -1201,7 +1201,9 @@ replace restart {
 	; common peephole 96a move %2 %3 before %1
 	%2	%3
 	%1
-} if same(%2 'inc' 'dec'), same(%3 'hl'), same(%1 'rlca' 'rrca' 'rra' 'rla' 'cpl' 'scf' 'daa' 'ccf' 'sra' 'swap' 'nop')
+} if same(%2 'inc' 'dec'), same(%3 'hl'), same(%1 'rlca' 'rrca' 'rra' 'rla' 'cpl' 'scf' 'daa' 'ccf' 'sra' 'swap' 'nop'), notUsed('f')
+// S1C88: 16-bit inc/dec hl sets Z/V/N (z80 leaves all flags), so this reorder
+// changes the live flags across %1 — only safe when the flags are dead. (96a)
 
 replace restart {
 	%4	%1, %2
@@ -1210,7 +1212,8 @@ replace restart {
 	; common peephole 96b move %3 %5 before %4 %1, %2
 	%3	%5
 	%4	%1, %2
-} if same(%3 'inc' 'dec'), same(%5 'hl'), same(%4 'ld' 'ldh' 'cp' 'add' 'adc' 'and' 'or' 'xor' 'sub' 'sbc' 'set' 'res' 'bit' 'in' 'out' 'in0' 'out0'), operandsNotRelated(%1 %5), operandsNotRelated(%2 %5)
+} if same(%3 'inc' 'dec'), same(%5 'hl'), same(%4 'ld' 'ldh' 'cp' 'add' 'adc' 'and' 'or' 'xor' 'sub' 'sbc' 'set' 'res' 'bit' 'in' 'out' 'in0' 'out0'), operandsNotRelated(%1 %5), operandsNotRelated(%2 %5), notUsed('f')
+// S1C88: 16-bit inc/dec hl sets Z/V/N — only reorder when flags are dead. (96b)
 
 replace restart {
 	%2	%1
@@ -1219,7 +1222,8 @@ replace restart {
 	; common peephole 96c move %3 %4 before %2 %1
 	%3	%4
 	%2	%1
-} if same(%3 'inc' 'dec'), same(%4 'hl'), same(%2 'inc' 'dec' 'rl' 'rlc' 'rr' 'rrc' 'srl' 'sla' 'sra' 'swap'), operandsNotRelated(%1 %4), operandsNotRelated(%2 %4)
+} if same(%3 'inc' 'dec'), same(%4 'hl'), same(%2 'inc' 'dec' 'rl' 'rlc' 'rr' 'rrc' 'srl' 'sla' 'sra' 'swap'), operandsNotRelated(%1 %4), operandsNotRelated(%2 %4), notUsed('f')
+// S1C88: 16-bit inc/dec hl sets Z/V/N — only reorder when flags are dead. (96c)
 
 replace restart {
 	%2	%1
@@ -1229,6 +1233,8 @@ replace restart {
 	%3	%4
 	%2	%1
 } if same(%3 'inc' 'dec'), same(%4 'hl'), same(%2 'push' 'pop'), notSame(%1 %4)
+// 96d needs no notUsed('f') (cf. 96a-c): push/pop are flag-neutral, so reordering
+// inc/dec hl around them leaves the net flag state unchanged even on the S1C88.
 
 // check if constant loaded into (hl) is the same that's loaded into the second register
 replace {
