@@ -2913,6 +2913,22 @@ fetchPairLong (PAIR_ID pairId, asmop *aop, const iCode *ic, int offset)
           emit2 ("ld %s, %d (ix)", _pairs[pairId].name, fp_offset);
           cost (3, 5);
         }
+      /* S1C88: native SP-relative 16-bit load. LD {ba,hl,ix,iy},[SP+dd] (dd a signed
+         byte) peeks the stack word directly — replaces the z80 pop/push-peek dance
+         and the offset-restricted special cases below. */
+      else if ((aop->type == AOP_STK || aop->type == AOP_EXSTK) && aop->size - offset >= 2 &&
+               (pairId == PAIR_BA || pairId == PAIR_HL || pairId == PAIR_IX || pairId == PAIR_IY) &&
+               (!regalloc_dry_run || aop->aopu.aop_stk > 0) &&
+               (aop->aopu.aop_stk + offset + _G.stack.offset + (aop->aopu.aop_stk > 0 ? _G.stack.param_offset : 0) +
+                _G.stack.pushed) >= -128 &&
+               (aop->aopu.aop_stk + offset + _G.stack.offset + (aop->aopu.aop_stk > 0 ? _G.stack.param_offset : 0) +
+                _G.stack.pushed) <= 127)
+        {
+          int sp_offset = aop->aopu.aop_stk + offset + _G.stack.offset +
+                          (aop->aopu.aop_stk > 0 ? _G.stack.param_offset : 0) + _G.stack.pushed;
+          emit2 ("ld %s, %d (sp)", _pairs[pairId].name, sp_offset);
+          cost (3, 6);
+        }
       /* Getting the parameter by a pop / push sequence is cheaper when we have a free pair (except for the Rabbit, which has an even cheaper sp-relative load).
          SM83 is nearly twice as fast doing it byte by byte, but that's a byte bigger.
          Stack allocation can change after register allocation, so assume this optimization is not possible for the allocator's cost function (unless the stack location is for a parameter). */
@@ -4709,6 +4725,23 @@ skip_byte:
             emit2 ("ld %s, %d (sp)", _pairs[getPairId_o (result, roffset + i)].name, sp_offset);
           spillPair (getPairId_o (result, roffset + i));
           cost2 (3 - IS_RAB, 0, 0, 11, 0, 12, 0, 0);
+          assigned[i] = true;
+          assigned[i + 1] = true;
+          size -= 2;
+          i += 2;
+        }
+      /* S1C88: native SP-relative 16-bit load into ba/hl/ix/iy (signed-byte dd).
+         Replaces the z80 pop/push-peek dance below. */
+      else if (i + 1 < n && !assigned[i + 1] && (source->type == AOP_STK || source->type == AOP_EXSTK) &&
+        sp_offset >= -128 && sp_offset <= 127 &&
+        (getPairId_o (result, roffset + i) == PAIR_HL || getPairId_o (result, roffset + i) == PAIR_BA ||
+         getPairId_o (result, roffset + i) == PAIR_IX || getPairId_o (result, roffset + i) == PAIR_IY) &&
+        (!regalloc_dry_run || source->aopu.aop_stk > 0)) // Stack locations might change, unless its a parameter.
+        {
+          if (!regalloc_dry_run)
+            emit2 ("ld %s, %d (sp)", _pairs[getPairId_o (result, roffset + i)].name, sp_offset);
+          spillPair (getPairId_o (result, roffset + i));
+          cost (3, 6);
           assigned[i] = true;
           assigned[i + 1] = true;
           size -= 2;
