@@ -10250,7 +10250,7 @@ genCmp (operand * left, operand * right, operand * result, iCode * ifx, int sign
       if (ifx && size == 1 && !sign && aopInReg (left->aop, 0, A_IDX) && !isRegDead (A_IDX, ic) &&
         (right->aop->type == AOP_LIT || right->aop->type == AOP_REG && right->aop->aopu.aop_reg[offset]->rIdx != IYL_IDX && right->aop->aopu.aop_reg[offset]->rIdx != IYH_IDX || right->aop->type == AOP_STK))
         {
-          emit3 (A_CP, ASMOP_A, right->aop);
+          emit3_8alu (A_CP, right->aop, 0, ic);   // S1C88: route L/H operand through B
           result_in_carry = true;
           goto release;
         }
@@ -10573,12 +10573,12 @@ genCmp (operand * left, operand * right, operand * result, iCode * ifx, int sign
             }
           if (size > 1)
             {
-              emit3_o (A_CP, ASMOP_A, 0, right->aop, offset);
+              emit3_8alu (A_CP, right->aop, offset, ic);   // S1C88: route L/H operand through B
               started = true;
               a_always_byte = byteOfVal (left->aop->aopu.aop_lit, offset);
             }
           else
-            emit3_o (A_SUB, ASMOP_A, 0, right->aop, offset);
+            emit3_8alu (A_SUB, right->aop, offset, ic);   // S1C88: route L/H operand through B
           if (pushed_hl)
             _pop (PAIR_HL);
           size--;
@@ -10917,8 +10917,8 @@ gencjneshort (operand *left, operand *right, symbol *lbl, const iCode *ic)
       if (right->aop->type == AOP_LIT && !byteOfVal (right->aop->aopu.aop_lit, 0))
         emit3 (A_OR, ASMOP_A, ASMOP_A);
       else
-        emit3 (A_CP, ASMOP_A, right->aop);
-        
+        emit3_8alu (A_CP, right->aop, 0, ic);   // S1C88: route L/H operand through B
+
       if (pushed_hl)
         _pop (PAIR_HL);
 
