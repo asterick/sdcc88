@@ -91,13 +91,22 @@ retarget** (z80→S1C88 emission cleanup)._
        genRightShift's `countreg` selection (it still lists `C_IDX`/`D_IDX`).
      - **saveRegs/restoreRegs around calls** + the remaining direct `asmop_de`/`DEHL`/`HLDE`/`HLBC`/`DEBC`
        combos and `_push(PAIR_DE)` scratch sites. Per `abi-decision.md` Step 2.
-     - **Misc low-freq:** `set 7,l` (bit ops only on A/B/[HL]); `neg` form. **`inc/dec -N(ix)`** (indexed-
-       memory INC/DEC illegal): peephole 116/117 (the `ld a,m; inc a; ld m,a → inc m` fold) is **removed**
-       (`<this commit>`, mirrors shift peeph 21) — but a *separate* source still emits `inc -N(ix)` directly
-       (e.g. the `sum_arr` loop counter): **NOT** emit3/emit3_o (instrumented — no hit), not the removed
-       fold, and not any single `inc %N` peeph rule isolated so far. **OPEN:** trace it (instrument `emit2`
-       at the line level, or bisect the ~20 `inc %N`/`dec %N` peeph rules) then route through A or guard the
-       rule against indexed operands. The clean primitive exists (`ld a,d(ix); inc a; ld d(ix),a`, Z-safe).
+     - **⚠ DEBUGGING GOTCHA (cost me a whole session):** `emitDebug()` only prints with `--verbose`. Marker
+       traces compiled *without* `--verbose` silently emit nothing → false "this code path isn't hit"
+       conclusions. **Use `fprintf(stderr, …)` for instrumentation, or pass `--verbose`.** The `_vemit2`
+       fprintf trick (check the rendered `p` buffer) reliably catches any emitted line.
+     - **`inc/dec -N(ix)`** (indexed-mem INC/DEC illegal): peeph 116/117 fold removed (`725ca44`). The
+       remaining direct `inc -N(ix)` (e.g. `sum_arr` counter) — my "not emit3_o" conclusion was from a
+       *suppressed* emitDebug, so it's **probably emit3_o after all**; the reverted `emit3_incdec` helper
+       (route stack INC/DEC through A: `ld a,d(ix); inc a; ld d(ix),a`, Z-safe via the trailing ld) was
+       likely the right fix — **re-apply it** and verify with `--verbose`/fprintf. (Reflog has the helper.)
+     - **`set 7,l`** (bit ops only on A/B/[HL]); **`neg`** form. Lower freq.
+   - **Stack-peek `pop de;pop hl;push hl;push de` (idx/mul):** CONFIRMED via `_vemit2` fprintf trace it goes
+     through `_push(pair)`/`_pop(pair)` with a *computed* `pair == PAIR_DE` (NOT the literal `_pop(PAIR_DE)`
+     sites, NOT getFreePairId — already BA'd). The caller selects PAIR_DE some other way; locate it with
+     `fprintf` of `pairId` + `__builtin_return_address(0)` in `_push`, or per-candidate-callsite markers.
+     It peeks the 2nd stack word into HL — **retarget to `ld hl, d(sp)`** (the S1C88 SP-relative load;
+     assembles). deref2's peek is already gone (getFreePairId→BA fixed it).
    - ~~Accumulator rotates~~ **DONE** (`644576e`): all 41 `emit3(A_RLA/RLCA/RRA/RRCA…)` sites + the live
      raw `emit2("rla")` substituted to the operand form `rl a`/`rlc a`/`rr a`/`rrc a` (also fixes the
      cost). Verified no site reads Z/S/V/P after a rotate (all carry-centric), so the operand forms' extra
