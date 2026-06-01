@@ -63,9 +63,12 @@ retarget** (z80→S1C88 emission cleanup)._
      `outBitC` now emits `rl a` not `rla`.
    - ~~8-bit char compare~~ **DONE** (`6c49c73`): `sub a,l` (operand in L/H — the 8-bit ALU can't source
      L/H) now routes through B via new helper `emit3_8alu` (`ld b,l; sub a,b`, push/pop b if B live).
-     Covers signed/unsigned char, ifx/non-ifx, `<`/`>`/`==`. **Remaining compare z80-isms**: signed
-     **literal** compare (`if(a<100)` → the `xor a,#0x80`/`sub`/`rla`/`ccf`/`rra` sign-map path, which the
-     register-only native `cp` block skips); the rare AOP_CRY (bit) signed result still keeps the z80 fixup.
+     Covers signed/unsigned char, ifx/non-ifx, `<`/`>`/`==`.
+   - ~~signed/literal compare~~ **DONE** (`cd83036`): `if(a<100)` now emits native `cp {ba,hl},#imm` +
+     `jrs LT/GE/NC`, replacing the illegal `xor #0x80`/`rla`/`ccf`/`rra` sign-map. **The whole compare
+     test corpus (reg/eq/lc/ce/nb/ch/sc/li) is now 0 sdas88 errors.** Only the rare AOP_CRY (bit) signed
+     result still keeps the z80 fixup. Compares are essentially retargeted; next clusters are the
+     non-compare byte ALU and shifts below.
    - `rlca`/`rla`/`rrca`/`rra` → `rlc a`/`rl a`/… (**flag-subtle** — z80 acc-rotates are carry-only,
      S1C88's set Z/S too; check each use site). `outBitC`'s use is done; others remain.
    - 16-bit shifts (`rr l` — *illegal*, see above; `sla -2(ix)`); `inc d(ix)`.
