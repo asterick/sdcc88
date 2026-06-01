@@ -10799,26 +10799,54 @@ gencjneshort (operand *left, operand *right, symbol *lbl, const iCode *ic)
               left = t;
             }
 
-          if (!IS_SM83 && isPairDead (PAIR_HL, ic) &&
-            (aopInReg (left->aop, offset, HL_IDX) && (aopInReg (right->aop, offset, BC_IDX) || aopInReg (right->aop, offset, DE_IDX) || getFreePairId (ic) != PAIR_INVALID) ||
-            size == 1 && (aopInReg (right->aop, offset, BC_IDX) || aopInReg (right->aop, offset, DE_IDX))))
+          /* S1C88 native 16-bit equality compare. A 16-bit `cp` on the two ALU
+             pairs (HL, BA) sets Z iff equal, replacing the z80 `cp a,a; sbc hl,
+             <bc/de>` idiom — BC/DE aren't S1C88 ALU pairs, so `sbc hl,bc` is
+             illegal. Equality is symmetric, so we put the two 16-bit chunks in
+             HL and BA (whichever way needs the fewest moves) and compare. At
+             least one chunk must already be in an ALU pair; the other is loaded
+             into the (disjoint) free pair. One pair is always BA, so A is part
+             of an operand throughout — loads must not use A as scratch. */
+          if (!IS_SM83 && size >= 1)
             {
-              PAIR_ID pair = getPairId_o (right->aop, offset);
-              if (pair == PAIR_INVALID)
-                pair = getFreePairId (ic);
+              PAIR_ID lp = aluPairId (left->aop, offset);
+              PAIR_ID rp = aluPairId (right->aop, offset);
+              PAIR_ID pLeft = PAIR_INVALID, pRight = PAIR_INVALID;
+              bool ok = true;
 
-              fetchPairLong (PAIR_HL, left->aop, ic, offset);
-              fetchPairLong (pair, right->aop, 0, offset);
-              emit3 (A_CP, ASMOP_A, ASMOP_A);
-              emit2 ("sbc hl, %s", _pairs[pair].name);
-              cost2 (2, 15, 10, 4, 0, 8, 2, 2);
-              if (!regalloc_dry_run)
-                emit2 ("jp NZ, !tlabel", labelKey2num (lbl->key));
-              cost2 (3, 10.0f, 7.5f, 7.0f, 14.0f,  11.0f, 3.5f, 3.0f); // Assume both branches equally likely, jp not optimzed into jr.
-              spillPair (PAIR_HL);
-              offset += 2;
-              size--;
-              continue;
+              if (lp != PAIR_INVALID && rp != PAIR_INVALID && lp != rp)
+                { pLeft = lp; pRight = rp; }
+              else if (lp != PAIR_INVALID)
+                { pLeft = lp; pRight = (lp == PAIR_HL) ? PAIR_BA : PAIR_HL; }
+              else if (rp != PAIR_INVALID)
+                { pRight = rp; pLeft = (rp == PAIR_HL) ? PAIR_BA : PAIR_HL; }
+              else
+                ok = false;            /* neither in an ALU pair — leave to the byte path */
+
+              /* The pair we load an operand into must be free, and an operand we
+                 load into HL must not itself need HL to be addressed. */
+              if (ok && lp != pLeft && (!isPairDead (pLeft, ic) || pLeft == PAIR_HL && requiresHL (left->aop)))
+                ok = false;
+              if (ok && rp != pRight && (!isPairDead (pRight, ic) || pRight == PAIR_HL && requiresHL (right->aop)))
+                ok = false;
+
+              if (ok)
+                {
+                  if (lp != pLeft)
+                    genMove_o (pLeft == PAIR_HL ? ASMOP_HL : ASMOP_BA, 0, left->aop, offset, 2, false, pLeft == PAIR_HL, true, true, true);
+                  if (rp != pRight)
+                    genMove_o (pRight == PAIR_HL ? ASMOP_HL : ASMOP_BA, 0, right->aop, offset, 2, false, pRight == PAIR_HL, true, true, true);
+                  spillPair (pLeft);
+                  spillPair (pRight);
+                  emit2 ("cp %s, %s", _pairs[pLeft].name, _pairs[pRight].name);
+                  cost2 (2, 15, 10, 4, 0, 8, 2, 2);
+                  if (!regalloc_dry_run)
+                    emit2 ("jp NZ, !tlabel", labelKey2num (lbl->key));
+                  cost2 (3, 10.0f, 7.5f, 7.0f, 14.0f,  11.0f, 3.5f, 3.0f); // Assume both branches equally likely, jp not optimzed into jr.
+                  offset += 2;
+                  size--;
+                  continue;
+                }
             }
 
           if (!hl_dead)
