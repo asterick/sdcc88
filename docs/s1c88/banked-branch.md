@@ -1,7 +1,10 @@
 # Banked `CALL` / `JUMP` — assembler + linker design (Phase 2)
 
-> **Status:** design only — nothing implemented yet. Prerequisite: **`sdld88` is not built**
-> (only `sdas88`/`sdasz80` exist in `build/.../bin/`); stand it up first (Phase 0).
+> **Status:** design only — the *feature* is unimplemented. **Phase 0 (the linker) is now partly done:**
+> `scripts/build-sdld.sh` builds the ASlink linker and `scripts/link-smoke.sh` proves `sdas88 + sdldz80`
+> link a 2-area program with both relocation kinds resolving (cross-area absolute + PC-relative). So the
+> base toolchain exists; what's left for this feature is the **s1c88-branded linker** (a distinct
+> `TARGET_ID_S1C88`) and the **rewrite relocation** below (§4–5).
 >
 > This is the concrete plan for two **pseudo-instructions** that pick the short/long branch form *and*
 > insert the code-bank switch automatically:
@@ -209,7 +212,7 @@ The linker needs each code area's `a_bank`. Two pieces:
 
 | # | Phase | Where | Notes |
 |---|---|---|---|
-| 0 | Build `sdld88` | new `scripts/build-sdld.sh` | gates everything cross-area; analogous to `build-sdas.sh as88` |
+| 0 | Build the linker | ✅ `scripts/build-sdld.sh` + `link-smoke.sh` | base `sdldz80` builds & links sdas88 objects (both reloc kinds). Remaining: brand an `sdld88` (distinct `TARGET_ID_S1C88`, z80-like) to hang the new reloc off. |
 | 1 | Pseudo-op + same-area path | `s1c88pst/adr/mch.c` | parse `CALL/JUMP target[,cc]`; resolve same-area/absolute at assembly time |
 | 2 | `R_S1C88_BRANCH` reloc | `asxxxx.h` (shared) + `sdas88` emit | escape-mode mode; template bytes (§4) |
 | 3 | Linker rewrite | `lkrloc3.c` (in `sdld88`) | the §5 algorithm; model on the `R_J11` block |
