@@ -3,7 +3,7 @@
 **This is the single resume entry point.** If the prompt is *"let's pick up where you left off,"* do the
 steps under **NEXT ACTION**. Everything needed to continue is here or linked from here.
 
-_Last updated: 2026-05-31 (peephole audit — see "Peephole audit" below; plus native 16-bit sub/cp, adjustStack, non-ifx compare slices). Branch: **`main`** (all work is on main;
+_Last updated: 2026-05-31 (session 2: 6 gen.c grind slices — cpl/neg, indexed inc/dec, cp a,l, djnz, bit-form, res/set — see "gen.c grind progress" below; plus the peephole audit). Branch: **`main`** (all work is on main;
 there is no `s1c88-retarget` branch anymore — CLAUDE.md's mention of it is stale). State: **GREEN** —
 compiler builds/links/runs, and the
 **binary toolchain (assembler + linker + banked ROM) is complete**. The remaining work is the **codegen
@@ -147,6 +147,42 @@ the broader operand-placement work so the allocator keeps 16-bit operands in BA/
 
 > A from-scratch big-bang reshape was tried and **reset** (unverifiable-red for the whole grind). The dead
 > WIP is in reflog `417bed5` — useful only as a reference for the *end-state* register defs.
+
+## gen.c grind progress (2026-05-31, session 2) — 6 slices landed
+
+Cleared the small/self-contained grind residue, always-green, each validated with
+`sdas88` (and crash-checked — see the gotcha below). Commits on `main`:
+- **`cpl a`/`neg a`** — S1C88 CPL/NEG need an explicit operand; the bare z80 form
+  is rejected. (`b0771cf`)
+- **indexed/abs INC/DEC → through A** (`emit3_incdec`): S1C88 INC/DEC target only
+  A/B/L/H/[HL]/[BR:ll], never [IX+d]/abs. Routes via `ld a,mem; inc/dec a; ld
+  mem,a`; PUSH/POP/LD are flag-neutral so Z survives for the multi-byte
+  carry-skip idiom (`inc low; jr NZ; inc high`). (`00a5fac`)
+- **`cp a,l`/`sub a,l` → through B** (route genCmp/genSub byte ops via
+  `emit3_8alu`). (`6e083b8`)
+- **`djnz` → `djr nz`** (all 6 sites; same B-counter semantics). (`54c9dcd`)
+- **`bit n,reg` → `bit reg,#mask`** (`emitBitTest`): S1C88 BIT is a logical
+  AND-with-mask (`bit {a,b,[hl]},#nn`). A/B direct, L/H/mem routed. (`3beafa6`)
+- **RES/SET eliminated** (no such instruction): `res 7,a`→`and a,#0x7f`; genAnd/
+  genOr single-bit opts → `and/or a,#mask` (A-only; B/mem fall through — AND/OR's
+  destination is only A). Also dropped peeph 61/75/76 (latent z80 res/set/bit
+  folds the literal-mnemonic audit scanner missed — they use a *placeholder*
+  operator `same(%N 'bit' 'res' 'set')`). (`b01eb03`)
+
+**⚠ METHODOLOGY GOTCHA:** `sdcc ... 2>/dev/null` HIDES compiler crashes (FATAL
+internal errors / asserts) — a stale `.asm` from a previous run then looks fine.
+Always compile with stderr visible and grep for `Internal Error|backtrace|FATAL`
+*before* trusting the emitted asm. (`aopGet` asserts `!regalloc_dry_run`; helpers
+that call it must guard the call — this bit emitBitTest.)
+
+**Remaining residue (all the DE/BC register-model grind + known gaps):**
+`push de`/`pop de` (stack-peek `push hl;pop de;pop hl;push hl;push de`), `ex
+(sp),hl` (epilogue/arg shuffle), `add hl,sp` (frame-address; use IX or `[SP+dd]`),
+`ld de,#imm`/`add hl,de`/`ex de,hl` (DE scratch for 16-bit addr arithmetic →
+BA/IX), `ldir` (struct copy → loop), and the two hardcoded `bit 7,e`/`bit 7,d`
+sites in the signed-compare hard path. Plus the documented **out-of-range `jp GE`**
+(assembler-level, deferred). This is the central `_pairs[]`/`PAIR_DE` machinery —
+do it as one focused effort (see "Step 2" in abi-decision.md), not rushed.
 
 ## Peephole audit (2026-05-31) — DONE
 
