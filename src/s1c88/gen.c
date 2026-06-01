@@ -10543,6 +10543,15 @@ genCmp (operand * left, operand * right, operand * result, iCode * ifx, int sign
               !(result->aop->type == AOP_CRY && result->aop->size))
             {
               PAIR_ID lp = aluPairId (left->aop, 0);
+              /* S1C88: if the operand isn't already in an ALU pair (e.g. it's on
+                 the stack), load a copy into a dead HL so we can still use the
+                 native `cp hl,#imm` + jrs LT/GE — instead of falling through to
+                 the illegal z80 ccf sign-flip below. */
+              if (lp == PAIR_INVALID && !requiresHL (left->aop) && isPairDead (PAIR_HL, ic))
+                {
+                  fetchPair (PAIR_HL, left->aop);
+                  lp = PAIR_HL;
+                }
               if (lp != PAIR_INVALID)
                 {
                   emit2 ("cp %s, !immedword", _pairs[lp].name, (unsigned) (lit & 0xffffu));
@@ -10556,6 +10565,29 @@ genCmp (operand * left, operand * right, operand * result, iCode * ifx, int sign
 
           if (sign)             /* Map signed operands to unsigned ones. This pre-subtraction workaround to lack of signed comparison is cheaper than the post-subtraction one at fix. */
             {
+              /* S1C88: do a plain byte-wise sub/sbc chain against the immediate
+                 (legal: 8-bit ALU source is A + #imm) and branch on the native
+                 S xor V via signed_native at fix: — no z80 xor#0x80 / rl a / ccf /
+                 rr a sign-flip (ccf is illegal on the S1C88). This covers the
+                 long/odd-size cases the native `cp pair,#imm` above can't take.
+                 The rare AOP_CRY (bit) result still needs the old sign-mapping. */
+              if (!IS_SM83 && !(result->aop->type == AOP_CRY && result->aop->size))
+                {
+                  cheapMove (ASMOP_A, 0, left->aop, offset, true);
+                  emit2 ("sub a, !immedbyte", (unsigned) ((lit >> (offset * 8)) & 0xff));
+                  cost2 (2, 7, 6, 4, 8, 4, 2, 2);
+                  size--;
+                  offset++;
+                  while (size--)
+                    {
+                      cheapMove (ASMOP_A, 0, left->aop, offset, true);
+                      emit2 ("sbc a, !immedbyte", (unsigned) ((lit >> (offset++ * 8)) & 0xff));
+                      cost2 (2, 7, 6, 4, 8, 4, 2, 2);
+                    }
+                  started = true;
+                  goto fix;
+                }
+
               if (size == 2 && !(IS_SM83 || !ifx && requiresHL(result->aop) && result->aop->type != AOP_REG) && isPairDead (PAIR_HL, ic) && (isPairDead (PAIR_DE, ic) || isPairDead (PAIR_BC, ic)) && (getPairId (left->aop) == PAIR_HL || IS_RAB && (left->aop->type == AOP_STK || left->aop->type == AOP_EXSTK)))
                 {
                   PAIR_ID litpair = (isPairDead (PAIR_DE, ic) ? PAIR_DE : PAIR_BC);
