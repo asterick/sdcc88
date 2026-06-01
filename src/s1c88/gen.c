@@ -9175,7 +9175,7 @@ genSub (const iCode *ic, asmop *result, asmop *left, asmop *right)
           else if (!offset)
             {
               if (aopIsLitVal (left, offset, 1, 0x00) && aopInReg (right, offset, A_IDX))
-                emit3 (A_NEG, 0, 0);
+                emit3 (A_NEG, ASMOP_A, 0);   // S1C88 neg needs an explicit operand (neg a)
               else
                 {
                   if (aopIsLitVal (left, offset, 1, 0x00) && !aopInReg (left, offset, A_IDX))
@@ -12421,7 +12421,7 @@ genEor (const iCode *ic, iCode *ifx, asmop *result_aop, asmop *left_aop, asmop *
             if (requiresHL (left_aop) && left_aop->type != AOP_REG && !hl_free)
                _pop (PAIR_HL);
             if (right_aop->type == AOP_LIT && byteOfVal (right_aop->aopu.aop_lit, i) == 0xff)
-              emit3 (A_CPL, 0, 0);
+              emit3 (A_CPL, ASMOP_A, 0);   // S1C88 cpl needs an explicit operand (cpl a)
             else if (right_aop->type == AOP_SFR || right_aop->type == AOP_STL || aopInReg (right_aop, i, IYL_IDX) || aopInReg (right_aop, i, IYH_IDX))
               {
                 if (!hl_free)
