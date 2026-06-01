@@ -2423,6 +2423,31 @@ replace restart {
 
 
 // ==========================================================================
+// S1C88 instruction-legality fixups
+// ==========================================================================
+
+// `add hl,sp` does not exist on the S1C88 (16-bit add takes BA/HL/IX/IY/#imm,
+// not SP), but `ld {hl,ix,iy},sp` and `add {hl,ix,iy},#imm` all do. gen.c and the
+// !ldahlsp macro compute a frame/SP-relative address as `ld pair,#off; add
+// pair,sp`; rewrite that to the legal `ld pair,sp; add pair,#off` (same result:
+// off+SP == SP+off; both end on a 16-bit add, so flags are equivalent).
+replace {
+	ld	%1, #%2
+	add	%1, sp
+} by {
+	ld	%1, sp
+	add	%1, #%2
+	; peephole s1c88-sp1 add pair,sp -> ld pair,sp; add pair,#off
+} if same(%1 'hl' 'ix' 'iy')
+
+// drop the degenerate `add pair,#0` left by sp1 for a zero frame offset.
+replace {
+	add	%1, #0
+} by {
+	; peephole s1c88-sp2 removed add pair,#0
+} if same(%1 'hl' 'ix' 'iy'), notUsed('f')
+
+// ==========================================================================
 // S1C88 control-transfer mapping (was peeph-z80.def) -- KEEP LAST.
 // These run after the jp->ret (160) and jp->jr (162/163) passes above, so an
 // in-range jump becomes jp->jr->jrs (2 bytes) and only out-of-range/external
