@@ -3,7 +3,7 @@
 **This is the single resume entry point.** If the prompt is *"let's pick up where you left off,"* do the
 steps under **NEXT ACTION**. Everything needed to continue is here or linked from here.
 
-_Last updated: 2026-05-31 (genSub/genCmp native 16-bit slices). Branch: **`main`** (all work is on main;
+_Last updated: 2026-05-31 (native 16-bit sub/cp + adjustStack slices). Branch: **`main`** (all work is on main;
 there is no `s1c88-retarget` branch anymore — CLAUDE.md's mention of it is stale). State: **GREEN** —
 compiler builds/links/runs, and the
 **binary toolchain (assembler + linker + banked ROM) is complete**. The remaining work is the **codegen
@@ -54,9 +54,12 @@ retarget** (z80→S1C88 emission cleanup)._
        the broader operand-placement grind.
      - Note: register-operand long (4-byte) `<`/`==` is handled now; the common stack-operand long compare
        was already legal (byte-wise on memory: `sub a,d(ix)`/`sbc a,d(ix)`).
-   - `push af` stack reservation → `sub sp,#imm` (biggest remaining count).
-   - non-ifx signed compare (`return a<b`) still emits `jp PO` (the boolean-materialization path; the
-     ifx path is now native).
+   - ~~`push af` stack reservation~~ **DONE** (`a69a11f`): `adjustStack` now emits native S1C88 SP moves —
+     reserve via flag-safe `push hl`/`push a` filler, free via `add sp,#n` (flags dead) or `pop hl`/`pop iy`
+     (flags live). Killed `push af`/`pop af`/`pop bc`/`pop de`. NB: on the S1C88 even `inc/dec sp` set
+     Z C V N (unlike z80), so flag-preserving frees must use `pop <pair>`, not `inc/dec sp`.
+   - non-ifx signed compare (`return a<b`) still emits `jp PO` + `rla`/`rra`/`ccf`/`rlca` (the
+     boolean-materialization path; the ifx path is now native). Likely the next-best slice.
    - `rlca`/`rla`/`rrca`/`rra` → `rlc a`/`rl a`/… (**flag-subtle** — z80 acc-rotates are carry-only,
      S1C88's set Z/S too; check each use site).
    - 16-bit shifts (`rr l` — *illegal*, see above; `sla -2(ix)`); `inc d(ix)`.
@@ -106,7 +109,8 @@ the broader operand-placement work so the allocator keeps 16-bit operands in BA/
 
 ## Commit history (branch `main`, all green)
 
-Recent (codegen): `1dc9d94` genCmp native `cp ba,hl` (ifx 16-bit compares) · `fa05339` genMinus native
-`sub ba,hl`. Toolchain: `33948cb` romgen + ROM test · `dced778` auto-bank works · `8da1910` linker built ·
+Recent (codegen): `a69a11f` adjustStack native SP moves (killed `push af`) · `661555f` gencjne native
+`cp hl,ba` (`==`/`!=`) · `1dc9d94` genCmp native `cp ba,hl` (ifx 16-bit compares) · `fa05339` genMinus
+native `sub ba,hl`. Toolchain: `33948cb` romgen + ROM test · `dced778` auto-bank works · `8da1910` linker built ·
 the `sdas88: …` series (full ISA, byte-verified) · `f95e7fb`/`85af71a`/`384472a` codegen slices (frame,
 branches, signed-compare). Earlier: the call-ABI + allocator reshape (`b606833` Step 1, `aee2ed0` etc.).
