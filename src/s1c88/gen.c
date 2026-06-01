@@ -10062,34 +10062,32 @@ _getPairIdName (PAIR_ID id)
 }
 #endif
 
-/* S1C88: emit an 8-bit ALU op `inst a, <src@soffset>` (sub/sbc/cp/...). Unlike
-   the z80, the S1C88 8-bit ALU can only source A, B, memory or an immediate —
-   never L or H. When src's byte is in L or H, route it through B (saving B if
-   it is live). A holds the left operand and is preserved; flags (incl. the
-   carry chain) survive the push/pop. For any other operand this is just
+/* S1C88: emit an 8-bit ALU op `inst a, <src@soffset>` (sub/sbc/cp/and/or/...).
+   Unlike the z80, the S1C88 8-bit ALU can only source A, B, memory or an
+   immediate — never L or H. When src's byte is in L or H, route it through B.
+   B is *always* saved with push/pop: in a multi-byte op the other (accumulator)
+   operand may occupy B mid-operation even though isRegDead() reports B dead
+   after the iCode, so an unconditional save is the only correct choice (e.g.
+   `a & b` with a=BA, b=HL — the low byte's `ld b,l` would otherwise clobber
+   a's high byte). A (the left operand) is preserved by construction; flags
+   (incl. the carry chain) survive the push/pop. Any other operand is just
    emit3_o. */
 static void
 emit3_8alu (enum asminst inst, asmop *src, int soffset, const iCode *ic)
 {
+  (void) ic;
   if (!aopInReg (src, soffset, L_IDX) && !aopInReg (src, soffset, H_IDX))
     {
       emit3_o (inst, ASMOP_A, 0, src, soffset);
       return;
     }
 
-  bool b_dead = isRegDead (B_IDX, ic);
-  if (!b_dead)
-    {
-      emit2 ("push b");
-      cost2 (2, 11, 11, 7, 12, 10, 3, 3);
-    }
-  cheapMove (ASMOP_B, 0, src, soffset, false);  /* ld b, l/h — src is a reg, A (left/acc) preserved */
+  emit2 ("push b");
+  cost2 (2, 11, 11, 7, 12, 10, 3, 3);
+  cheapMove (ASMOP_B, 0, src, soffset, false);  /* ld b, l/h — A (left/acc) preserved */
   emit3 (inst, ASMOP_A, ASMOP_B);
-  if (!b_dead)
-    {
-      emit2 ("pop b");                            /* preserves flags */
-      cost2 (2, 10, 9, 7, 12, 10, 3, 3);
-    }
+  emit2 ("pop b");                              /* preserves flags + the carry chain */
+  cost2 (2, 10, 9, 7, 12, 10, 3, 3);
 }
 
 /* S1C88: emit a shift/rotate `inst <aop[offset]>`. Shifts/rotates only target
@@ -10894,7 +10892,7 @@ gencjneshort (operand *left, operand *right, symbol *lbl, const iCode *ic)
                   emit3 (A_OR, ASMOP_A, ASMOP_A);
                 }
               else
-                emit3_o (A_OR, ASMOP_A, 0, left->aop, offset);
+                emit3_8alu (A_OR, left->aop, offset, ic);
 
               a_result = TRUE;
             }
@@ -10912,7 +10910,7 @@ gencjneshort (operand *left, operand *right, symbol *lbl, const iCode *ic)
               cheapMove (ASMOP_A, 0, left->aop, offset, true);
               while (byteOfVal (right->aop->aopu.aop_lit, offset + 1) == 0xff && size)
                 {
-                  emit3_o (A_AND, ASMOP_A, 0, left->aop, ++offset);
+                  emit3_8alu (A_AND, left->aop, ++offset, ic);
                   size--;
                 }
               emit3 (A_INC, ASMOP_A, 0);
@@ -11595,7 +11593,7 @@ genAnd (const iCode * ic, iCode * ifx)
                   jumpcond = "C";
                 }
               else if (bytelit != 0xffu)
-                emit3_o (A_AND, ASMOP_A, 0, right->aop, offset);
+                emit3_8alu (A_AND, right->aop, offset, ic);
               else
                 emit3 (A_OR, ASMOP_A, ASMOP_A);     /* For the flags */
               sizel--;
@@ -11764,7 +11762,7 @@ genAnd (const iCode * ic, iCode * ifx)
           if (!HAS_IYL_INST && (aopInReg (left->aop, i, IYL_IDX) || aopInReg (left->aop, i, IYH_IDX)))
             UNIMPLEMENTED;
           else
-            emit3_o (A_AND, ASMOP_A, 0, left->aop, i);
+            emit3_8alu (A_AND, left->aop, i, ic);
           if (requiresHL (left->aop) && left->aop->type != AOP_REG && !hl_free)
             _pop (PAIR_HL);
         }
@@ -11787,7 +11785,7 @@ genAnd (const iCode * ic, iCode * ifx)
           else if (right->aop->type == AOP_SFR || !HAS_IYL_INST && (aopInReg (right->aop, i, IYL_IDX) || aopInReg (right->aop, i, IYH_IDX)))
             UNIMPLEMENTED;
           else
-            emit3_o (A_AND, ASMOP_A, 0, right->aop, i);
+            emit3_8alu (A_AND, right->aop, i, ic);
           if (requiresHL (right->aop) && right->aop->type != AOP_REG && !hl_free)
             _pop (PAIR_HL);
         }
@@ -11909,7 +11907,7 @@ genOr (const iCode * ic, iCode * ifx)
           cheapMove (ASMOP_A, 0, left->aop, offset, true);
 
           if (bytelit != 0)
-            emit3_o (A_OR, ASMOP_A, 0, right->aop, offset);
+            emit3_8alu (A_OR, right->aop, offset, ic);
           else if (ifx)
             {
               /* For the flags */
@@ -12133,7 +12131,7 @@ genOr (const iCode * ic, iCode * ifx)
             !HAS_IYL_INST && (aopInReg (right->aop, i, IYL_IDX) || aopInReg (right->aop, i, IYH_IDX)))
             UNIMPLEMENTED;
           else
-            emit3_o (A_OR, ASMOP_A, 0, left->aop, i);
+            emit3_8alu (A_OR, left->aop, i, ic);
           if (requiresHL (left->aop) && left->aop->type != AOP_REG && !hl_free)
             _pop (PAIR_HL);
         }
@@ -12147,7 +12145,7 @@ genOr (const iCode * ic, iCode * ifx)
 
           if (requiresHL (right->aop) && right->aop->type != AOP_REG && !hl_free)
             _push (PAIR_HL);
-          emit3_o (A_OR, ASMOP_A, 0, right->aop, i);
+          emit3_8alu (A_OR, right->aop, i, ic);
           if (requiresHL (right->aop) && right->aop->type != AOP_REG && !hl_free)
             _pop (PAIR_HL);
         }
@@ -12253,11 +12251,11 @@ genEor (const iCode *ic, iCode *ifx, asmop *result_aop, asmop *left_aop, asmop *
             }
 
           if (aopInReg (right_aop, offset, A_IDX))
-            emit3_o (A_XOR, ASMOP_A, 0, left_aop, offset);
+            emit3_8alu (A_XOR, left_aop, offset, ic);
           else
             {
               cheapMove (ASMOP_A, 0, left_aop, offset, true);
-              emit3_o (A_XOR, ASMOP_A, 0, right_aop, offset);
+              emit3_8alu (A_XOR, right_aop, offset, ic);
             }
           if (ifx)              /* emit jmp only, if it is actually used * */
             if (!regalloc_dry_run)
@@ -12389,7 +12387,7 @@ genEor (const iCode *ic, iCode *ifx, asmop *result_aop, asmop *left_aop, asmop *
             if (!HAS_IYL_INST && (aopInReg (left_aop, i, IYL_IDX) || aopInReg (left_aop, i, IYH_IDX)))
               UNIMPLEMENTED;
             else
-              emit3_o (A_XOR, ASMOP_A, 0, left_aop, i);
+              emit3_8alu (A_XOR, left_aop, i, ic);
             if (requiresHL (left_aop) && left_aop->type != AOP_REG && !hl_free)
               _pop (PAIR_HL);
           }
@@ -12407,7 +12405,7 @@ genEor (const iCode *ic, iCode *ifx, asmop *result_aop, asmop *left_aop, asmop *
                 if (!hl_free)
                   _push (PAIR_HL);
                 cheapMove (ASMOP_L, 0, right_aop, i, false);
-                emit3_o (A_XOR, ASMOP_A, 0, ASMOP_L, 0);
+                emit3_8alu (A_XOR, ASMOP_L, 0, ic);
                 if (!hl_free)
                   _pop (PAIR_HL);
               }
@@ -12415,7 +12413,7 @@ genEor (const iCode *ic, iCode *ifx, asmop *result_aop, asmop *left_aop, asmop *
               {
                 if (requiresHL (right_aop) && right_aop->type != AOP_REG && !hl_free)
                   _push (PAIR_HL);
-                emit3_o (A_XOR, ASMOP_A, 0, right_aop, i);
+                emit3_8alu (A_XOR, right_aop, i, ic);
                 if (requiresHL (right_aop) && right_aop->type != AOP_REG && !hl_free)
                   _pop (PAIR_HL);
               }
