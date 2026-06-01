@@ -678,13 +678,10 @@ isPairDead (PAIR_ID id, const iCode * ic)
 static PAIR_ID
 getDeadPairId (const iCode *ic)
 {
-  if (isPairDead (PAIR_BC, ic))
+  /* S1C88: BA is the only dead-able scratch pair besides HL (no z80 BC/DE). */
+  if (isPairDead (PAIR_BA, ic))
     {
-      return PAIR_BC;
-    }
-  else if (!IS_SM83 && isPairDead (PAIR_DE, ic))
-    {
-      return PAIR_DE;
+      return PAIR_BA;
     }
   else
     {
@@ -695,13 +692,12 @@ getDeadPairId (const iCode *ic)
 static PAIR_ID
 getFreePairId (const iCode *ic)
 {
-  if (!isPairInUse (PAIR_BC, ic))
+  /* S1C88: the only general-purpose scratch pair besides HL is BA (the 2nd ALU
+     pair). The z80 BC/DE don't exist; isPairInUse(PAIR_BA) tests A and B, so
+     this won't hand out BA while A (the accumulator) or B is live. */
+  if (!isPairInUse (PAIR_BA, ic))
     {
-      return PAIR_BC;
-    }
-  else if (!IS_SM83 && !isPairInUse (PAIR_DE, ic))
-    {
-      return PAIR_DE;
+      return PAIR_BA;
     }
   else
     {
