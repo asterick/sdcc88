@@ -91,8 +91,13 @@ retarget** (z80→S1C88 emission cleanup)._
        genRightShift's `countreg` selection (it still lists `C_IDX`/`D_IDX`).
      - **saveRegs/restoreRegs around calls** + the remaining direct `asmop_de`/`DEHL`/`HLDE`/`HLBC`/`DEBC`
        combos and `_push(PAIR_DE)` scratch sites. Per `abi-decision.md` Step 2.
-     - **Misc low-freq:** `set 7,l` (bit ops only on A/B/[HL]); `inc -N(ix)` (indexed-memory INC illegal —
-       route through A); `neg` form.
+     - **Misc low-freq:** `set 7,l` (bit ops only on A/B/[HL]); `neg` form. **`inc/dec -N(ix)`** (indexed-
+       memory INC/DEC illegal): peephole 116/117 (the `ld a,m; inc a; ld m,a → inc m` fold) is **removed**
+       (`<this commit>`, mirrors shift peeph 21) — but a *separate* source still emits `inc -N(ix)` directly
+       (e.g. the `sum_arr` loop counter): **NOT** emit3/emit3_o (instrumented — no hit), not the removed
+       fold, and not any single `inc %N` peeph rule isolated so far. **OPEN:** trace it (instrument `emit2`
+       at the line level, or bisect the ~20 `inc %N`/`dec %N` peeph rules) then route through A or guard the
+       rule against indexed operands. The clean primitive exists (`ld a,d(ix); inc a; ld d(ix),a`, Z-safe).
    - ~~Accumulator rotates~~ **DONE** (`644576e`): all 41 `emit3(A_RLA/RLCA/RRA/RRCA…)` sites + the live
      raw `emit2("rla")` substituted to the operand form `rl a`/`rlc a`/`rr a`/`rrc a` (also fixes the
      cost). Verified no site reads Z/S/V/P after a rotate (all carry-centric), so the operand forms' extra
