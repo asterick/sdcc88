@@ -73,13 +73,26 @@ retarget** (z80→S1C88 emission cleanup)._
      have no native 16-bit form so they hit the both-in-pairs case (`a&b`, a=BA b=HL) where B holds the
      accumulator's high byte mid-op (isRegDead reports B dead *after* the iCode, which was a latent
      clobber). push/pop B is correct everywhere; the genSub/genPlus/compare uses inherit the fix.
-   - **NEXT — the C/D/E + DE/BC register-model grind** (the dominant residue; frequency-ranked on a broad
-     corpus): `push de`/`pop de` (~8, the stack-peek idiom `pop de;pop hl;push hl;push de` for reloading a
-     2nd stack word into HL — ~30 `_push(PAIR_DE)` sites, each a *throwaway scratch* since D/E are never
-     allocated, but can't blanket→`push ba` because BA is live); the variable-shift **C loop counter**
-     (`ld c,l`/`dec c` — genuinely needs a 5th storage slot when left=BA+result=HL use all 4 byte regs →
-     stack or IX/IY counter, a real restructure); `ld c,a`/`push bc` (BC scratch). Per `abi-decision.md`
-     Step 2.
+   - **NEXT — the C/D/E + DE/BC register-model grind** (the dominant residue; ~319 `PAIR_DE` refs total).
+     **Partly done:** `getFreePairId`/`getDeadPairId` now return **BA** not BC/DE (`d17a167`) — fixed the
+     scratch-pair picks (`sbc hl,bc`→`sbc hl,ba`, `add hl,bc`, the `ex (sp),hl` shuffle). **Remaining is
+     several *distinct* idioms, each per-site (NOT one mechanical fix):**
+     - **Callee-cleanup epilogue return-address shuffle** (`gen.c` ~7393–7460): the `bc_free||de_free`
+       branch + the hard `else` path use `_push/_pop(PAIR_BC/DE)`, `ld e,(hl)`/`ld d,(hl)`, and
+       **`ex (sp),hl`** (no S1C88 stack-exchange) to hop the return address over the param area. Retarget to
+       BA/IX/IY scratch + `ld {hl,ba},[sp+dd]` (the S1C88 *has* SP-relative loads/stores — use them instead
+       of the pop/push dance). Compare with the *other* epilogue path that already works (`pop hl; pop iy×N;
+       jp hl`, seen in `_callee`).
+     - **Stack-peek** (`pop de; pop hl; push hl; push de` to reload a 2nd stack word into HL) — replace with
+       a direct `ld hl,[sp+dd]`.
+     - **Variable-shift `C` loop counter** (`ld c,l`/`inc c`/`dec c`): when left=BA and result=HL use all 4
+       byte regs there's no free byte for the counter — needs a 5th slot (stack temp, or `dec iy`/IX
+       counter, or the native `DJR` after the value moves to HL). A real restructure of genLeftShift/
+       genRightShift's `countreg` selection (it still lists `C_IDX`/`D_IDX`).
+     - **saveRegs/restoreRegs around calls** + the remaining direct `asmop_de`/`DEHL`/`HLDE`/`HLBC`/`DEBC`
+       combos and `_push(PAIR_DE)` scratch sites. Per `abi-decision.md` Step 2.
+     - **Misc low-freq:** `set 7,l` (bit ops only on A/B/[HL]); `inc -N(ix)` (indexed-memory INC illegal —
+       route through A); `neg` form.
    - ~~Accumulator rotates~~ **DONE** (`644576e`): all 41 `emit3(A_RLA/RLCA/RRA/RRCA…)` sites + the live
      raw `emit2("rla")` substituted to the operand form `rl a`/`rlc a`/`rr a`/`rrc a` (also fixes the
      cost). Verified no site reads Z/S/V/P after a rotate (all carry-centric), so the operand forms' extra
@@ -146,7 +159,8 @@ the broader operand-placement work so the allocator keeps 16-bit operands in BA/
 
 ## Commit history (branch `main`, all green)
 
-Recent (codegen): `4038be3` _push/_pop(PAIR_AF) → push a;push sc (killed `push af`) · `644576e` acc-rotates
+Recent (codegen): `d17a167` getFreePairId/getDeadPairId → BA (killed `sbc hl,bc`/`ex (sp),hl` scratch
+picks) · `4038be3` _push/_pop(PAIR_AF) → push a;push sc (killed `push af`) · `644576e` acc-rotates
 → operand form `rl a`… (killed `rla`/`rlca`) · `1e860c8` genAnd/genOr/genEor L/H operand via B
 (emit3_8alu always-safe) · `ad12cb5` shifts route L/H/[ix+d] through A/B + drop peephole 21 (killed `rr l`/
 `sla -N(ix)`) · `a7e7235` genPlus/genSub L/H byte-ALU via B · `6c49c73` genCmp/gencjne route L/H operand
