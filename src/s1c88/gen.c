@@ -9574,7 +9574,7 @@ genMultOneChar (const iCode * ic)
       emit3w (A_ADD, ASMOP_HL, ASMOP_DE);
       emitLabel (tlbl2);
       if (!regalloc_dry_run)
-        emit2 ("djnz !tlabel", labelKey2num (tlbl1->key));
+        emit2 ("djr nz, !tlabel", labelKey2num (tlbl1->key));   // S1C88: djnz -> djr nz (dec B; jr nz)
       cost2 (2, 12.375f, 8.75f, 5.0f, 0, 10.0f, 3.75f, 2.0f);
       regalloc_dry_run_state_scale = 1.0f;
     }
@@ -13002,7 +13002,7 @@ shiftR2Left2Result (const iCode *ic, operand *left, int offl, operand *result, i
       if (use_b)
         {
           if (!regalloc_dry_run)
-            emit2 ("djnz !tlabel", labelKey2num (tlbl->key));
+            emit2 ("djr nz, !tlabel", labelKey2num (tlbl->key));
           cost2 (2, 13, 9, 5, 0, 10, 4, 2); // Assume jump taken.
         }
       else
@@ -13160,7 +13160,7 @@ shiftL2Left2Result (operand *left, operand *result, int shCount, const iCode *ic
               if (use_b)
                 {
                   if (!regalloc_dry_run)
-                    emit2 ("djnz !tlabel", labelKey2num (tlbl->key));
+                    emit2 ("djr nz, !tlabel", labelKey2num (tlbl->key));
                   cost2 (2, 13, 9, 5, 0, 10, 4, 2); // Assume jump taken.
                 }
               else
@@ -13923,7 +13923,7 @@ genLeftShift (const iCode *ic)
       if (!IS_SM83 && countreg == B_IDX)
         {
           if (!regalloc_dry_run)
-            emit2 ("djnz !tlabel", labelKey2num (tlbl->key));
+            emit2 ("djr nz, !tlabel", labelKey2num (tlbl->key));
           cost2 (2, 13, 9, 5, 0, 10, 4, 2); // Assume jump taken.
         }
       else
@@ -14356,7 +14356,7 @@ genRightShift (const iCode * ic)
       if (!IS_SM83 && countreg == B_IDX)
         {
           if (!regalloc_dry_run)
-            emit2 ("djnz !tlabel", labelKey2num (tlbl->key));
+            emit2 ("djr nz, !tlabel", labelKey2num (tlbl->key));
           cost2 (2, 13, 9, 5, 0, 10, 4, 2); // Assume jump taken.
         }
       else
@@ -17305,7 +17305,7 @@ genBuiltInMemset (const iCode *ic, int nParams, operand **pparams)
               emit2 ("ld !*hl, %s", aopGet (direct_cl ? c->aop : ASMOP_A, 0, FALSE));
               emit2 ("inc hl");
             }
-          emit2 ("djnz !tlabel", labelKey2num (tlbl1->key));
+          emit2 ("djr nz, !tlabel", labelKey2num (tlbl1->key));
         }
       regalloc_dry_run_cost += (double_loop ? 6 : 4);
     }
