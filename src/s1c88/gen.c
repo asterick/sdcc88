@@ -14580,7 +14580,12 @@ _moveFrom_tpair_ (asmop * aop, int offset, PAIR_ID pair)
 
 static void offsetPair (PAIR_ID pair, PAIR_ID extrapair, bool save_extrapair, int val)
 {
-  if (abs (val) < (save_extrapair ? 6 : 4) || pair != PAIR_HL && pair != PAIR_IY && pair != PAIR_IX)
+  (void) extrapair;
+  (void) save_extrapair;
+  // S1C88: HL/IX/IY all have a native `add pair,#imm` (3 B), so no scratch pair
+  // (DE/BC) and no push/pop are needed to add a constant offset. Small offsets
+  // are still cheaper as inc/dec (1 B each).
+  if (abs (val) < 4 || pair != PAIR_HL && pair != PAIR_IY && pair != PAIR_IX)
     {
       while (val)
         {
@@ -14594,20 +14599,8 @@ static void offsetPair (PAIR_ID pair, PAIR_ID extrapair, bool save_extrapair, in
     }
   else
     {
-      if (save_extrapair)
-        _push (extrapair);
-      emit2 ("ld %s, !immedword", _pairs[extrapair].name, (unsigned)val);
-      if (extrapair == PAIR_IY)
-        cost2 (4 - IS_TLCS90, 14, 12, 8, 0, 6, 4, 4);
-      else
-       	cost2 (3, 10, 9, 6, 12, 6, 3, 3);
-      emit2 ("add %s, %s", _pairs[pair].name, _pairs[extrapair].name);
-      if (pair == PAIR_HL)
-        cost2 (1, 11, 7, 2, 8, 8, 1, 1);
-      else
-        cost2 (2, 15, 10, 4, 0, 8, 2, 2);
-      if (save_extrapair)
-        _pop (extrapair);
+      emit2 ("add %s, !immedword", _pairs[pair].name, (unsigned)val);
+      cost2 (3, 10, 9, 6, 12, 6, 3, 3);   // add {hl,ix,iy},#mmnn
     }
 }
 
