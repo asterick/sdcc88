@@ -6164,10 +6164,15 @@ genIpush (const iCode *ic)
         bool de_free = isPairDead (PAIR_DE, ic) && (d_free || IC_LEFT (ic)->aop->regs[D_IDX] >= size - 2) && (e_free || IC_LEFT (ic)->aop->regs[E_IDX] >= size - 2);
         bool bc_free = isPairDead (PAIR_BC, ic) && (b_free || IC_LEFT (ic)->aop->regs[B_IDX] >= size - 2) && (c_free || IC_LEFT (ic)->aop->regs[C_IDX] >= size - 2);
 
-        if (getPairId_o (IC_LEFT (ic)->aop, size - 2) != PAIR_INVALID)
+        if (getPairId_o (IC_LEFT (ic)->aop, size - 2) != PAIR_INVALID || aluPairId (IC_LEFT (ic)->aop, size - 2) == PAIR_BA)
           {
-            emit2 ("push %s", _pairs[getPairId_o (IC_LEFT (ic)->aop, size - 2)].name);
-            if (getPairId_o (IC_LEFT (ic)->aop, size - 2) == PAIR_IY)
+            /* S1C88: getPairId_o doesn't recognize BA, so push the low word already
+               in B:A directly (`push ba`) instead of shuffling it into phantom BC. */
+            PAIR_ID pp = getPairId_o (IC_LEFT (ic)->aop, size - 2);
+            if (pp == PAIR_INVALID)
+              pp = PAIR_BA;
+            emit2 ("push %s", _pairs[pp].name);
+            if (pp == PAIR_IY)
               cost2 (2 - IS_TLCS90, 15, 13, 12, 0, 8, 4, 5);
             else
               cost2 (1, 11, 11, 10, 16, 8, 3, 4);
