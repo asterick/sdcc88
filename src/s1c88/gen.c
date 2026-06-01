@@ -5429,7 +5429,10 @@ outBitC (operand *result)
   else
     {
       emit3 (A_LD, ASMOP_A, ASMOP_ZERO);
-      emit3 (A_RLA, 0, 0);
+      /* carry -> A bit 0. The S1C88 has no z80 acc-rotate `rla`; use the
+         operand form `rl a` (same carry-in-to-bit-0; its extra Z/S flag
+         effects are unused here). Valid on the z80/SM83 sub-ports too. */
+      emit3 (A_RL, ASMOP_A, 0);
       outAcc (result);
     }
 }
@@ -10065,6 +10068,7 @@ genCmp (operand * left, operand * right, operand * result, iCode * ifx, int sign
   bool started = false;
   bool inv = false;
   bool signed_native = false;	/* S1C88: branch on the native signed condition (jrs LT/GE) */
+  bool signed_native_bool = false;	/* S1C88: materialise a bool from the native signed condition */
 
   /* if left & right are bit variables */
   if (left->aop->type == AOP_CRY && right->aop->type == AOP_CRY)
@@ -10340,14 +10344,14 @@ genCmp (operand * left, operand * right, operand * result, iCode * ifx, int sign
             }
         }
 
-      /* S1C88 native 16-bit compare for ifx branches. The core has a true
-         16-bit CP that sets Z C V N, plus native signed branches (jrs LT/GE
-         test S^V), so a single `cp <pair>,<pair>` replaces the z80 byte-wise
-         sub/sbc idiom — which is illegal here anyway (8-bit ALU source must be
-         A or B, never L/H). We need both operands in the two ALU pairs (BA,
-         HL); for signed compares the fix block below branches on S/V directly
-         (signed_native), for unsigned it falls through to the carry test. */
-      if (!IS_SM83 && ifx && size == 2 && offset == 0 &&
+      /* S1C88 native 16-bit compare. The core has a true 16-bit CP that sets
+         Z C V N, plus native signed branches (jrs LT/GE test S^V), so a single
+         `cp <pair>,<pair>` replaces the z80 byte-wise sub/sbc idiom — which is
+         illegal here anyway (8-bit ALU source must be A or B, never L/H). We
+         need both operands in the two ALU pairs (BA, HL). The fix/release
+         blocks below then branch on S/V directly (signed) or the carry
+         (unsigned), for both the ifx and the boolean-materialization cases. */
+      if (!IS_SM83 && size == 2 && offset == 0 &&
           !(result->aop->type == AOP_CRY && result->aop->size) &&
           left->aop->type != AOP_LIT && right->aop->type != AOP_LIT)
         {
@@ -10506,15 +10510,19 @@ fix:
             {
               /* The S1C88 has native signed-condition branches (jrs LT/GE test
                  S xor V), and the byte/word subtract above already left S and V
-                 set correctly for the signed compare.  So for an ifx (the result
-                 is a conditional branch) we branch on those flags directly and
-                 skip the z80 PO/xor sign-correction entirely — see the release
-                 block, which emits genIfxJump(ifx, "lt").  The non-ifx / boolean
-                 case still needs the sign materialised in A, so it keeps the
-                 z80 fixup for now (a later slice retargets it). */
-              if (ifx && !(result->aop->type == AOP_CRY && result->aop->size))
+                 set correctly for the signed compare — so we branch on those
+                 flags directly and skip the z80 PO/xor sign-correction entirely.
+                 For an ifx the result is a conditional branch (signed_native ->
+                 genIfxJump(ifx, "lt")); for a boolean result we materialise 0/1
+                 from the same condition (signed_native_bool, handled in the
+                 release block).  Only the rare AOP_CRY (bit) result still needs
+                 the z80 fixup. */
+              if (!(result->aop->type == AOP_CRY && result->aop->size))
                 {
-                  signed_native = true;
+                  if (ifx)
+                    signed_native = true;
+                  else
+                    signed_native_bool = true;
                 }
               else if (!regalloc_dry_run)
                 {
@@ -10592,6 +10600,22 @@ release:
             }
           else
             genIfxJump (ifx, inv ? "nc" : "c");
+        }
+      else if (signed_native_bool)
+        {
+          /* S1C88: materialise the boolean from the native signed condition.
+             The compare above set S and V; jp LT/GE (-> jrs) selects 1 vs 0.
+             ld/xor leave those flags intact until the branch. */
+          symbol *tlbl = regalloc_dry_run ? 0 : newiTempLabel (NULL);
+          emit2 ("ld a, !immedbyte", 1u);
+          cost2 (2, 7, 6, 4, 8, 4, 2, 2);
+          if (!regalloc_dry_run)
+            emit2 ("jp LT, !tlabel", labelKey2num (tlbl->key));
+          cost2 (3, 10.0f, 7.5f, 7.0f, 14.0f, 11.0f, 3.5f, 3.0f);
+          emit3 (A_XOR, ASMOP_A, ASMOP_A);
+          if (!regalloc_dry_run)
+            emitLabel (tlbl);
+          outAcc (result);
         }
       else
         {
