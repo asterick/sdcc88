@@ -1,10 +1,29 @@
 # Banked `CALL` / `JUMP` — assembler + linker design (Phase 2)
 
-> **Status:** design only — the *feature* is unimplemented. **Phase 0 (the linker) is now partly done:**
-> `scripts/build-sdld.sh` builds the ASlink linker and `scripts/link-smoke.sh` proves `sdas88 + sdldz80`
-> link a 2-area program with both relocation kinds resolving (cross-area absolute + PC-relative). So the
-> base toolchain exists; what's left for this feature is the **s1c88-branded linker** (a distinct
-> `TARGET_ID_S1C88`) and the **rewrite relocation** below (§4–5).
+> **Status (impl in progress).** The base toolchain works (`build-sdld.sh` + `link-smoke.sh`). The
+> pseudo-ops **`bcall`/`bjump`** are implemented and committed: each emits the slot `ld nb,#bb ; carl|jrl
+> [cc,] target`, and **the displacement links correctly across areas/banks** (standard `R_PCR`; the 16-bit
+> write masks the bank difference → logic-relative disp). They work today for **common-area / single-bank
+> (bank 0)** targets.
+>
+> **Auto-bank — partially built, one blocker.** Prototyped in the build tree (not yet persisted as a
+> patch): a **`TARGET_ID_S1C88`** identity in `sdas.c`/`sdas.h` (binary "sdas88" → matches "88") routes
+> 1-byte relocations through the **24-bit/escape path** (`asout.c`, gated on the target) — needed because
+> the z80 16-bit reloc path *truncates* escape modes. With that, the bank field emits as `[bank][pad]`
+> (a_bytes=2) carrying **`R_S1C88_BANK` (0x800)**, and `lkrloc3.c` gets a dispatch case meant to write the
+> target's bank (`symval >> 16`, code areas at `(bank<<16)|logic`) into `[bank]`, a `nop` (FF) into
+> `[pad]`, or NOP the whole `ld nb` when bank is 0/current.
+>
+> **PROVEN:** the standard 24-bit `R_HIB` path *does* resolve and write the bank correctly (a test linked
+> `bcall` into bank 1 → `CE C4 01 …`). **BLOCKER:** the custom `lkrloc3.c` dispatch's writes to
+> `rtval[rtp]`/`rtval[rtp+1]` (the relocated positions) **don't persist to output** — writes to
+> `rtval[rtp-2]`/`[rtp-1]` do. The bytes *at* the reloc point are evidently re-emitted from elsewhere at
+> output time (not the raw `rtval[]` despite `adb_2b` writing it the same way + clearing `rtflg`). This is
+> a focused ASlink-internals issue: find where the T record's relocated bytes are finally written and why a
+> direct `rtval[]` write at `rtp` is overridden. Once fixed, the conditional-NB rewrite is complete.
+>
+> Remaining after that: persist the shared-source changes as a patch (applied by `build-sdas.sh`/
+> `build-sdld.sh`), the bank `.lk` (areas at `(bank<<16)|logic`), and romgen.
 >
 > This is the concrete plan for two **pseudo-instructions** that pick the short/long branch form *and*
 > insert the code-bank switch automatically:
