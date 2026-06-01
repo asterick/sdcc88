@@ -29,12 +29,15 @@ and builds the compiler.
 > A/B — the S1C88 only shifts A/B/[HL]), accumulator rotates (`rla`→`rl a` etc.), `push af`→`push a;push
 > sc`, the scratch-pair selectors (`getFreePairId`→BA), `cpl a`/`neg a` operand forms, indexed/abs
 > `inc/dec` routed through A (`emit3_incdec`), `cp a,l`/`sub a,l` routed through B, `djnz`→`djr nz`,
-> `bit n,reg`→`bit reg,#mask` (`emitBitTest`), and **RES/SET elimination** (no such instruction — bits via
-> `and/or a,#mask`). The **peephole rules were audited for S1C88 validity and collapsed into one file**
-> (`peeph.def`; the z80 `peeph-z80.def` + 5 dead variant files removed) — see
-> `docs/s1c88/HANDOFF.md` "Peephole audit". **Remaining:** the C/D/E + DE/BC register-model cleanup (the
-> `gen.c` scratch-asmop machinery: `push de`/`pop de` stack-peek, `ex (sp),hl`, `add hl,sp`, `ld de`/`add
-> hl,de` scratch, `ldir` struct-copy) + the documented out-of-range `jp GE`. All
+> `bit n,reg`→`bit reg,#mask` (`emitBitTest`), **RES/SET elimination** (no such instruction — bits via
+> `and/or a,#mask`), constant pointer/member offsets via native `add {hl,ix,iy},#imm` (`offsetPair`),
+> **`add hl/iy/ix,sp` fully eliminated** (peephole `ld pair,sp; add pair,#off`), and struct return-by-value
+> no longer SIGSEGVs (clean "Unimplemented"). The **peephole rules were audited for S1C88 validity and
+> collapsed into one file** (`peeph.def`; the z80 `peeph-z80.def` + 5 dead variant files removed) — see
+> `docs/s1c88/HANDOFF.md` "Peephole audit". **Remaining:** the DE/BC register-model cleanup (the `gen.c`
+> scratch-asmop machinery: `push de`/`pop de` stack-peek, `ex (sp),hl`, `ld de`/`add hl,de` scratch, the
+> `ldir` struct-copy — byte-loop-via-IY works but is blocked on a latent garbage-`aop_stk` bug, see
+> HANDOFF "Session 3") + the documented out-of-range `jp GE`. All
 > work is on **`main`**. The design, ABI, and step-by-step plan live in **`docs/s1c88/abi-decision.md`**;
 > the toolchain in `docs/s1c88/{sdas88-retarget,banked-branch}.md`. Read before touching `src/s1c88/`.
 

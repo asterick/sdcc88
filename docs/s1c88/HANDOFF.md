@@ -3,7 +3,7 @@
 **This is the single resume entry point.** If the prompt is *"let's pick up where you left off,"* do the
 steps under **NEXT ACTION**. Everything needed to continue is here or linked from here.
 
-_Last updated: 2026-05-31 (session 2: 6 gen.c grind slices — cpl/neg, indexed inc/dec, cp a,l, djnz, bit-form, res/set — see "gen.c grind progress" below; plus the peephole audit). Branch: **`main`** (all work is on main;
+_Last updated: 2026-06-01 (session 3: offsetPair native-add, `add hl/iy/ix,sp` elimination, struct-return SIGSEGV fix; ldir attempt reverted — see "Session 3" below). Branch: **`main`** (all work is on main;
 there is no `s1c88-retarget` branch anymore — CLAUDE.md's mention of it is stale). State: **GREEN** —
 compiler builds/links/runs, and the
 **binary toolchain (assembler + linker + banked ROM) is complete**. The remaining work is the **codegen
@@ -147,6 +147,49 @@ the broader operand-placement work so the allocator keeps 16-bit operands in BA/
 
 > A from-scratch big-bang reshape was tried and **reset** (unverifiable-red for the whole grind). The dead
 > WIP is in reflog `417bed5` — useful only as a reference for the *end-state* register defs.
+
+## Session 3 (2026-06-01) — frame-addressing + struct-return; ldir attempt reverted
+
+**Landed (committed, green):**
+- **`9958749` offsetPair → native `add {hl,ix,iy},#imm`:** adding a constant offset to a pointer pair
+  (struct/array member addressing) used a z80 `ld de/bc,#off; add hl,de/bc` scratch idiom; HL/IX/IY all
+  have a native immediate-add, so no scratch/push-pop. Kills `ld de,#off; add hl,de` for member addressing.
+- **`c1c2d88` eliminate `add {hl,ix,iy},sp`** (peephole): the S1C88 16-bit add takes BA/HL/IX/IY/#imm,
+  not SP. But `ld {hl,ix,iy},sp` and `add {hl,ix,iy},#imm` ARE legal, so a peephole rewrites the whole
+  class `ld pair,#off; add pair,sp` → `ld pair,sp; add pair,#off` (off+SP == SP+off). One rule covers
+  ~18 raw gen.c sites + the `!ldahlsp` macro + setupPairFromSP. **`add hl,sp` fully gone from the corpus.**
+  A follow-up rule drops the degenerate `add pair,#0`. (Done as a peephole like jp→jrs, not 18 edits.)
+- **`a48f26d` struct/union return-by-value no longer SIGSEGVs:** `return *q` (a struct) hit
+  `genMove(aopRet(structtype)==NULL, …)` → null deref. Root cause: a bigreturn uses the hidden-buffer ABI
+  (no return register), and the frontend lowers the RETURN to a pointer-sized operand that slips past
+  genRet's `size<=4 && !IS_STRUCT` guard. Now: genRet emits `UNIMPLEMENTED` when `aopRet()` is NULL, and
+  genMove guards `if(!result) return;`. Struct return-by-value reports "Unimplemented" (exit 1), no crash.
+  **Full struct-return is still unimplemented** (needs the bigreturn copy-to-buffer + the ldir work below).
+
+**Attempted + REVERTED — the `ldir` struct-copy retarget:**
+- The S1C88 has no `ldir`/`ldi`/DE/BC. A copy loop `ld a,(hl); ld (iy),a; inc hl; inc iy; djr nz` works
+  (verified building blocks; dest computed as `ld iy,sp; add iy,#off`, valid for AOP_STK *and* EXSTK —
+  no IX/omitFramePtr dependence). **Struct *assignments* compiled correctly and validated 0 errors**
+  (`*a=*b`, `gp=*q`, `struct l=*q`, `__builtin_memcpy(d,s,16)`).
+- **Key map:** struct assignment lowers to **`genBuiltInMemcpy`** (NOT genPointerGet as first assumed).
+  There are **6** `ldir` emit sites: ~7695 (genRet struct-return), ~14932 (genPointerGet),
+  ~15606 (genPointerSet), ~16250, **~17240 (genBuiltInMemcpy — the one struct copies use)**, ~17463.
+- **Why reverted:** the new fast path perturbed the regalloc *cost* model, shifting allocation in
+  unrelated code and exposing a **latent garbage-SP-offset bug** (below) — `cpy`'s 1-byte `*d=*s`
+  regressed from `ld (hl),b` to a 1-byte `ldir` with `add hl,#-523687714`. Real miscompile → reverted.
+- **To land safely:** make the fast-path `cost2()` values allocation-neutral, and fix the garbage-offset
+  bug first. The byte-loop approach itself is sound.
+
+**⚠ KNOWN ISSUE — latent garbage SP-offset (uninitialized `aop_stk` read):**
+- Symptom: a small (1–2 byte) copy emits `ld hl,#<garbage>; add hl,sp` (now peephole'd to `ld hl,sp;
+  add hl,#<garbage>`), garbage e.g. `-523687714`. The value **changes between runs → uninitialized
+  memory**. `gcc -Wmaybe-uninitialized -O2` does NOT flag it ⇒ it's a *union* field: almost certainly
+  `aop->aopu.aop_stk` read to compute an SP offset for an aop whose type is NOT AOP_STK/EXSTK/STL (so
+  `aop_stk` is uninitialised union memory). ~30 `aop_stk` reads in the copy paths; one lacks a type guard.
+- **Latent** — committed codegen doesn't hit it; it surfaced only under the ldir change's allocation shift,
+  and could not be re-triggered deterministically afterward. **Repro recipe for the fix:** re-trigger via
+  a copy-cost perturbation (the ldir fast path, or a high-spill small-copy), run sdcc under **valgrind** —
+  it flags the uninitialised read at the exact `aop_stk` site — then add the missing AOP_STK/EXSTK guard.
 
 ## gen.c grind progress (2026-05-31, session 2) — 6 slices landed
 
