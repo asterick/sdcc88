@@ -845,6 +845,22 @@ getPairId (const asmop *aop)
   return (getPairId_o (aop, 0));
 }
 
+/* The S1C88's two 16-bit ALU pairs are HL and BA (only these have the full
+   ADD/ADC/SUB/SBC/CP cross-product). Return which one the 2-byte chunk at
+   `offset` occupies, or PAIR_INVALID. Unlike getPairId_o this recognizes BA
+   (A low, B high), which the z80-inherited helpers do not. */
+static PAIR_ID
+aluPairId (const asmop *aop, int offset)
+{
+  if (aop->type != AOP_REG || offset < 0 || offset + 2 > aop->size)
+    return PAIR_INVALID;
+  if (aop->aopu.aop_reg[offset]->rIdx == L_IDX && aop->aopu.aop_reg[offset + 1]->rIdx == H_IDX)
+    return PAIR_HL;
+  if (aop->aopu.aop_reg[offset]->rIdx == A_IDX && aop->aopu.aop_reg[offset + 1]->rIdx == B_IDX)
+    return PAIR_BA;
+  return PAIR_INVALID;
+}
+
 
 /*-----------------------------------------------------------------*/
 /* z80_emitDebuggerSymbol - associate the current code location    */
@@ -8868,6 +8884,48 @@ genSub (const iCode *ic, asmop *result, asmop *left, asmop *right)
     return;
 
   size = IC_RESULT (ic)->aop->size;
+
+  /* S1C88 native 16-bit subtract. The core has a true 16-bit SUB/SBC on its
+     two ALU pairs (HL, BA) — unlike the z80, which has no 16-bit SUB and forces
+     the byte-wise "sub a,l / sbc a,h" idiom. That idiom is in fact *illegal* on
+     the S1C88 (the 8-bit ALU source must be A or B, never L/H), so we must emit
+     the native pair op whenever the right operand is a register pair.
+
+     We compute in whichever ALU pair we can place `left` in, requiring `right`
+     to be the *other* ALU pair (the two pairs are disjoint, so getting `left`
+     into the compute pair never clobbers `right`). Literal/memory right still
+     assemble legally via the byte loop below (8-bit imm/memory sources are
+     fine), so we only intercept the register-register case here. */
+  if (!IS_SM83 && !maskedtopbyte && size == 2)
+    {
+      PAIR_ID leftpair = aluPairId (left, 0);
+      PAIR_ID respair = aluPairId (result, 0);
+      PAIR_ID compute = PAIR_INVALID;
+
+      if (leftpair != PAIR_INVALID && aluPairId (right, 0) == (leftpair == PAIR_HL ? PAIR_BA : PAIR_HL))
+        compute = leftpair;            /* left already in an ALU pair, right is the other */
+      else if (respair != PAIR_INVALID && aluPairId (right, 0) == (respair == PAIR_HL ? PAIR_BA : PAIR_HL))
+        compute = respair;             /* move left into the result pair, right is the other */
+
+      if (compute != PAIR_INVALID)
+        {
+          PAIR_ID other = (compute == PAIR_HL) ? PAIR_BA : PAIR_HL;
+          asmop *computeop = (compute == PAIR_HL) ? ASMOP_HL : ASMOP_BA;
+
+          if (aluPairId (left, 0) != compute)
+            genMove (computeop, left, false, false, false, false);
+          spillPair (compute);
+          emit2 ("sub %s, %s", _pairs[compute].name, _pairs[other].name);
+          cost2 (2, 15, 10, 4, 0, 8, 2, 2);
+          if (respair != compute)
+            {
+              spillPair (compute);
+              genMove (result, computeop, false, false, false, false);
+            }
+          _G.preserveCarry = FALSE;
+          return;
+        }
+    }
 
   if (right->type == AOP_LIT)
     {
