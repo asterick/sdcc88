@@ -3,8 +3,9 @@
 **This is the single resume entry point.** If the prompt is *"let's pick up where you left off,"* do the
 steps under **NEXT ACTION**. Everything needed to continue is here or linked from here.
 
-_Last updated: 2026-05-31. Branch: **`main`** (all work is on main; there is no `s1c88-retarget` branch
-anymore — CLAUDE.md's mention of it is stale). State: **GREEN** — compiler builds/links/runs, and the
+_Last updated: 2026-05-31 (genSub/genCmp native 16-bit slices). Branch: **`main`** (all work is on main;
+there is no `s1c88-retarget` branch anymore — CLAUDE.md's mention of it is stale). State: **GREEN** —
+compiler builds/links/runs, and the
 **binary toolchain (assembler + linker + banked ROM) is complete**. The remaining work is the **codegen
 retarget** (z80→S1C88 emission cleanup)._
 
@@ -37,17 +38,28 @@ retarget** (z80→S1C88 emission cleanup)._
    ```
 3. Clear z80-isms in `src/s1c88/gen.c` one slice at a time, **byte-checking each with the validator**,
    committing green. **Done so far:** frame setup (`ld ix,sp`), branches (`jr→jrs`, `jp→jrl`, `call→carl`,
-   via `peeph-z80.def`), and **signed compare → native `jrs LT/GE`** (`genCmp`/`genIfxJump`; the
-   `z80instructionSize` branch-sizing in `peep.c` came with it). **Remaining** (the validator list):
-   - **Byte-wise 16-bit ALU** (`sub a,l` / `add a,l` / `sbc hl,bc` …) — the central register-model work:
-     get 16-bit operands into **BA/HL** so native `add hl,ba` / `sub hl,ba` / 16-bit `cp` replace the
-     byte-wise idioms. Biggest cluster. See `abi-decision.md` → "Step 2: concrete codegen mapping" and the
-     worklist below.
-   - `push af` stack reservation → `sub sp,#imm`.
-   - non-ifx signed compare (`return a<b`) still emits `jp PO` (the boolean-materialization path).
+   via `peeph-z80.def`), **signed compare → native `jrs LT/GE`** (`genCmp`/`genIfxJump`; the
+   `z80instructionSize` branch-sizing in `peep.c` came with it), **16-bit `sub ba,hl`** (genMinus/genSub,
+   `fa05339`), and **16-bit `cp ba,hl` for ifx compares** (genCmp, `1dc9d94`). Note (verified vs sdas88):
+   the byte-wise `sub a,l` / `sbc a,h` idiom is *illegal* on the S1C88 — the 8-bit ALU source must be A or B,
+   never L/H — so the 16-bit ALU work is **required**, not just an optimization. The native 16-bit
+   sub/sbc/cp on the two ALU pairs (BA, HL) all assemble; `rr l` / `rrc l` are also illegal (`rr`/`rrc` take
+   only a, b, (br:ll), (hl)). New helper `aluPairId()` recognizes BA (the z80 getPairId helpers don't).
+   **Remaining** (the validator list):
+   - **Byte-wise 16-bit ALU — remaining sites.** Done: int `sub`/`cp`. Still byte-wise:
+     - **4-byte (long) compare** emits **illegal `sbc hl,bc`** (the `size>2` path fetches right into
+       BC/DE, which aren't S1C88 ALU pairs) — pre-existing latent bug, now visible. Needs the chained
+       16-bit `sbc` on BA/HL.
+     - **8-bit char compare/sub** with right in L/H emits `sub a,l` — 8-bit ALU can't source L/H; move
+       through B (or memory) first.
+     - **operands the allocator leaves outside ALU pairs** (e.g. `*p-*q` puts a byte in H → `sbc a,h`) —
+       the broader operand-placement grind.
+   - `push af` stack reservation → `sub sp,#imm` (biggest remaining count).
+   - non-ifx signed compare (`return a<b`) still emits `jp PO` (the boolean-materialization path; the
+     ifx path is now native).
    - `rlca`/`rla`/`rrca`/`rra` → `rlc a`/`rl a`/… (**flag-subtle** — z80 acc-rotates are carry-only,
      S1C88's set Z/S too; check each use site).
-   - 16-bit shifts (`rr l`, `sla -2(ix)`); `inc d(ix)`.
+   - 16-bit shifts (`rr l` — *illegal*, see above; `sla -2(ix)`); `inc d(ix)`.
 4. **Per user direction:** when retargeting branch emission, emit **`bcall`/`bjump`** for inter-function
    calls/tail-jumps (not raw `carl`/`jrl`) so the linker becomes the single place that optimizes branch
    form + bank switching. Local loop/if branches can stay plain `jrs`/`jrl`. (Memory:
@@ -60,9 +72,11 @@ The linchpin is the scratch-asmop machinery near the top of `src/s1c88/gen.c`: `
 the parm-mask arrays sized `[IYH_IDX+1]`. The ISA-grounded mapping (`DE→BA`, `BC→IX/IY/stack`, C/D/E bytes
 *eliminated* not renamed, IYL/IYH dropped) + the two hazards (A/BA overlap; no byte home for C/D/E) are in
 **`abi-decision.md` → "Step 2"** — read that first. Progress so far: PAIR_BA added as a first-class pair
-(`a13bc77`); genPlus 16-bit add prefers BA → `add hl,ba` (`aee2ed0`). The **call ABI is done** (returns
-BA/HL:BA, args faithful Epson order). Next pieces: genMinus `sbc hl,ba` (A-overlap trap: `a_dead=false`
-when pair==BA), `fetchPairLong` PAIR_BA wiring, then mop up direct byte-C/D/E sites.
+(`a13bc77`); genPlus 16-bit add prefers BA → `add hl,ba` (`aee2ed0`); genMinus/genSub native `sub ba,hl`
+(`fa05339`); genCmp native `cp ba,hl` for ifx 16-bit compares (`1dc9d94`). The **call ABI is done**
+(returns BA/HL:BA, args faithful Epson order). Next pieces: chained 16-bit `sbc` for the **long
+sub/compare** (kills the illegal `sbc hl,bc`), the **8-bit `sub a,l`** mop-up (move L/H through B), then
+the broader operand-placement work so the allocator keeps 16-bit operands in BA/HL more often.
 
 > A from-scratch big-bang reshape was tried and **reset** (unverifiable-red for the whole grind). The dead
 > WIP is in reflog `417bed5` — useful only as a reference for the *end-state* register defs.
@@ -92,6 +106,7 @@ when pair==BA), `fetchPairLong` PAIR_BA wiring, then mop up direct byte-C/D/E si
 
 ## Commit history (branch `main`, all green)
 
-Recent (toolchain): `33948cb` romgen + ROM test · `dced778` auto-bank works · `8da1910` linker built ·
+Recent (codegen): `1dc9d94` genCmp native `cp ba,hl` (ifx 16-bit compares) · `fa05339` genMinus native
+`sub ba,hl`. Toolchain: `33948cb` romgen + ROM test · `dced778` auto-bank works · `8da1910` linker built ·
 the `sdas88: …` series (full ISA, byte-verified) · `f95e7fb`/`85af71a`/`384472a` codegen slices (frame,
 branches, signed-compare). Earlier: the call-ABI + allocator reshape (`b606833` Step 1, `aee2ed0` etc.).
