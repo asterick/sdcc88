@@ -3,7 +3,9 @@
 **This is the single resume entry point.** If the prompt is *"let's pick up where you left off,"* do the
 steps under **NEXT ACTION**. Everything needed to continue is here or linked from here.
 
-_Last updated: 2026-06-01 (session 3: offsetPair native-add, `add hl/iy/ix,sp` elimination, struct-return SIGSEGV fix; ldir attempt reverted — see "Session 3" below). Branch: **`main`** (all work is on main;
+_Last updated: 2026-06-01 (session 4: SP-relative stack-word peeks, IY/BA arg-push — see "Session 4"
+below. Session 3: offsetPair native-add, `add hl/iy/ix,sp` elimination, struct-return SIGSEGV fix; ldir
+attempt reverted — see "Session 3"). Branch: **`main`** (all work is on main;
 there is no `s1c88-retarget` branch anymore — CLAUDE.md's mention of it is stale). State: **GREEN** —
 compiler builds/links/runs, and the
 **binary toolchain (assembler + linker + banked ROM) is complete**. The remaining work is the **codegen
@@ -147,6 +149,54 @@ the broader operand-placement work so the allocator keeps 16-bit operands in BA/
 
 > A from-scratch big-bang reshape was tried and **reset** (unverifiable-red for the whole grind). The dead
 > WIP is in reflog `417bed5` — useful only as a reference for the *end-state* register defs.
+
+## Session 4 (2026-06-01) — SP-relative stack-word peeks + IY/BA arg marshalling
+
+**Landed (committed, green; corpus validator 38 → 10 sdas88 errors, rom-smoke still GREEN):**
+- **`151ee36` native `ld pair,dd(sp)` for stack-word peeks:** the S1C88 has
+  `LD {ba,hl,ix,iy},[SP+dd]` (dd a *signed byte*) — 16-bit pair loads support `[SP+dd]` but **NOT
+  `[IX+dd]`** (verified vs ISA: pair loads only take `[hhll]/[HL]/[IX]/[IY]/[SP+dd]`, no IX-displacement
+  form). Added a native SP-relative load branch to BOTH peek sites — `fetchPairLong` (the `offset==2`/`==0`
+  pop/push special cases) and `genCopyStack`'s result-load loop — replacing the z80
+  `pop de; pop hl; push hl; push de` (and `pop hl; push hl`) dance. Killed the long-return epilogue peeks
+  (`ladd`/`lsub` now end `ld hl, 2 (sp)`) and the member-addr peek. Guarded to pairs BA/HL/IX/IY and
+  `|dd| <= 127`; the existing pop/push remains the out-of-range fallback.
+- **`3fad33a` push stack/frame args through IY, not phantom DE/BC:** `genIpush`'s load-then-push path
+  picked `ASMOP_DE`/`BC` because `de_free`/`bc_free` report **true** (the z80 D/E/B/C bytes are phantom
+  always-dead regs), emitting illegal `ld e,N(ix); ld d,N(ix); push de`. When BA+HL are busy, prefer the
+  real free index pair **IY**: `ld iy,dd(sp); push iy` (IY has both the SP-relative load and `push`). Gated
+  to non-literal sources (the literal-caching loop writes pair byte halves, which IY lacks). Cleared
+  `lmul`'s long-arg marshalling. *Subtlety verified correct:* the two words of a stacked long both emit
+  `ld iy,10(sp)` — the frame offset (6→4) drops by 2 exactly as SP drops by 2 after the first `push iy`,
+  so both resolve to SP+10.
+- **`d37814e` `push ba` for a BA-resident low word:** `getPairId_o` deliberately doesn't recognize BA
+  (A low, B high), so genIpush's direct-push branch missed a word already in B:A and built it in phantom
+  BC (`ld c,a; push bc`). Use **`aluPairId`** (which *does* recognize BA) to take the direct `push ba`.
+
+**Remaining z80-isms (corpus, 10 errors) — all the documented "hard" cases + symbol false-positives:**
+- **Variable-shift `C` counter** (`ld c,l; inc c; dec c` in `ishl`/`ishr`) — ROOT CAUSE pinned: for
+  `int<<int`, value=BA→moved to HL (shiftop), count=HL, **result itemp also allocated to HL**; the counter
+  must survive the loop while HL holds both the shift value and the result, and A/B (the `left` source) are
+  loaded into HL only *after* `cheapMove(countreg, right)` runs — so at counter-load time A/B still hold
+  the value and can't take the count, forcing the phantom C. `genLeftShift`/`genRightShift` countreg
+  selection (gen.c ~13849-13869) lists `C_IDX`. **Fix needs a real restructure** (one of: reorder
+  value-move-before-counter-load so B can be the counter via `djr nz`; or shift the value byte-wise in BA
+  `add a,a; rl b` and keep the count in L; or a stack/IX/IY counter). HIGH RISK to the *validated* shift
+  cluster — do it carefully with the validator, not rushed.
+- **`ex (sp),hl`** (`cpy`, genPointerSet) — the index-register byte-access machinery (gen.c ~3968-4028,
+  the `from_index`/`to_index` IYL/IYH byte juggling). S1C88 has only `EX BA,SP` (exchanges BA with the SP
+  *register*, NOT the memory word), so there is no direct analog; retarget to SP-relative load/store. Part
+  of the deferred IX/IY index-byte cleanup.
+- **`jrl __mulint`/`jrl __divsint`/`carl __mullong`** — NOT a gen.c z80-ism: sdas88 errors `<u> undefined
+  symbol` because the codegen emits no `.globl` for imported support routines (`--emit-externs` doesn't add
+  them either — they aren't in SDCC's `externs` set). **With `.globl __mullong` declared, `carl`/`jrl`/
+  `bcall` to the external ALL assemble cleanly** (the linker resolves the relocation). So this is a
+  `.globl`/calling-convention matter, entangled with **user directive #4** (emit `bcall`/`bjump` for
+  inter-function calls — gen.c ~6961 `emit2("%s %s", jump?"jp":"call", …)` → peephole `carl`/`jrl`).
+  That's a *separate, broader* workstream needing full assemble→link validation (rom-smoke), not the
+  register-model grind. Treat these 3 as validator false-positives for the z80-ism hunt.
+- The struct-copy `ldir`/`ex de,hl`/`add hl,bc`/`ld bc,#imm` (seen on `*a=*b`) is the session-3
+  genBuiltInMemcpy/ldir work (reverted, blocked on the latent garbage-`aop_stk` bug) — unchanged.
 
 ## Session 3 (2026-06-01) — frame-addressing + struct-return; ldir attempt reverted
 
@@ -298,7 +348,10 @@ register-model grind / the documented out-of-range-signed-branch gap), **not** p
 
 ## Commit history (branch `main`, all green)
 
-Recent (codegen): `725ca44` drop peeph 116/117 (illegal `inc/dec m(ix)` fold) · `d17a167`
+Recent (codegen): `d37814e` genIpush `push ba` for BA low word (via aluPairId) · `3fad33a` push
+stack/frame args through IY not phantom DE/BC (`ld iy,dd(sp); push iy`) · `151ee36` native
+`ld pair,dd(sp)` stack-word peeks (kill pop/push-peek in fetchPairLong + genCopyStack) · `725ca44` drop
+peeph 116/117 (illegal `inc/dec m(ix)` fold) · `d17a167`
 getFreePairId/getDeadPairId → BA (killed `sbc hl,bc`/`ex (sp),hl` scratch
 picks) · `4038be3` _push/_pop(PAIR_AF) → push a;push sc (killed `push af`) · `644576e` acc-rotates
 → operand form `rl a`… (killed `rla`/`rlca`) · `1e860c8` genAnd/genOr/genEor L/H operand via B
