@@ -3,7 +3,7 @@
 **This is the single resume entry point.** If the prompt is *"let's pick up where you left off,"* do the
 steps under **NEXT ACTION**. Everything needed to continue is here or linked from here.
 
-_Last updated: 2026-05-31 (native 16-bit sub/cp + adjustStack slices). Branch: **`main`** (all work is on main;
+_Last updated: 2026-05-31 (native 16-bit sub/cp, adjustStack, non-ifx compare slices). Branch: **`main`** (all work is on main;
 there is no `s1c88-retarget` branch anymore — CLAUDE.md's mention of it is stale). State: **GREEN** —
 compiler builds/links/runs, and the
 **binary toolchain (assembler + linker + banked ROM) is complete**. The remaining work is the **codegen
@@ -58,10 +58,14 @@ retarget** (z80→S1C88 emission cleanup)._
      reserve via flag-safe `push hl`/`push a` filler, free via `add sp,#n` (flags dead) or `pop hl`/`pop iy`
      (flags live). Killed `push af`/`pop af`/`pop bc`/`pop de`. NB: on the S1C88 even `inc/dec sp` set
      Z C V N (unlike z80), so flag-preserving frees must use `pop <pair>`, not `inc/dec sp`.
-   - non-ifx signed compare (`return a<b`) still emits `jp PO` + `rla`/`rra`/`ccf`/`rlca` (the
-     boolean-materialization path; the ifx path is now native). Likely the next-best slice.
+   - ~~non-ifx signed compare~~ **DONE** (`eb3adcc`): `return a<b` now does `cp ba,hl; ld a,#1; jrs LT;
+     xor a,a` (native), `>=`/`<=` add `xor a,#1`, unsigned uses `ld a,#0; rl a`. Killed `jp PO`/`rlca`;
+     `outBitC` now emits `rl a` not `rla`. **Remaining compare z80-isms** (separate paths, register/literal
+     placement): 8-bit **char** compare (`sub a,l` — operand in L/H, 8-bit ALU can't source it); signed
+     **literal** compare (`if(a<100)` → the `xor a,#0x80`/`sub`/`rla`/`ccf`/`rra` sign-map path, which the
+     register-only native `cp` block skips); the rare AOP_CRY (bit) signed result still keeps the z80 fixup.
    - `rlca`/`rla`/`rrca`/`rra` → `rlc a`/`rl a`/… (**flag-subtle** — z80 acc-rotates are carry-only,
-     S1C88's set Z/S too; check each use site).
+     S1C88's set Z/S too; check each use site). `outBitC`'s use is done; others remain.
    - 16-bit shifts (`rr l` — *illegal*, see above; `sla -2(ix)`); `inc d(ix)`.
 4. **Per user direction:** when retargeting branch emission, emit **`bcall`/`bjump`** for inter-function
    calls/tail-jumps (not raw `carl`/`jrl`) so the linker becomes the single place that optimizes branch
@@ -109,8 +113,9 @@ the broader operand-placement work so the allocator keeps 16-bit operands in BA/
 
 ## Commit history (branch `main`, all green)
 
-Recent (codegen): `a69a11f` adjustStack native SP moves (killed `push af`) · `661555f` gencjne native
-`cp hl,ba` (`==`/`!=`) · `1dc9d94` genCmp native `cp ba,hl` (ifx 16-bit compares) · `fa05339` genMinus
-native `sub ba,hl`. Toolchain: `33948cb` romgen + ROM test · `dced778` auto-bank works · `8da1910` linker built ·
+Recent (codegen): `eb3adcc` genCmp non-ifx signed/bool native (killed `jp PO`/`rlca`) · `a69a11f`
+adjustStack native SP moves (killed `push af`) · `661555f` gencjne native `cp hl,ba` (`==`/`!=`) ·
+`1dc9d94` genCmp native `cp ba,hl` (ifx 16-bit compares) · `fa05339` genMinus native `sub ba,hl`.
+Toolchain: `33948cb` romgen + ROM test · `dced778` auto-bank works · `8da1910` linker built ·
 the `sdas88: …` series (full ISA, byte-verified) · `f95e7fb`/`85af71a`/`384472a` codegen slices (frame,
 branches, signed-compare). Earlier: the call-ABI + allocator reshape (`b606833` Step 1, `aee2ed0` etc.).
