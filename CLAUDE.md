@@ -3,9 +3,9 @@
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 > **▶ Resuming / "pick up where you left off"?** Go to **[`docs/s1c88/HANDOFF.md`](docs/s1c88/HANDOFF.md)** —
-> it has the current state and the exact next action. TL;DR: `git checkout s1c88-retarget && ./scripts/dev.sh`
-> (confirms the build is green + runs a codegen smoke test), then continue the codegen retarget per
-> `docs/s1c88/abi-decision.md`.
+> it has the current state and the exact next action. TL;DR: `./scripts/dev.sh` (confirms the build is
+> green + runs a codegen smoke test), then continue the **codegen retarget** per `docs/s1c88/abi-decision.md`,
+> validating each slice with `./scripts/validate-s1c88.sh`. (All work is on **`main`**.)
 
 ## Project Overview
 
@@ -19,9 +19,13 @@ and builds the compiler.
 
 > **Status:** the compiler **builds, links, and runs** as a stock SDCC `sdcc` driver with `-ms1c88`
 > selectable. **`src/s1c88` is a clone of SDCC's `z80` port** (re-based from an earlier stm8 clone — the
-> z80 register model fits the S1C88 far better). **Codegen is still z80-flavored**; retargeting it to the
-> S1C88 ISA is in progress. Work happens on the **`s1c88-retarget`** branch. The design, ABI, and the
-> step-by-step plan live in **`docs/s1c88/abi-decision.md`** — read it before touching `src/s1c88/`.
+> z80 register model fits the S1C88 far better). The **binary toolchain is COMPLETE**: `sdas88` (full ISA,
+> byte-verified — also the codegen validator), `sdldz80` (assemble→link + **banked `bcall`/`bjump`** with
+> linker-resolved bank switching), and `romgen.py` (→ flat `.min`); a multi-bank ROM builds end-to-end.
+> **Codegen is still partly z80-flavored** — retargeting its emission to the S1C88 ISA is the remaining
+> work (frame/branches/signed-compare done; the byte-wise 16-bit ALU is the big remaining cluster). All
+> work is on **`main`**. The design, ABI, and step-by-step plan live in **`docs/s1c88/abi-decision.md`**;
+> the toolchain in `docs/s1c88/{sdas88-retarget,banked-branch}.md`. Read before touching `src/s1c88/`.
 
 ## Current work: the codegen retarget (read `docs/s1c88/abi-decision.md`)
 
