@@ -13814,6 +13814,7 @@ genLeftShift (const iCode *ic)
   operand *left, *right, *result;
   asmop *shiftop;
   int countreg;
+  bool count_iy = false;        /* S1C88: 16-bit IY loop counter (no free byte GPR) */
   bool shift_by_lit;
   int shiftcount = 0;
   int byteshift = 0;
@@ -13858,6 +13859,17 @@ genLeftShift (const iCode *ic)
     countreg = A_IDX;
   else if (isRegDead (B_IDX, ic) && result->aop->regs[B_IDX] < 0 && left->aop->regs[B_IDX] < 0)
     countreg = B_IDX;
+  /* S1C88: when all four byte GPRs (A/B/L/H) hold the value, count, or result —
+     e.g. int<<int with value=BA, count=HL, result reusing HL — there is no free
+     byte register for the counter (the z80 had C as a 5th). Use IY instead:
+     `dec iy` sets Z (16-bit dec sets Z V N), so `dec iy; jr nz` is a valid loop. */
+  else if (!IS_SM83 && !IY_RESERVED && isPairDead (PAIR_IY, ic) &&
+    result->aop->regs[IYL_IDX] < 0 && result->aop->regs[IYH_IDX] < 0 &&
+    left->aop->regs[IYL_IDX] < 0 && left->aop->regs[IYH_IDX] < 0)
+    {
+      countreg = IYL_IDX;
+      count_iy = true;
+    }
   else if (isRegDead (C_IDX, ic) && result->aop->regs[C_IDX] < 0 && left->aop->regs[C_IDX] < 0)
     countreg = C_IDX;
   else if (IS_Z80N && z80n_de && aopInReg (right->aop, 0, B_IDX))
@@ -13883,7 +13895,9 @@ genLeftShift (const iCode *ic)
   if(save_a_outer)
     _push (PAIR_AF);
     
-  if (!shift_by_lit)
+  if (!shift_by_lit && count_iy)
+    genMove (ASMOP_IY, right->aop, isRegDead (A_IDX, ic), isPairDead (PAIR_HL, ic), isPairDead (PAIR_DE, ic), true);
+  else if (!shift_by_lit)
     cheapMove (asmopregs[countreg], 0, right->aop, 0, true);
 
   bool save_a_inner = (countreg == A_IDX && !shift_by_lit) &&
@@ -13917,10 +13931,10 @@ genLeftShift (const iCode *ic)
 
       bool hl_dead = isPairDead (PAIR_HL, ic) && (countreg != L_IDX && countreg != H_IDX || shift_by_lit);
       bool de_dead = isPairDead (PAIR_DE, ic) && (countreg != E_IDX && countreg != D_IDX || shift_by_lit);
-      genMove_o (shiftop, byteshift, left->aop, 0, size <= lsize ? size : lsize, (save_a_inner || countreg != A_IDX) && (isRegDead (A_IDX, ic) || save_a_outer), hl_dead, de_dead, true, true);
+      genMove_o (shiftop, byteshift, left->aop, 0, size <= lsize ? size : lsize, (save_a_inner || countreg != A_IDX) && (isRegDead (A_IDX, ic) || save_a_outer), hl_dead, de_dead, !count_iy, true);
       hl_dead &= shiftop->regs[L_IDX] < byteshift && shiftop->regs[L_IDX] < byteshift;
       de_dead &= shiftop->regs[E_IDX] < byteshift && shiftop->regs[D_IDX] < byteshift;
-      genMove_o (shiftop, 0, ASMOP_ZERO, 0, byteshift, (save_a_inner || countreg != A_IDX) && (isRegDead (A_IDX, ic) || save_a_outer), hl_dead, de_dead, true, true);
+      genMove_o (shiftop, 0, ASMOP_ZERO, 0, byteshift, (save_a_inner || countreg != A_IDX) && (isRegDead (A_IDX, ic) || save_a_outer), hl_dead, de_dead, !count_iy, true);
 
       if (save_a_inner)
         _pop (PAIR_AF);
@@ -13939,12 +13953,20 @@ genLeftShift (const iCode *ic)
     goto end;
   if (shift_by_lit && shiftcount > 1)
     {
-      emit2 ("ld %s, !immedbyte", countreg == A_IDX ? "a" : regsZ80[countreg].name, (unsigned)shiftcount);
-      cost2 (2, 7, 6, 4, 8, 4, 2, 2);
+      if (count_iy)
+        {
+          emit2 ("ld iy, !immedword", (unsigned)shiftcount);
+          cost2 (4, 14, 12, 8, 0, 8, 4, 4);
+        }
+      else
+        {
+          emit2 ("ld %s, !immedbyte", countreg == A_IDX ? "a" : regsZ80[countreg].name, (unsigned)shiftcount);
+          cost2 (2, 7, 6, 4, 8, 4, 2, 2);
+        }
     }
   else if (!shift_by_lit && !aopIsNotLitVal (right->aop, 0, 1, 0))
     {
-      emit2 ("inc %s", countreg == A_IDX ? "a" : regsZ80[countreg].name);
+      emit2 ("inc %s", count_iy ? "iy" : (countreg == A_IDX ? "a" : regsZ80[countreg].name));
       cost2 (1, 4, 4, 2, 4, 2, 1, 1);
       if (!regalloc_dry_run)
         emit2 ("jp !tlabel", labelKey2num (tlbl1->key));
@@ -14008,7 +14030,15 @@ genLeftShift (const iCode *ic)
     {
       if (!regalloc_dry_run)
         emitLabel (tlbl1);
-      if (!IS_SM83 && countreg == B_IDX)
+      if (count_iy)
+        {
+          emit2 ("dec iy");
+          cost2 (1, 4, 4, 2, 4, 2, 1, 1);
+          if (!regalloc_dry_run)
+            emit2 ("jr NZ,!tlabel", labelKey2num (tlbl->key));
+          cost2 (2, 12, 8, 5, 12, 8, 3, 3); // Assume jump taken, and optimized to jr.
+        }
+      else if (!IS_SM83 && countreg == B_IDX)
         {
           if (!regalloc_dry_run)
             emit2 ("djr nz, !tlabel", labelKey2num (tlbl->key));
