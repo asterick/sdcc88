@@ -5202,6 +5202,8 @@ static void
 genMove (asmop *result, asmop *source, bool a_dead, bool hl_dead, bool de_dead, bool iy_dead)
 {
   wassert (result);
+  if (!result)   // wassert only logs (does not abort), so guard the deref to fail cleanly, not SIGSEGV
+    return;
   genMove_o (result, 0, source, 0, result->size, a_dead, hl_dead, de_dead, iy_dead, true);
 }
 
@@ -7632,7 +7634,18 @@ genRet (const iCode *ic)
             }
         }
       else if (size > 0) // SDCC supports GCC extension of returning void
-        genMove (aopRet (currFunc->type), IC_LEFT (ic)->aop, true, true, true, true);
+        {
+          // A struct/union return-by-value (bigreturn) has aopRet()==NULL: the
+          // result must be copied to the caller's hidden buffer, not moved to a
+          // return register. `return *q` lowers to a small (pointer-sized) operand
+          // here, so it slips past the size<=4 && !IS_STRUCT guard. Copying it is
+          // not implemented yet (needs the bigreturn/ldir struct-copy work); flag
+          // it cleanly instead of calling genMove with a NULL destination (SIGSEGV).
+          if (aopRet (currFunc->type))
+            genMove (aopRet (currFunc->type), IC_LEFT (ic)->aop, true, true, true, true);
+          else
+            UNIMPLEMENTED;
+        }
     }
   else if (IC_LEFT (ic)->aop->type == AOP_LIT)
     {
