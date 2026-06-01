@@ -46,14 +46,13 @@ retarget** (z80→S1C88 emission cleanup)._
    sub/sbc/cp on the two ALU pairs (BA, HL) all assemble; `rr l` / `rrc l` are also illegal (`rr`/`rrc` take
    only a, b, (br:ll), (hl)). New helper `aluPairId()` recognizes BA (the z80 getPairId helpers don't).
    **Remaining** (the validator list):
-   - **Byte-wise 16-bit ALU — remaining sites.** Done: int `sub`, int `cp` (ifx `<`/`>`/…), int `==`/`!=`
-     (`gencjne` native `cp hl,ba`, `661555f` — killed the illegal `sbc hl,bc`). Still byte-wise:
-     - **8-bit char compare/sub** with right in L/H emits `sub a,l` — 8-bit ALU can't source L/H; move
-       through B (or memory) first.
-     - **operands the allocator leaves outside ALU pairs** (e.g. `*p-*q` puts a byte in H → `sbc a,h`) —
-       the broader operand-placement grind.
-     - Note: register-operand long (4-byte) `<`/`==` is handled now; the common stack-operand long compare
-       was already legal (byte-wise on memory: `sub a,d(ix)`/`sbc a,d(ix)`).
+   - ~~**Byte-wise 16-bit ALU**~~ **DONE**. int `sub`/`cp`/`==`/`!=` native (`661555f` etc.); the byte
+     fallback's L/H operands (`*p-*q` → `sbc a,h`, char `sub a,l`) now route through B via `emit3_8alu`
+     (`6c49c73` compares, `a7e7235` genPlus/genSub).
+   - ~~**Shifts/rotates** (`rr l`, `rr h`, `sla -N(ix)`, `rl -N(ix)`)~~ **DONE** (`ad12cb5`): S1C88
+     shifts only target A/B/[HL]/[BR:ll]; new `emit3_shift` routes L/H/[ix+d] operands through A/B (carry
+     chain preserved via flag-neutral `ld`). Also **removed peephole 21** (it re-folded the routed code
+     back into illegal `sla m(ix)`). Constant int/long/char `<<`/`>>` (signed+unsigned) all 0 errors.
    - ~~`push af` stack reservation~~ **DONE** (`a69a11f`): `adjustStack` now emits native S1C88 SP moves —
      reserve via flag-safe `push hl`/`push a` filler, free via `add sp,#n` (flags dead) or `pop hl`/`pop iy`
      (flags live). Killed `push af`/`pop af`/`pop bc`/`pop de`. NB: on the S1C88 even `inc/dec sp` set
@@ -69,8 +68,13 @@ retarget** (z80→S1C88 emission cleanup)._
      test corpus (reg/eq/lc/ce/nb/ch/sc/li) is now 0 sdas88 errors.** Only the rare AOP_CRY (bit) signed
      result still keeps the z80 fixup. Compares are essentially retargeted; next clusters are the
      non-compare byte ALU and shifts below.
+   - **NEXT cluster — the C/D/E + DE/BC register-model grind** (now the dominant residue). E.g. *variable*
+     shifts use **C as the loop counter** (`ld c,l`/`inc c`/`dec c` — no C reg on S1C88); pointer-deref and
+     variable-shift scratch use **DE/BC** (`push de`/`pop de`/`push bc`); the `countreg` picks in
+     genLeftShift/genRightShift choose C_IDX/D_IDX. These need re-pointing to A/B/L/H/IX/IY/stack per
+     `abi-decision.md` Step 2. (The *constant* shifts and all compares/ALU are clean.)
    - `rlca`/`rla`/`rrca`/`rra` → `rlc a`/`rl a`/… (**flag-subtle** — z80 acc-rotates are carry-only,
-     S1C88's set Z/S too; check each use site). `outBitC`'s use is done; others remain.
+     S1C88's set Z/S too; check each use site). `outBitC`'s use is done; others remain (e.g. 16-bit `rot`).
    - 16-bit shifts (`rr l` — *illegal*, see above; `sla -2(ix)`); `inc d(ix)`.
    - **KNOWN GAP (verified 2026-05-31, deferred): out-of-range local signed conditional branch.** The
      CE-page signed conditions (`LT/LE/GT/GE/V/NV/P/M`, F-flags) are **short-only** — there is *no*
@@ -127,8 +131,10 @@ the broader operand-placement work so the allocator keeps 16-bit operands in BA/
 
 ## Commit history (branch `main`, all green)
 
-Recent (codegen): `6c49c73` genCmp/gencjne route L/H operand through B (killed 8-bit `sub a,l`) ·
-`eb3adcc` genCmp non-ifx signed/bool native (killed `jp PO`/`rlca`) · `a69a11f`
+Recent (codegen): `ad12cb5` shifts route L/H/[ix+d] through A/B + drop peephole 21 (killed `rr l`/
+`sla -N(ix)`) · `a7e7235` genPlus/genSub L/H byte-ALU via B · `6c49c73` genCmp/gencjne route L/H operand
+through B (killed 8-bit `sub a,l`) · `eb3adcc` genCmp non-ifx signed/bool native (killed `jp PO`/`rlca`) ·
+`a69a11f`
 adjustStack native SP moves (killed `push af`) · `661555f` gencjne native `cp hl,ba` (`==`/`!=`) ·
 `1dc9d94` genCmp native `cp ba,hl` (ifx 16-bit compares) · `fa05339` genMinus native `sub ba,hl`.
 Toolchain: `33948cb` romgen + ROM test · `dced778` auto-bank works · `8da1910` linker built ·
