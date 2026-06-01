@@ -47,6 +47,11 @@ the extraction note at the bottom.)
 
 - [abi-decision.md](abi-decision.md) — the base-port choice (clone of SDCC's **z80** port) and the
   target S1C88 C ABI / z80→s1c88 register mapping the backend retarget follows.
+- [sdas88-retarget.md](sdas88-retarget.md) — retargeting the **sdas** assembler backend to real S1C88
+  (the `sdas/as88/` files); **status: complete** (full ISA, byte-verified), doubles as the codegen validator.
+- [banked-branch.md](banked-branch.md) — **design (Phase 2)** for the `CALL`/`JUMP` pseudo-instructions:
+  auto short/long form + auto `ld nb,#bank` code-bank switch, deferred to the linker via a rewrite
+  relocation (the `R_J11` model). Includes the Pokémon Mini bank table + `.lk` sketch.
 
 ## ABI quick-reference (for the SDCC retarget)
 
