@@ -173,7 +173,8 @@ the broader operand-placement work so the allocator keeps 16-bit operands in BA/
 
 ## Commit history (branch `main`, all green)
 
-Recent (codegen): `d17a167` getFreePairId/getDeadPairId → BA (killed `sbc hl,bc`/`ex (sp),hl` scratch
+Recent (codegen): `725ca44` drop peeph 116/117 (illegal `inc/dec m(ix)` fold) · `d17a167`
+getFreePairId/getDeadPairId → BA (killed `sbc hl,bc`/`ex (sp),hl` scratch
 picks) · `4038be3` _push/_pop(PAIR_AF) → push a;push sc (killed `push af`) · `644576e` acc-rotates
 → operand form `rl a`… (killed `rla`/`rlca`) · `1e860c8` genAnd/genOr/genEor L/H operand via B
 (emit3_8alu always-safe) · `ad12cb5` shifts route L/H/[ix+d] through A/B + drop peephole 21 (killed `rr l`/

@@ -8,9 +8,9 @@ SDCC, drops in our port, registers it, and builds.
 > **Status: the compiler builds, links, and runs, and the binary toolchain is complete.**
 > `sdcc -ms1c88` is a working SDCC driver with our port. The **assembler, linker, and ROM packer are
 > done**, and a multi-bank Pokémon Mini ROM builds end-to-end. **Code generation is being retargeted**
-> from its z80 origin to the real S1C88 ISA — the frame, branches, compares, 16-bit ALU, and shifts are
-> done; the remaining work is the C/D/E + DE/BC register-model cleanup. See [`CLAUDE.md`](CLAUDE.md) and
-> [`docs/s1c88/HANDOFF.md`](docs/s1c88/HANDOFF.md).
+> from its z80 origin to the real S1C88 ISA — the frame, branches, compares, 16-bit ALU, 8-bit ALU,
+> shifts, rotates, stack handling, and scratch-pair selection are done; the remaining work is the C/D/E +
+> DE/BC register-model cleanup. See [`CLAUDE.md`](CLAUDE.md) and [`docs/s1c88/HANDOFF.md`](docs/s1c88/HANDOFF.md).
 
 The port is a clone of SDCC's **z80** backend (the z80 register model fits the S1C88 far better than the
 earlier stm8 base), re-pointed to the S1C88 register set, ABI, and instruction encodings.

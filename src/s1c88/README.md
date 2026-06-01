@@ -20,8 +20,11 @@ The base-port choice and the target ABI / z80→s1c88 register mapping are docum
 > to the S1C88 ISA, always-green incremental. **Done:** the call ABI (returns BA/HL:BA, faithful Epson arg
 > order), frame setup, branches (`jrs`/`jrl`/`carl`), the full compare cluster (native `cp ba,hl` /
 > `cp …,#imm` + `jrs LT/GE`), the 16-bit ALU (`sub ba,hl`), `adjustStack` (native SP moves), 8-bit L/H ALU
-> operands, and shifts. **Remaining:** the z80 `C/D/E` byte regs + `DE`/`BC` scratch pairs (the central
-> register-model grind) — see `../../docs/s1c88/HANDOFF.md` for the live worklist + per-slice commits.
+> operands incl. AND/OR/XOR (via B), shifts (via A/B), accumulator rotates (`rl a`…), `push af`→`push a;
+> push sc`, and the scratch-pair selectors (`getFreePairId`→BA). **Remaining:** the z80 `C/D/E` byte regs +
+> `DE`/`BC` scratch pairs (the central register-model grind: the stack-peek/epilogue idioms → `ld hl,
+> d(sp)`, the variable-shift `C` counter, `inc -N(ix)`) — see `../../docs/s1c88/HANDOFF.md` for the live
+> worklist + per-slice commits + the `emitDebug`/`--verbose` debugging gotcha.
 >
 > The other 9 z80 variant `PORT` structs have been pruned; this is a single-variant port running the plain
 > z80 codegen path (`z80_opts.sub == SUB_Z80`). Many internal identifiers keep their z80 names

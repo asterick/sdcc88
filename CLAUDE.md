@@ -25,8 +25,10 @@ and builds the compiler.
 > **Codegen is being retargeted** from its z80 origin to the S1C88 ISA, always-green incremental. **Done:**
 > frame setup, branches (`jrs`/`jrl`/`carl`), the full compare cluster (signed/unsigned/literal `<`/`>`/
 > `==` via native `cp ba,hl`/`cp …,#imm` + `jrs LT/GE`), the 16-bit ALU (`sub ba,hl`), `adjustStack`
-> (native SP moves), 8-bit L/H ALU operands (routed through B), and shifts (routed through A/B since the
-> S1C88 only shifts A/B/[HL]). **Remaining:** the C/D/E + DE/BC register-model cleanup (the `gen.c`
+> (native SP moves), 8-bit L/H ALU operands incl. AND/OR/XOR (routed through B), shifts (routed through
+> A/B — the S1C88 only shifts A/B/[HL]), accumulator rotates (`rla`→`rl a` etc.), `push af`→`push a;push
+> sc`, and the scratch-pair selectors (`getFreePairId`→BA). The broad-corpus validator error count is down
+> to the low tens. **Remaining:** the C/D/E + DE/BC register-model cleanup (the `gen.c`
 > scratch-asmop machinery + the variable-shift `C` loop counter). All
 > work is on **`main`**. The design, ABI, and step-by-step plan live in **`docs/s1c88/abi-decision.md`**;
 > the toolchain in `docs/s1c88/{sdas88-retarget,banked-branch}.md`. Read before touching `src/s1c88/`.
