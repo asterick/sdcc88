@@ -68,14 +68,27 @@ retarget** (z80→S1C88 emission cleanup)._
      test corpus (reg/eq/lc/ce/nb/ch/sc/li) is now 0 sdas88 errors.** Only the rare AOP_CRY (bit) signed
      result still keeps the z80 fixup. Compares are essentially retargeted; next clusters are the
      non-compare byte ALU and shifts below.
-   - **NEXT cluster — the C/D/E + DE/BC register-model grind** (now the dominant residue). E.g. *variable*
-     shifts use **C as the loop counter** (`ld c,l`/`inc c`/`dec c` — no C reg on S1C88); pointer-deref and
-     variable-shift scratch use **DE/BC** (`push de`/`pop de`/`push bc`); the `countreg` picks in
-     genLeftShift/genRightShift choose C_IDX/D_IDX. These need re-pointing to A/B/L/H/IX/IY/stack per
-     `abi-decision.md` Step 2. (The *constant* shifts and all compares/ALU are clean.)
-   - `rlca`/`rla`/`rrca`/`rra` → `rlc a`/`rl a`/… (**flag-subtle** — z80 acc-rotates are carry-only,
-     S1C88's set Z/S too; check each use site). `outBitC`'s use is done; others remain (e.g. 16-bit `rot`).
-   - 16-bit shifts (`rr l` — *illegal*, see above; `sla -2(ix)`); `inc d(ix)`.
+   - ~~8-bit AND/OR/XOR with L/H operand~~ **DONE** (`1e860c8`): `and a,l`/`or a,h`/`xor a,l` route through
+     B via `emit3_8alu`, applied to genAnd/genOr/genEor. **`emit3_8alu` now always push/pop B** — these ops
+     have no native 16-bit form so they hit the both-in-pairs case (`a&b`, a=BA b=HL) where B holds the
+     accumulator's high byte mid-op (isRegDead reports B dead *after* the iCode, which was a latent
+     clobber). push/pop B is correct everywhere; the genSub/genPlus/compare uses inherit the fix.
+   - **NEXT — the C/D/E + DE/BC register-model grind** (the dominant residue; frequency-ranked on a broad
+     corpus): `push de`/`pop de` (~8, the stack-peek idiom `pop de;pop hl;push hl;push de` for reloading a
+     2nd stack word into HL — ~30 `_push(PAIR_DE)` sites, each a *throwaway scratch* since D/E are never
+     allocated, but can't blanket→`push ba` because BA is live); the variable-shift **C loop counter**
+     (`ld c,l`/`dec c` — genuinely needs a 5th storage slot when left=BA+result=HL use all 4 byte regs →
+     stack or IX/IY counter, a real restructure); `ld c,a`/`push bc` (BC scratch). Per `abi-decision.md`
+     Step 2.
+   - **Accumulator rotates** `rla`/`rlca`/`rra`/`rrca` → `rl a`/`rlc a`/… **SPRAWLING, carry-safe but
+     spread:** ~38 `emit3(A_RLA…)` sites in gen.c (all accumulator-implicit, carry-centric — the shift/
+     bitfield/bit-write idioms move *carry*, never read Z/S after), 1 live raw `emit2("rla")` (3743,
+     carry→bit), the dead-`#if 0` flag-intent site (6122, ignore), **and peephole rules that emit
+     `rlca`/`rla` in their `by{}` replacements** (would re-introduce illegal forms). Cleanest: change
+     `asminstnames[A_RLA…]`→`"rl a"…` (or substitute `A_RL`+`ASMOP_A` to also fix the cost), fix raw 3743,
+     and scrub the peeph `by{}` blocks. `outBitC`'s use is already done.
+   - Misc: `set 7,l`/bit set-res-test on L/H (S1C88 bit ops only on A/B/[HL]); `inc -N(ix)` (indexed-memory
+     INC illegal); `neg` form. Lower frequency.
    - **KNOWN GAP (verified 2026-05-31, deferred): out-of-range local signed conditional branch.** The
      CE-page signed conditions (`LT/LE/GT/GE/V/NV/P/M`, F-flags) are **short-only** — there is *no*
      `jrl LT`/`carl LT`. The peephole shortens `jp LT → jrs LT` only `if labelInRange`; out of ±127 B it
@@ -131,7 +144,8 @@ the broader operand-placement work so the allocator keeps 16-bit operands in BA/
 
 ## Commit history (branch `main`, all green)
 
-Recent (codegen): `ad12cb5` shifts route L/H/[ix+d] through A/B + drop peephole 21 (killed `rr l`/
+Recent (codegen): `1e860c8` genAnd/genOr/genEor L/H operand via B (emit3_8alu always-safe) ·
+`ad12cb5` shifts route L/H/[ix+d] through A/B + drop peephole 21 (killed `rr l`/
 `sla -N(ix)`) · `a7e7235` genPlus/genSub L/H byte-ALU via B · `6c49c73` genCmp/gencjne route L/H operand
 through B (killed 8-bit `sub a,l`) · `eb3adcc` genCmp non-ifx signed/bool native (killed `jp PO`/`rlca`) ·
 `a69a11f`
