@@ -113,6 +113,19 @@
 #define	S_BIT	85		/* bit a,b / bit (hl),#nn / bit a,#nn / bit b,#nn / bit (br:ll),#nn */
 #define	S_INT	86		/* int [kk] — FC,kk                       */
 #define	S_LDC	87		/* (reserved — control-register ld handled in S_LD) */
+#define	S_PCALL	88		/* bcall [cc,]target — banked smart call (carl + auto ld nb) */
+#define	S_PJUMP	89		/* bjump [cc,]target — banked smart jump (jrl + auto ld nb)  */
+
+/*
+ * Relocation mode for the banked-branch NB byte (the destination bank).  An
+ * escape mode (>0xff) so write_rmode() escapes it; sdld88's lkrloc3.c rewrites
+ * the `ld nb,#bb` — writing the target symbol's bank (its address >> 16), or
+ * NOP-ing the whole ld nb when the bank is 0 (common) or the current bank.
+ * The branch displacement itself uses the standard R_PCR (the 16-bit write
+ * masks off the bank difference, giving the logic-relative disp).  Must match
+ * the value the linker checks.
+ */
+#define	R_S1C88_BANK	0x800
 
 /*
  * Register / condition tables (defined in s1c88adr.c).

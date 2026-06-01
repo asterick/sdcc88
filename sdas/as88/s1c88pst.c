@@ -203,6 +203,8 @@ struct  mne     mne[] = {
     {	NULL,	"slp",	S_INHE,	0,	0xAF	},
     {	NULL,	"pack",	S_INH,	0,	0xDE	},
     {	NULL,	"upck",	S_INH,	0,	0xDF	},
+    {	NULL,	"bcall",S_PCALL,0,	0	},
+    {	NULL,	"bjump",S_PJUMP,0,	0	},
     {	NULL,	"nop",	S_INH,	S_EOL,	0xFF	},
 };
 

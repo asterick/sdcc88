@@ -492,6 +492,40 @@ struct mne *mp;
 			xerr('a', "Invalid bit form.");
 		break;
 
+	case S_PCALL:		/* bcall [cc,] target — banked smart call */
+	case S_PJUMP:		/* bjump [cc,] target — banked smart jump  */
+		/* optional basic condition (c/nc/z/nz); the CE-page signed conditions
+		   are short-only and not supported by the always-long slot. */
+		if ((v1 = admode(CND)) != 0) {
+			v1 &= 0xFF;
+			comma(1);
+		} else {
+			v1 = -1;			/* unconditional */
+		}
+		expr(&e1, 0);				/* the (link-resolved) target */
+		if (rf == S_PCALL)
+			op = (v1 < 0) ? 0xF2 : (0xE8 + v1);	/* carl / carl cc */
+		else
+			op = (v1 < 0) ? 0xF3 : (0xEC + v1);	/* jrl  / jrl cc  */
+		/* Emit the slot:  ld nb,#<bank> ; <carl|jrl> target
+		   - the NB byte carries R_S1C88_BANK: the linker writes the target's bank
+		     (its address >> 16) or NOPs the whole `ld nb` when the bank is 0 or
+		     the current bank.
+		   - the displacement carries the standard R_PCR: the 16-bit write masks
+		     off the bank difference, leaving the logic-relative displacement. */
+		outab(0xCE); outab(0xC4);		/* ld nb opcode  */
+		/* Bank byte.  TODO: emit the R_S1C88_BANK reloc so the linker writes the
+		   target's bank (its address >> 16) or NOPs the ld nb.  That needs the
+		   24-bit/escape relocation path (asout.c:534), which is gated on the
+		   target identity — sdas88 currently self-reports TARGET_ID_UNKNOWN and
+		   takes the 16-bit path that truncates the mode.  Until a TARGET_ID_S1C88
+		   identity enables it, emit bank 0 (correct for common-area / single-bank
+		   targets); the displacement below already links correctly. */
+		outab(0x00);				/* bank #0 placeholder */
+		outab(op);				/* carl/jrl opcode */
+		outrw(&e1, R_PCR);			/* disp16 (+ R_PCR reloc -> target) — links correctly */
+		break;
+
 	default:
 		xerr('a', "Unknown instruction class.");
 		break;
