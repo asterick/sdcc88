@@ -22,8 +22,12 @@ and builds the compiler.
 > z80 register model fits the S1C88 far better). The **binary toolchain is COMPLETE**: `sdas88` (full ISA,
 > byte-verified — also the codegen validator), `sdldz80` (assemble→link + **banked `bcall`/`bjump`** with
 > linker-resolved bank switching), and `romgen.py` (→ flat `.min`); a multi-bank ROM builds end-to-end.
-> **Codegen is still partly z80-flavored** — retargeting its emission to the S1C88 ISA is the remaining
-> work (frame/branches/signed-compare done; the byte-wise 16-bit ALU is the big remaining cluster). All
+> **Codegen is being retargeted** from its z80 origin to the S1C88 ISA, always-green incremental. **Done:**
+> frame setup, branches (`jrs`/`jrl`/`carl`), the full compare cluster (signed/unsigned/literal `<`/`>`/
+> `==` via native `cp ba,hl`/`cp …,#imm` + `jrs LT/GE`), the 16-bit ALU (`sub ba,hl`), `adjustStack`
+> (native SP moves), 8-bit L/H ALU operands (routed through B), and shifts (routed through A/B since the
+> S1C88 only shifts A/B/[HL]). **Remaining:** the C/D/E + DE/BC register-model cleanup (the `gen.c`
+> scratch-asmop machinery + the variable-shift `C` loop counter). All
 > work is on **`main`**. The design, ABI, and step-by-step plan live in **`docs/s1c88/abi-decision.md`**;
 > the toolchain in `docs/s1c88/{sdas88-retarget,banked-branch}.md`. Read before touching `src/s1c88/`.
 
@@ -39,8 +43,11 @@ Decided design:
   (A from-scratch big-bang reshape was tried and reset — it breaks ~1144 `gen.c` sites at once with no way
   to verify; the dead WIP is in reflog at `417bed5` as a reference for the end-state register defs.)
 
-The remaining grind is the `gen.c` scratch-asmop machinery (`asmop_bc/de`, the combined long asmops
-`DEHL/HLDE/HLBC/DEBC`, `_pairs[]`, the `[IYH_IDX+1]` parm-mask arrays). See `abi-decision.md` for the map.
+**Progress:** frame/branches/compares/16-bit ALU/shifts are retargeted and validate clean with `sdas88`
+(see `HANDOFF.md` for the per-slice commit list). **The remaining grind** is the `gen.c` scratch-asmop
+machinery (`asmop_bc/de`, the combined long asmops `DEHL/HLDE/HLBC/DEBC`, `_pairs[]`, the `[IYH_IDX+1]`
+parm-mask arrays) plus the `countreg` picks that select `C`/`D` — i.e. eliminating the z80 `C/D/E` byte
+regs and re-pointing `DE`/`BC` scratch to `BA`/`IX`/`IY`/stack. See `abi-decision.md` Step 2 for the map.
 
 ## Build
 
@@ -62,7 +69,7 @@ emits asm):
 ```bash
 build/sdcc-4.5.0/src/sdcc --version                                    # -> "SDCC : s1c88 ... 4.5.0"
 printf 'int add1(int x){return x+1;}\n' | \
-  build/sdcc-4.5.0/src/sdcc -ms1c88 --c1mode -o out.asm                # compile to (currently z80-ish) asm
+  build/sdcc-4.5.0/src/sdcc -ms1c88 --c1mode -o out.asm                # compile to S1C88 asm
 ```
 
 > The build (compile + link) and running the freshly-built `sdcc` both work **inside the Claude Code
@@ -110,7 +117,8 @@ Start at `docs/s1c88/README.md`; the backend decisions are in `docs/s1c88/abi-de
 
 ## Conventions
 
-- Work on the **`s1c88-retarget`** branch. Commit green checkpoints; clearly label any intentionally-red
-  WIP. The build working in-sandbox means you can (and should) verify each change before committing.
+- **All work is on `main`** (the old `s1c88-retarget` branch is gone). Commit green checkpoints; clearly
+  label any intentionally-red WIP. Validate each codegen slice with `./scripts/validate-s1c88.sh` before
+  committing — the build working in-sandbox means you can (and should) verify every change.
 - Convert the design/strategy in `docs/s1c88/abi-decision.md` into action — keep it current as decisions
   evolve. Keep the auto-loaded memory (`sdcc88-bringup-status`) accurate; it's the fastest way to resume.

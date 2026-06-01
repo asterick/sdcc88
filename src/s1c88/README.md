@@ -16,17 +16,20 @@ The base-port choice and the target ABI / z80→s1c88 register mapping are docum
 `../../docs/s1c88/abi-decision.md`. The S1C88 architecture/ISA/toolchain references are in
 `../../docs/s1c88/`.
 
-> **Status (skeleton milestone):** the port **compiles, links, and is selectable** as `-ms1c88`, but its
-> **code generation is still z80** (register names, instruction selection, calling convention, assembler
-> hooks). Retargeting the codegen to the S1C88 ISA is the next milestone.
+> **Status:** the port compiles, links, runs as `-ms1c88`, and its **code generation is being retargeted**
+> to the S1C88 ISA, always-green incremental. **Done:** the call ABI (returns BA/HL:BA, faithful Epson arg
+> order), frame setup, branches (`jrs`/`jrl`/`carl`), the full compare cluster (native `cp ba,hl` /
+> `cp …,#imm` + `jrs LT/GE`), the 16-bit ALU (`sub ba,hl`), `adjustStack` (native SP moves), 8-bit L/H ALU
+> operands, and shifts. **Remaining:** the z80 `C/D/E` byte regs + `DE`/`BC` scratch pairs (the central
+> register-model grind) — see `../../docs/s1c88/HANDOFF.md` for the live worklist + per-slice commits.
 >
-> For a low-risk first build the clone is kept close to upstream z80: all 10 z80 `PORT` structs remain in
-> `main.c` (only `s1c88_port` is registered) and the z80 variant peephole `.def` files are shipped. A
-> follow-up cleanup will strip to a single port.
+> The other 9 z80 variant `PORT` structs have been pruned; this is a single-variant port running the plain
+> z80 codegen path (`z80_opts.sub == SUB_Z80`). Many internal identifiers keep their z80 names
+> (`z80_regs`, `z80_opts`, `IS_*`/`PAIR_*`) — port-internal and harmless (the real z80 port is disabled).
 
 | File | Role |
 |------|------|
-| `main.c` | The `PORT s1c88_port` struct — target sizes/alignment, options, assembler/linker command lines, codegen hooks. (Also retains the other z80 variant PORT structs, unregistered.) |
+| `main.c` | The `PORT s1c88_port` struct — target sizes/alignment, options, assembler/linker command lines, codegen hooks. |
 | `s1c88.h` | Port-private common header (was z80.h): the sub-port enum, `z80_opts`, and the `IS_*` variant macros. `s1c88_port` runs the plain-z80 path (`sub == SUB_Z80`). |
 | `gen.c` / `gen.h` | iCode → assembly. The bulk of the retargeting effort. |
 | `ralloc.c` / `ralloc.h` | Register allocation (`z80_regs[]`/`*_IDX`, kept verbatim — `ralloc2.cc` is hard-keyed to them). |
@@ -41,14 +44,17 @@ The base-port choice and the target ABI / z80→s1c88 register mapping are docum
 
 Drive every change from `../../docs/s1c88/` (distilled Epson manuals) — especially
 [`instruction-set.md`](../../docs/s1c88/instruction-set.md), [`addressing-modes.md`](../../docs/s1c88/addressing-modes.md),
-and [`abi-decision.md`](../../docs/s1c88/abi-decision.md).
+and [`abi-decision.md`](../../docs/s1c88/abi-decision.md). The live worklist is `../../docs/s1c88/HANDOFF.md`.
 
-1. **`ralloc.c` / `ralloc.h` / `ralloc2.cc`** — reshape the z80 register file (`a,c,b,e,d,l,h,iyl,iyh` +
-   pairs) into the real S1C88 set (`A`, `B`/`BA`, `L`/`H`/`HL`, `IX`, `IY`, carry, `SP`) and update the
-   `*_IDX`↔`REG_*`↔`num_regs` coupling and allocator hooks.
-2. **`main.c` `s1c88_port`** — Epson pointer/int widths (3-byte `_far`), generic-pointer tags, segment
-   names, calling-convention/return registers (see `abi-decision.md`), assembler/linker command lines.
-3. **`gen.c`** — replace z80 instruction selection/mnemonics with S1C88 (`LD`, `ADD`/`ADC`, `[HL]`,
-   `[IX+dd]`, `JRS/JRL/CARS/CARL`, `RETE`, …; `CE`/`CF` prefix pages).
-4. **`peeph*.def`** — replace z80 peephole patterns with S1C88 ones (strip the unused variant defs).
-5. **Single-port cleanup** — strip the unregistered z80 variant PORT structs from `main.c`.
+1. **`ralloc.c` / `ralloc.h` / `ralloc2.cc`** — reshape the register file toward the S1C88 set
+   (`A,B,L,H` + `BA`/`HL`, `IX`, `IY`). *In progress:* the allocator is constrained to `A/B/L/H` and
+   `PAIR_BA` is a first-class pair; eliminating the z80 `C/D/E` regs end-to-end is the remaining grind.
+2. **`main.c` `s1c88_port`** — Epson widths, generic-pointer tags, segment names, calling-convention/return
+   registers, assembler/linker command lines. *Done:* the call ABI (BA/HL:BA returns, faithful arg order).
+3. **`gen.c`** — S1C88 instruction selection/mnemonics. *Done:* frame, branches (`jrs/jrl/carl`), compares
+   (`cp ba,hl`/`#imm` + `jrs LT/GE`), 16-bit ALU (`sub ba,hl`), `adjustStack`, 8-bit L/H ALU + shifts
+   (routed through A/B). *Remaining:* the `DE`/`BC` scratch-asmop machinery and the variable-shift `C`
+   counter.
+4. **`peeph*.def`** — S1C88 peephole patterns. *Done:* `jp→jrl`/`jr→jrs`/`call→carl`, native `jrs LT/GE`,
+   and dropping z80 rules that emit illegal S1C88 forms (e.g. the indexed-memory shift fold).
+5. **Single-port cleanup** — *Done:* the unregistered z80 variant PORT structs are stripped from `main.c`.

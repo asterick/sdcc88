@@ -1,8 +1,11 @@
 # S1C88 backend: base-port & ABI decision
 
 > **Status:** decided 2026-05-29. Fixes the *target ABI* and the *base port* for sdcc88's S1C88 backend.
-> Codegen conformance to this ABI lands in later milestones — the current build is a **z80-flavored
-> skeleton** (see *Skeleton divergences* below).
+> This doc is the design + the always-green retarget plan; **Step 2 is the live worklist.** For the current
+> implementation state and next action see **[HANDOFF.md](HANDOFF.md)** — as of the latest slices the call
+> ABI, frame, branches, compares, 16-bit ALU, `adjustStack`, and shifts are done; the C/D/E + DE/BC
+> register-model cleanup remains. The codegen validator (`sdas88`, referenced below as "the assembler") is
+> built and complete.
 > **Sources:** SDCC 4.5.0 `src/z80`; the Epson C ABI in [c-compiler.md](c-compiler.md); the S1C88
 > register/ISA model in [architecture.md](architecture.md) and [instruction-set.md](instruction-set.md).
 
@@ -29,9 +32,10 @@ treats the port as z80-like — the z80 codegen depends on this.
 
 ## z80 → S1C88 register mapping (intended)
 
-The skeleton keeps SDCC's z80 register table/`*_IDX` ordinals **verbatim** (the Boost allocator in
-`ralloc2.cc` is hard-keyed to them). The table below is the *intended* logical mapping that the codegen
-milestone will realize; until then the emitted asm uses z80 register names.
+The port keeps SDCC's z80 register table/`*_IDX` ordinals (the Boost allocator in `ralloc2.cc` is
+hard-keyed to them), and the allocator is constrained to the S1C88 byte set `A/B/L/H` with `PAIR_BA` added
+as a first-class pair. The table below is the logical mapping the retarget realizes incrementally; the
+`C/D/E` byte regs and `DE`/`BC` scratch pairs are the remaining cleanup (Step 2).
 
 | SDCC IDX (kept) | z80 reg | → S1C88 reg | Role |
 |-----------------|---------|-------------|------|
@@ -66,22 +70,24 @@ allowed where they simplify the backend, as long as they're documented.
 - **Interrupts:** interrupt functions save clobbered registers and return via **`RETE`**; 2-byte vector
   entries.
 
-## Skeleton divergences (deferred to later milestones)
+## Divergences from the target ABI (progress)
 
-The current build is a **building skeleton** — `./build.sh` succeeds, `sdcc -ms1c88` is selectable, and
-`sdcc -ms1c88 -S` runs — but its **code generation is still z80**. Known divergences from the target ABI,
-each deferred:
+This section started as the "skeleton divergences" list; it now tracks which have been resolved as the
+codegen retarget proceeds. (See [HANDOFF.md](HANDOFF.md) for the live per-slice state.)
 
-1. **z80 register names & instruction selection** in emitted asm — the whole point of the next milestone.
-2. **Pointer sizes:** skeleton keeps z80's 2-byte far/generic pointers, not the Epson 3-byte `_far`
-   pointer (changing `gptr`/`farptr` size touches `gen.c` pointer codegen).
-3. **Argument/return registers** follow z80's `sdcccall` assignment, not the Epson order above.
-4. **`IX`/`IY`** retain z80's allocation behavior in the skeleton (`OPTRALLOC_IY` as in z80) rather than
-   the S1C88-correct "index-only, not GP-allocated" treatment.
-5. **All 10 z80 PORT structs are retained** in `main.c` (only `s1c88_port` is registered) and the z80
-   variant peephole `.def` files are shipped — a follow-up cleanup will strip to a single port.
-6. **Segment/section names, assembler/linker command strings** are placeholder z80 values; the real Epson
-   `as88`/`lk88`/`lc88` handoff (see [toolchain.md](toolchain.md)) is a separate open decision.
+1. **z80 register names & instruction selection** in emitted asm — **largely resolved.** Frame, branches,
+   compares, 16-bit ALU, `adjustStack`, 8-bit L/H ALU operands, and shifts emit native S1C88. Remaining:
+   the `C/D/E` byte regs + `DE`/`BC` scratch pairs (the register-model grind, Step 2 below).
+2. **Pointer sizes:** still z80's 2-byte far/generic pointers, not the Epson 3-byte `_far` pointer
+   (changing `gptr`/`farptr` size touches `gen.c` pointer codegen). **Deferred.**
+3. **Argument/return registers** — **DONE for the byte-addressable set**: returns BA/HL:BA, args use the
+   faithful Epson register-priority order (see *Argument ABI* below); IX/IY/page-reg args are the deferred
+   Phase 2/3.
+4. **`IX`/`IY`** retain z80's allocation behavior rather than the S1C88-correct "index-only, not
+   GP-allocated" treatment. **Deferred** (folds into the register-model grind).
+5. **Single-port cleanup** — **DONE**: the unregistered z80 variant PORT structs were pruned from `main.c`.
+6. **Toolchain handoff** — **DONE**: not the Epson `as88`/`lk88`, but SDCC's own `sdas`/`sdld` retargeted
+   to the S1C88 (`sdas88` + `sdldz80` + `romgen.py`); see the Toolchain section below.
 
 ## Codegen milestone — decided design
 
@@ -220,10 +226,11 @@ Until phases 2-3 land the ABI diverges from Epson for args that need IX/IY/YP/XP
 lower-priority byte reg). This is safe — the convention is sdcc88-internal (caller+callee both read
 `aopArg`); there is no Epson-object interop yet.
 
-### Verification meter (interim, until the assembler validates output)
-`scripts/check-s1c88.sh` scans emitted asm for z80-only residue (`\bde\b`, `\bbc\b`, `ex de,hl`, `iyl`,
-`iyh`, z80-only mnemonics) and prints a count — a cheap progress/regression signal for Steps 2–3. It
-catches wrong *register names*, not wrong *encodings/flags/sizes* — the assembler validator (below) does.
+### Verification meters
+The **primary validator is `sdas88`**: `scripts/validate-s1c88.sh <file.asm>` assembles emitted codegen and
+freq-ranks any form the S1C88 can't encode — catching wrong encodings/flags/sizes/register-classes, i.e.
+the actual remaining z80-isms. (The older textual meter `scripts/check-s1c88.sh` — grepping for `\bde\b`,
+`\bbc\b`, `iyl`, etc. — is now a secondary signal; it catches wrong register *names* but not encodings.)
 
 ## Toolchain & validator: target sdas / sdld (decided 2026-05-31)
 
@@ -253,9 +260,10 @@ generates the backend Makefile (`config.status --file=`) and builds `bin/sdasz80
 `3E 05 23 C9`). So the whole validator/toolchain path is viable — no blockers. A backend is **~3000 lines**
 (`z80.h` 275, `z80adr.c` 296 addressing, `z80pst.c` 496 mnemonic table, `z80mch.c` 2157 encoder).
 
-**Building `as88` (next):** create `sdas/as88/` (`s1c88.h`, `s1c88adr.c`, `s1c88pst.c`, `s1c88mch.c`,
-`Makefile.in`) modeled on `asz80`, with S1C88 encodings from `instruction-set.md` (App. A opcode map +
-the `CE`/`CF` 2nd-page prefixes). Build incrementally — cover the instruction
-subset the codegen emits first (ld/add/adc/sub/sbc/inc/dec/push/pop/ret/call/jp/jr/ex/cp + the 16-bit
-ops), wire into `check-s1c88.sh` to assemble the smoke output, then grow it as codegen emits more.
-`build-sdas.sh` already handles building a config-unknown backend (derives its Makefile from asz80).
+**Building `as88` — DONE.** `sdas/as88/` (`s1c88.h`, `s1c88adr.c`, `s1c88pst.c`, `s1c88mch.c`,
+`Makefile.in`, modeled on `asz80`, with S1C88 encodings from `instruction-set.md` App. A + the `CE`/`CF`
+2nd-page prefixes) is built by `scripts/build-sdas.sh as88` → `bin/sdas88`, covers the full practical ISA
+byte-verified, and is wired into `scripts/validate-s1c88.sh` as the codegen validator. The banked-branch
+extensions (`bcall`/`bjump`, the `R_S1C88_BANK` relocation) live in `s1c88_banked_branch.patch`; the
+linker (`scripts/build-sdld.sh` → `sdldz80`) + `romgen.py` complete the assemble→link→`.min` pipeline. See
+[sdas88-retarget.md](sdas88-retarget.md) and [banked-branch.md](banked-branch.md).

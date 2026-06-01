@@ -45,13 +45,16 @@ the extraction note at the bottom.)
 
 ## sdcc88 backend decisions
 
-- [abi-decision.md](abi-decision.md) — the base-port choice (clone of SDCC's **z80** port) and the
-  target S1C88 C ABI / z80→s1c88 register mapping the backend retarget follows.
+- [HANDOFF.md](HANDOFF.md) — **the resume entry point**: current state, the exact next action, and the
+  per-slice commit history of the codegen retarget.
+- [abi-decision.md](abi-decision.md) — the base-port choice (clone of SDCC's **z80** port), the target
+  S1C88 C ABI / z80→s1c88 register mapping, and the step-by-step always-green retarget plan (Step 2 is the
+  live worklist).
 - [sdas88-retarget.md](sdas88-retarget.md) — retargeting the **sdas** assembler backend to real S1C88
   (the `sdas/as88/` files); **status: complete** (full ISA, byte-verified), doubles as the codegen validator.
-- [banked-branch.md](banked-branch.md) — **design (Phase 2)** for the `CALL`/`JUMP` pseudo-instructions:
-  auto short/long form + auto `ld nb,#bank` code-bank switch, deferred to the linker via a rewrite
-  relocation (the `R_J11` model). Includes the Pokémon Mini bank table + `.lk` sketch.
+- [banked-branch.md](banked-branch.md) — the `bcall`/`bjump` (`CALL`/`JUMP`) pseudo-instructions: auto
+  short/long form + auto `ld nb,#bank` code-bank switch, resolved by the linker via a rewrite relocation
+  (the `R_J11` model). **Status: works end-to-end** — assemble→link→`romgen.py` builds a multi-bank ROM.
 
 ## ABI quick-reference (for the SDCC retarget)
 
