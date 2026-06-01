@@ -10316,6 +10316,26 @@ genCmp (operand * left, operand * right, operand * result, iCode * ifx, int sign
               offset++;
             }
 
+          /* S1C88 native 16-bit compare against an immediate. cp {ba,hl},#imm
+             sets Z C V N in one instruction, replacing both the unsigned byte
+             chain and — crucially — the z80 signed sign-mapping (xor #0x80 /
+             rla / ccf / rra), which uses the illegal acc-rotates. Needs the
+             whole 16-bit value in an ALU pair (no low bytes stripped). */
+          if (!IS_SM83 && size == 2 && offset == 0 &&
+              !(result->aop->type == AOP_CRY && result->aop->size))
+            {
+              PAIR_ID lp = aluPairId (left->aop, 0);
+              if (lp != PAIR_INVALID)
+                {
+                  emit2 ("cp %s, !immedword", _pairs[lp].name, (unsigned) (lit & 0xffffu));
+                  cost2 (3, 10, 9, 6, 12, 6, 3, 3);
+                  started = true;
+                  size = 0;
+                  offset = 2;
+                  goto fix;
+                }
+            }
+
           if (sign)             /* Map signed operands to unsigned ones. This pre-subtraction workaround to lack of signed comparison is cheaper than the post-subtraction one at fix. */
             {
               if (size == 2 && !(IS_SM83 || !ifx && requiresHL(result->aop) && result->aop->type != AOP_REG) && isPairDead (PAIR_HL, ic) && (isPairDead (PAIR_DE, ic) || isPairDead (PAIR_BC, ic)) && (getPairId (left->aop) == PAIR_HL || IS_RAB && (left->aop->type == AOP_STK || left->aop->type == AOP_EXSTK)))
