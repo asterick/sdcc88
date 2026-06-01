@@ -60,8 +60,10 @@ retarget** (z80→S1C88 emission cleanup)._
      Z C V N (unlike z80), so flag-preserving frees must use `pop <pair>`, not `inc/dec sp`.
    - ~~non-ifx signed compare~~ **DONE** (`eb3adcc`): `return a<b` now does `cp ba,hl; ld a,#1; jrs LT;
      xor a,a` (native), `>=`/`<=` add `xor a,#1`, unsigned uses `ld a,#0; rl a`. Killed `jp PO`/`rlca`;
-     `outBitC` now emits `rl a` not `rla`. **Remaining compare z80-isms** (separate paths, register/literal
-     placement): 8-bit **char** compare (`sub a,l` — operand in L/H, 8-bit ALU can't source it); signed
+     `outBitC` now emits `rl a` not `rla`.
+   - ~~8-bit char compare~~ **DONE** (`6c49c73`): `sub a,l` (operand in L/H — the 8-bit ALU can't source
+     L/H) now routes through B via new helper `emit3_8alu` (`ld b,l; sub a,b`, push/pop b if B live).
+     Covers signed/unsigned char, ifx/non-ifx, `<`/`>`/`==`. **Remaining compare z80-isms**: signed
      **literal** compare (`if(a<100)` → the `xor a,#0x80`/`sub`/`rla`/`ccf`/`rra` sign-map path, which the
      register-only native `cp` block skips); the rare AOP_CRY (bit) signed result still keeps the z80 fixup.
    - `rlca`/`rla`/`rrca`/`rra` → `rlc a`/`rl a`/… (**flag-subtle** — z80 acc-rotates are carry-only,
@@ -113,7 +115,8 @@ the broader operand-placement work so the allocator keeps 16-bit operands in BA/
 
 ## Commit history (branch `main`, all green)
 
-Recent (codegen): `eb3adcc` genCmp non-ifx signed/bool native (killed `jp PO`/`rlca`) · `a69a11f`
+Recent (codegen): `6c49c73` genCmp/gencjne route L/H operand through B (killed 8-bit `sub a,l`) ·
+`eb3adcc` genCmp non-ifx signed/bool native (killed `jp PO`/`rlca`) · `a69a11f`
 adjustStack native SP moves (killed `push af`) · `661555f` gencjne native `cp hl,ba` (`==`/`!=`) ·
 `1dc9d94` genCmp native `cp ba,hl` (ifx 16-bit compares) · `fa05339` genMinus native `sub ba,hl`.
 Toolchain: `33948cb` romgen + ROM test · `dced778` auto-bank works · `8da1910` linker built ·
