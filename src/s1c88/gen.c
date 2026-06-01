@@ -5183,8 +5183,62 @@ adjustStack (int n, bool af_free, bool bc_free, bool de_free, bool hl_free, bool
   if(n != 0)
     emitDebug("; adjustStack by %d", n);
   _G.stack.pushed -= n;
-  
+
   iy_free &= !IS_SM83;
+
+  /* S1C88: move SP with native ops. The z80 idiom this function otherwise emits
+     (push/pop af, pop bc/de, inc/dec sp) is illegal or flag-unsafe here — there
+     is no AF/BC/DE register, and unlike the z80 even inc/dec sp set Z C V N.
+       - reserve (n<0): push a filler pair/byte. PUSH leaves flags untouched and
+         needs no free register (the pushed value is overwritten before use), so
+         this is always valid regardless of register pressure.
+       - free (n>0): when flags are dead, one `add sp,#n` (signed 16-bit imm,
+         either direction); otherwise pop into a genuinely-free pair (HL/IY) to
+         preserve flags. The z80 `de_free`/`bc_free` hints are meaningless on the
+         S1C88 (no D/E/C registers), so they are deliberately not used here. */
+  if (!IS_SM83)
+    {
+      while (n <= -2)                    /* reserve 2 bytes, flag-safe filler */
+        {
+          emit2 ("push hl");
+          cost2 (1, 11, 11, 7, 12, 10, 4, 4);
+          n += 2;
+        }
+      if (n <= -1)                       /* reserve a final odd byte */
+        {
+          emit2 ("push a");
+          cost2 (2, 11, 11, 7, 12, 10, 3, 3);
+          n += 1;
+        }
+      if (n >= 2 && af_free)             /* free, flags dead: one native instruction */
+        {
+          emit2 ("add sp, !immed%d", n);
+          cost2 (4, 12, 12, 12, 12, 12, 4, 4);
+          n = 0;
+        }
+      while (n >= 2 && hl_free)          /* free, keep flags: pop into a free pair */
+        {
+          emit2 ("pop hl");
+          cost2 (1, 10, 9, 7, 12, 10, 3, 3);
+          spillPair (PAIR_HL);
+          n -= 2;
+        }
+      while (n >= 2 && iy_free)
+        {
+          emit2 ("pop iy");
+          cost2 (1, 10, 9, 7, 12, 10, 3, 3);
+          spillPair (PAIR_IY);
+          n -= 2;
+        }
+      if (n != 0)                        /* nothing free / odd free byte: clobbers flags */
+        {
+          emit2 ("add sp, !immed%d", n);
+          cost2 (4, 12, 12, 12, 12, 12, 4, 4);
+          n = 0;
+        }
+      wassert (!n);
+      return;
+    }
 
   int loop_bytes, loop_cycles;
   if (abs(n) > 0 && (IS_RAB || IS_SM83)) // Assume sequence of add sp, #d

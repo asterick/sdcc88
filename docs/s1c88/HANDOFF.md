@@ -46,14 +46,14 @@ retarget** (z80→S1C88 emission cleanup)._
    sub/sbc/cp on the two ALU pairs (BA, HL) all assemble; `rr l` / `rrc l` are also illegal (`rr`/`rrc` take
    only a, b, (br:ll), (hl)). New helper `aluPairId()` recognizes BA (the z80 getPairId helpers don't).
    **Remaining** (the validator list):
-   - **Byte-wise 16-bit ALU — remaining sites.** Done: int `sub`/`cp`. Still byte-wise:
-     - **4-byte (long) compare** emits **illegal `sbc hl,bc`** (the `size>2` path fetches right into
-       BC/DE, which aren't S1C88 ALU pairs) — pre-existing latent bug, now visible. Needs the chained
-       16-bit `sbc` on BA/HL.
+   - **Byte-wise 16-bit ALU — remaining sites.** Done: int `sub`, int `cp` (ifx `<`/`>`/…), int `==`/`!=`
+     (`gencjne` native `cp hl,ba`, `661555f` — killed the illegal `sbc hl,bc`). Still byte-wise:
      - **8-bit char compare/sub** with right in L/H emits `sub a,l` — 8-bit ALU can't source L/H; move
        through B (or memory) first.
      - **operands the allocator leaves outside ALU pairs** (e.g. `*p-*q` puts a byte in H → `sbc a,h`) —
        the broader operand-placement grind.
+     - Note: register-operand long (4-byte) `<`/`==` is handled now; the common stack-operand long compare
+       was already legal (byte-wise on memory: `sub a,d(ix)`/`sbc a,d(ix)`).
    - `push af` stack reservation → `sub sp,#imm` (biggest remaining count).
    - non-ifx signed compare (`return a<b`) still emits `jp PO` (the boolean-materialization path; the
      ifx path is now native).
