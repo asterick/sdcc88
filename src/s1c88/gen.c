@@ -10285,6 +10285,56 @@ genCmp (operand * left, operand * right, operand * result, iCode * ifx, int sign
               goto release;
             }
         }
+
+      /* S1C88 native 16-bit compare for ifx branches. The core has a true
+         16-bit CP that sets Z C V N, plus native signed branches (jrs LT/GE
+         test S^V), so a single `cp <pair>,<pair>` replaces the z80 byte-wise
+         sub/sbc idiom — which is illegal here anyway (8-bit ALU source must be
+         A or B, never L/H). We need both operands in the two ALU pairs (BA,
+         HL); for signed compares the fix block below branches on S/V directly
+         (signed_native), for unsigned it falls through to the carry test. */
+      if (!IS_SM83 && ifx && size == 2 && offset == 0 &&
+          !(result->aop->type == AOP_CRY && result->aop->size) &&
+          left->aop->type != AOP_LIT && right->aop->type != AOP_LIT)
+        {
+          PAIR_ID lp = aluPairId (left->aop, 0);
+          PAIR_ID rp = aluPairId (right->aop, 0);
+          PAIR_ID pLeft = PAIR_INVALID, pRight = PAIR_INVALID;
+          bool ok = true;
+
+          if (lp != PAIR_INVALID && rp != PAIR_INVALID && lp != rp)
+            { pLeft = lp; pRight = rp; }
+          else if (lp != PAIR_INVALID && rp == PAIR_INVALID)
+            { pLeft = lp; pRight = (lp == PAIR_HL) ? PAIR_BA : PAIR_HL; }
+          else if (rp != PAIR_INVALID && lp == PAIR_INVALID)
+            { pRight = rp; pLeft = (rp == PAIR_HL) ? PAIR_BA : PAIR_HL; }
+          else
+            ok = false;            /* neither in an ALU pair — leave to the byte path */
+
+          /* The pair we load an operand into must be free, and an operand we
+             load must not itself need HL (would clash with the other pair). */
+          if (ok && lp != pLeft && (!isPairDead (pLeft, ic) || requiresHL (left->aop)))
+            ok = false;
+          if (ok && rp != pRight && (!isPairDead (pRight, ic) || requiresHL (right->aop)))
+            ok = false;
+
+          if (ok)
+            {
+              if (lp != pLeft)
+                genMove (pLeft == PAIR_HL ? ASMOP_HL : ASMOP_BA, left->aop, false, false, false, false);
+              if (rp != pRight)
+                genMove (pRight == PAIR_HL ? ASMOP_HL : ASMOP_BA, right->aop, false, false, false, false);
+              spillPair (pLeft);
+              spillPair (pRight);
+              emit2 ("cp %s, %s", _pairs[pLeft].name, _pairs[pRight].name);
+              cost2 (2, 15, 10, 4, 0, 8, 2, 2);
+              started = true;
+              size = 0;
+              offset = 2;
+              goto fix;
+            }
+        }
+
       if (!IS_SM83 && (!sign || size > 2) && (getPartPairId (left->aop, offset) == PAIR_HL || size == 2 && left->aop->type == AOP_IY) && isPairDead (PAIR_HL, ic) &&
         (getPartPairId (right->aop, offset) == PAIR_DE || getPartPairId (right->aop, offset) == PAIR_BC))
         {
