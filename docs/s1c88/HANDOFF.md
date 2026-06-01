@@ -72,6 +72,15 @@ retarget** (z80→S1C88 emission cleanup)._
    - `rlca`/`rla`/`rrca`/`rra` → `rlc a`/`rl a`/… (**flag-subtle** — z80 acc-rotates are carry-only,
      S1C88's set Z/S too; check each use site). `outBitC`'s use is done; others remain.
    - 16-bit shifts (`rr l` — *illegal*, see above; `sla -2(ix)`); `inc d(ix)`.
+   - **KNOWN GAP (verified 2026-05-31, deferred): out-of-range local signed conditional branch.** The
+     CE-page signed conditions (`LT/LE/GT/GE/V/NV/P/M`, F-flags) are **short-only** — there is *no*
+     `jrl LT`/`carl LT`. The peephole shortens `jp LT → jrs LT` only `if labelInRange`; out of ±127 B it
+     leaves `jp LT`, which sdas88 hard-rejects (`jp takes hl or a (kk) vector`). So a function with a signed
+     compare whose branch target is >127 B away **fails to assemble**. Correct lowering = invert-and-skip
+     (`jrs GE,$skip ; jrl target ; $skip:`); best done in the assembler (it knows the true range), peephole
+     keeps preferring in-range `jrs LT`. **`bcall`/`bjump` are NOT affected** — they only accept C/NC/Z/NZ
+     (both forms exist), always emit the long form, and *reject* signed conditions (error, not miscompile;
+     verified). Also TODO there: a clear "signed cond unsupported" diagnostic for `bcall LT`.
 4. **Per user direction:** when retargeting branch emission, emit **`bcall`/`bjump`** for inter-function
    calls/tail-jumps (not raw `carl`/`jrl`) so the linker becomes the single place that optimizes branch
    form + bank switching. Local loop/if branches can stay plain `jrs`/`jrl`. (Memory:
