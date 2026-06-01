@@ -3740,7 +3740,7 @@ aopPut (asmop *aop, const char *s, int offset)
       if (!aop->aopu.aop_dir)
         {
           emit2 ("ld a, !zero");
-          emit2 ("rla");
+          emit2 ("rl a");
         }
       else
         {
@@ -5521,7 +5521,7 @@ _castBoolean (const operand *right)
       cost2	(2, 7, 6, 4, 8, 4, 2, 2);
       emit3 (A_LD, ASMOP_A, ASMOP_ZERO);
     }
-  emit3 (A_RLA, 0, 0);
+  emit3 (A_RL, ASMOP_A, 0);
 }
 
 /* Shuffle src reg array into dst reg array. */
@@ -9830,7 +9830,7 @@ no_mlt:
       cheapMove (pair == PAIR_BC ? ASMOP_C : ASMOP_E, 0, IC_LEFT (ic)->aop, 0, true);
       emit2 ("ld a, %s", _pairs[pair].l);
       ld_cost (ASMOP_A, 0, ASMOP_L, 0, true);
-      emit3 (A_RLCA, 0, 0);
+      emit3 (A_RLC, ASMOP_A, 0);
       emit3 (A_SBC, ASMOP_A, ASMOP_A);
       emit2 ("ld %s, a", _pairs[pair].h);
       ld_cost (ASMOP_L, 0, ASMOP_A, 0, true);
@@ -10426,10 +10426,10 @@ genCmp (operand * left, operand * right, operand * result, iCode * ifx, int sign
                   cheapMove (ASMOP_A, 0, left->aop, offset, true);
                   if (!size)
                     {
-                      emit3 (A_RLA, 0, 0);
+                      emit3 (A_RL, ASMOP_A, 0);
                       emit2 ("ccf");
                       cost2 (1, 4, 3, 2, 4, 2, 2, 1);
-                      emit3 (A_RRA, 0, 0);
+                      emit3 (A_RR, ASMOP_A, 0);
                     }
                   /* Subtract through, propagating the carry */
                   emit2 ("sbc a, !immedbyte", (unsigned)(((lit >> (offset++ * 8)) & 0xff) ^ (size ? 0x00 : 0x80)));
@@ -10670,7 +10670,7 @@ release:
       if (!result_in_carry)
         {
           /* Shift the sign bit up into carry */
-          emit3 (A_RLCA, 0, 0);
+          emit3 (A_RLC, ASMOP_A, 0);
         }
       outBitC (result);
     }
@@ -10690,7 +10690,7 @@ release:
                 genIfxJump (ifx, "m");
               else
                 {
-                  emit3 (A_RLCA, 0, 0);
+                  emit3 (A_RLC, ASMOP_A, 0);
                   genIfxJump (ifx, "c");
                 }
             }
@@ -10719,7 +10719,7 @@ release:
           if (!result_in_carry)
             {
               /* Shift the sign bit up into carry */
-              emit3 (A_RLCA, 0, 0);
+              emit3 (A_RLC, ASMOP_A, 0);
             }
           outBitC (result);
         }
@@ -11437,7 +11437,7 @@ genAnd (const iCode * ic, iCode * ifx)
           /* Testing for the border bits of the accumulator destructively is cheap. */
           if ((isLiteralBit (bytelit) == 0 || isLiteralBit (bytelit) == 7) && aopInReg (left->aop, offset, A_IDX) && isRegDead (A_IDX, ic))
             {
-              emit3 (isLiteralBit (bytelit) == 0 ? A_RRCA : A_RLCA, 0 , 0);
+              emit3 (isLiteralBit (bytelit) == 0 ? A_RRC : A_RLC, ASMOP_A, 0);
               jumpcond = "C";
               sizel--;
               offset++;
@@ -11589,7 +11589,7 @@ genAnd (const iCode * ic, iCode * ifx)
               cheapMove (ASMOP_A, 0, left->aop, offset, true);
               if (isLiteralBit (bytelit) == 0 || isLiteralBit (bytelit) == 7)
                 {
-                  emit3 (isLiteralBit (bytelit) == 0 ? A_RRCA : A_RLCA, 0 , 0);
+                  emit3 (isLiteralBit (bytelit) == 0 ? A_RRC : A_RLC, ASMOP_A, 0);
                   jumpcond = "C";
                 }
               else if (bytelit != 0xffu)
@@ -12523,15 +12523,15 @@ genRRC (const iCode *ic)
           left = result;
         }
       cheapMove (ASMOP_A, 0, left->aop, offset, true);
-      emit3_o (A_RRA, 0, 0, 0, 0);
+      emit3_o (A_RR, ASMOP_A, 0, 0, 0);
       while (--offset >= 0)
         emit3_shift (A_RR, left->aop, offset, ic);
       if (IS_SM83 && requiresHL (left->aop))
         { /* ldhl sp,N changes CARRY */
-          emit3_o (A_RRA, 0, 0, 0, 0);
+          emit3_o (A_RR, ASMOP_A, 0, 0, 0);
           if (!regalloc_dry_run)
             aopGet (left->aop, size - 1, false);
-          emit3_o (A_RLA, 0, 0, 0, 0);
+          emit3_o (A_RL, ASMOP_A, 0, 0, 0);
         }
       emit3_shift (A_RR, left->aop, size - 1, ic);
       if (!operandsEqu (result, left))
@@ -12547,13 +12547,13 @@ genRRC (const iCode *ic)
       while (offset >= 0)
         {
           _moveA (aopGet (left->aop, offset, false));
-          emit3_o (A_RRA, 0, 0, 0, 0);
+          emit3_o (A_RR, ASMOP_A, 0, 0, 0);
           if (offset != size - 1)
             aopPut (result->aop, "a", offset);
           --offset;
         }
       _moveA (aopGet (left->aop, size - 1, false));
-      emit3_o (A_RRA, 0, 0, 0, 0);
+      emit3_o (A_RR, ASMOP_A, 0, 0, 0);
       aopPut (result->aop, "a", size - 1);
     }
   if (pushed_a)
@@ -12611,13 +12611,13 @@ genRLC (const iCode *ic)
         rotaop = left->aop;
       genMove (rotaop, left->aop, true, isRegDead (HL_IDX, ic), isRegDead (DE_IDX, ic), isRegDead (IY_IDX, ic));
       cheapMove (ASMOP_A, 0, rotaop, size - 1, true);
-      emit3 (A_RLA, 0, 0);
+      emit3 (A_RL, ASMOP_A, 0);
       if (IS_SM83 && requiresHL (rotaop) && rotaop->type != AOP_REG)
         { /* ldhl sp,N changes CARRY */
-          emit3_o (A_RRA, 0, 0, 0, 0);
+          emit3_o (A_RR, ASMOP_A, 0, 0, 0);
           if (!regalloc_dry_run)
             aopGet (rotaop, 0, false);
-          emit3_o (A_RLA, 0, 0, 0, 0);
+          emit3_o (A_RL, ASMOP_A, 0, 0, 0);
         }
       for (int i = 0; i < size;)
         {
@@ -12652,12 +12652,12 @@ genRLC (const iCode *ic)
       for (int offset = 0; offset < size; ++offset)
         {
           _moveA (aopGet (left->aop, offset, false));
-          emit3_o (A_RLA, 0, 0, 0, 0);
+          emit3_o (A_RL, ASMOP_A, 0, 0, 0);
           if (offset != 0)
             aopPut (result->aop, "a", offset);
         }
       _moveA (aopGet (left->aop, 0, false));
-      emit3_o (A_RLA, 0, 0, 0, 0);
+      emit3_o (A_RL, ASMOP_A, 0, 0, 0);
       aopPut (result->aop, "a", 0);
     }
 
@@ -12747,20 +12747,20 @@ genGetAbit (const iCode * ic)
       
       if (shCount < 4)
         while (shCount-- >= 0)
-          emit3_o (A_RRCA, 0, 0, 0, 0);
+          emit3_o (A_RRC, ASMOP_A, 0, 0, 0);
       else
         while (shCount++ < 8)
-          emit3_o (A_RLCA, 0, 0, 0, 0);
+          emit3_o (A_RLC, ASMOP_A, 0, 0, 0);
       outBitC (result);
     }
   else
     {
       if (shCount < 5)
         while (shCount-- > 0)
-          emit3_o (A_RRCA, 0, 0, 0, 0);
+          emit3_o (A_RRC, ASMOP_A, 0, 0, 0);
       else
         while (shCount++ < 8)
-          emit3_o (A_RLCA, 0, 0, 0, 0);
+          emit3_o (A_RLC, ASMOP_A, 0, 0, 0);
       emit2 ("and a, !immedbyte", 0x01u);
       cost2 (2, 7, 6, 4, 8, 4, 2, 2);
       outAcc (result);
@@ -12893,12 +12893,12 @@ shiftR2Left2Result (const iCode *ic, operand *left, int offl, operand *result, i
             emitLabel (tlbl);
         }
       else if (!is_signed)
-        emit3 (A_RLA, 0, 0);
+        emit3 (A_RL, ASMOP_A, 0);
       for (int i = 1; i < (8 - shCount); i++)
         {
           emit2 ("add hl, hl");
           cost2 (1, 11, 7, 2, 8, 8, 1, 1);
-          emit3 (A_RLA, 0, 0);
+          emit3 (A_RL, ASMOP_A, 0);
         }
       genMove_o (result->aop, 1, ASMOP_A, 0, 1, true, false, isPairDead (PAIR_DE, ic), isPairDead (PAIR_IY, ic), true);
       return;
@@ -12976,7 +12976,7 @@ shiftL2Left2Result (operand *left, operand *result, int shCount, const iCode *ic
       genMove_o (result->aop, 0, reuse_zero ? left->aop : ASMOP_ZERO, 1, 1, isRegDead(A_IDX, ic) && !aopInReg (result->aop, 1, A_IDX), false, false, false, true);
       emit3_shift (A_SRL, result->aop, 1, ic);
       if (aopInReg (result->aop, 0, A_IDX))
-        emit3 (A_RRA, 0, 0);
+        emit3 (A_RR, ASMOP_A, 0);
       else
         emit3_shift (A_RR, result->aop, 0, ic);
       return;
@@ -12999,7 +12999,7 @@ shiftL2Left2Result (operand *left, operand *result, int shCount, const iCode *ic
       if (!special_a)
         emit3_o (A_LD, result->aop, 0, ASMOP_ZERO, 0);
       if (aopInReg (lowbyte, 0, A_IDX))
-        emit3 (A_RRA, 0, 0);
+        emit3 (A_RR, ASMOP_A, 0);
       else
         emit3_shift (A_RR, lowbyte, 0, ic);
       if (special_a)
@@ -13331,33 +13331,33 @@ AccRol (int shCount)
           emit3 (A_SWAP, ASMOP_A, 0);
           break;
         }
-      emit3 (A_RLCA, 0, 0);
+      emit3 (A_RLC, ASMOP_A, 0);
     case 3:
       if (IS_SM83 || IS_Z80N)
         {
           emit3 (A_SWAP, ASMOP_A, 0);
-          emit3 (A_RRCA, 0, 0);
+          emit3 (A_RRC, ASMOP_A, 0);
           break;
         }
-      emit3 (A_RLCA, 0, 0);
+      emit3 (A_RLC, ASMOP_A, 0);
     case 2:
-      emit3 (A_RLCA, 0, 0);
+      emit3 (A_RLC, ASMOP_A, 0);
     case 1:
-      emit3 (A_RLCA, 0, 0);
+      emit3 (A_RLC, ASMOP_A, 0);
     case 0:
       break;
     case 5:
       if (IS_SM83 || IS_Z80N)
         {
           emit3 (A_SWAP, ASMOP_A, 0);
-          emit3 (A_RLCA, 0, 0);
+          emit3 (A_RLC, ASMOP_A, 0);
           break;
         }
-      emit3 (A_RRCA, 0, 0);
+      emit3 (A_RRC, ASMOP_A, 0);
     case 6:
-      emit3 (A_RRCA, 0, 0);
+      emit3 (A_RRC, ASMOP_A, 0);
     case 7:
-      emit3 (A_RRCA, 0, 0);
+      emit3 (A_RRC, ASMOP_A, 0);
       break;
     }
 }
@@ -14046,7 +14046,7 @@ genrshTwo (const iCode *ic, operand *result, operand *left, int shCount, int sig
             cheapMove (ASMOP_A, 0, left->aop, 1, true);
           else
             cheapMove (ASMOP_A, 0, result->aop, 0, true);
-          emit3 (A_RLCA, 0, 0);
+          emit3 (A_RLC, ASMOP_A, 0);
           emit3 (A_SBC, ASMOP_A, ASMOP_A);
           cheapMove (result->aop, 1, ASMOP_A, 0, true);
         }
@@ -14081,7 +14081,7 @@ genRightShiftLiteral (operand *left, operand *right, operand *result, const iCod
       if (!SPEC_USIGN (getSpec (operandType (left))))
         {
           cheapMove (ASMOP_A, 0, left->aop, 0, true);
-          emit3 (A_RLCA, 0, 0);
+          emit3 (A_RLC, ASMOP_A, 0);
           emit3 (A_SBC, ASMOP_A, ASMOP_A);
           while (size--)
             cheapMove (result->aop, size, ASMOP_A, 0, true);
@@ -14340,7 +14340,7 @@ unpackMaskA(sym_link *type, int len)
     {
       if (len == 1)
         {
-          emit3(A_RRA, 0, 0);
+          emit3 (A_RR, ASMOP_A, 0);
           emit3(A_SBC, ASMOP_A, ASMOP_A);
         }
       else
@@ -14462,7 +14462,7 @@ finish:
       else
         {
           /* signed bit-field: sign extension with 0x00 or 0xff */
-          emit3 (A_RLA, 0, 0);
+          emit3 (A_RL, ASMOP_A, 0);
           emit3 (A_SBC, ASMOP_A, ASMOP_A);
           source = ASMOP_A;
         }
@@ -16345,7 +16345,7 @@ genCast (const iCode *ic)
         _push (PAIR_AF), pushed_a = true;
 
       /* we need to extend the sign */
-      emit3 (A_RLCA, 0, 0);
+      emit3 (A_RLC, ASMOP_A, 0);
 
       if (!IS_SM83 && !maskedtopbyte && isPairDead (PAIR_HL, ic) && size == 2 && /* writing AOP_HL is so cheap, it is not worth the 2-byte sbc hl, hl here */
         (aopInReg (result->aop, offset, HL_IDX) || result->aop->type == AOP_IY || (IS_RAB || IS_TLCS90 || IS_EZ80_Z80) && result->aop->type == AOP_STK))
