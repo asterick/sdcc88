@@ -3,9 +3,12 @@
 **This is the single resume entry point.** If the prompt is *"let's pick up where you left off,"* do the
 steps under **NEXT ACTION**. Everything needed to continue is here or linked from here.
 
-_Last updated: 2026-06-01 (session 4: SP-relative stack-word peeks, IY/BA arg-push — see "Session 4"
-below. Session 3: offsetPair native-add, `add hl/iy/ix,sp` elimination, struct-return SIGSEGV fix; ldir
-attempt reverted — see "Session 3"). Branch: **`main`** (all work is on main;
+_Last updated: 2026-06-01 (session 4: stack-word peeks + IY/BA arg-push, variable-shift IY counter,
+`ex(sp),hl`→`ld dd(sp)`, signed-literal compares→native `jrs` (drop `ccf`), immediate→indexed-store fix.
+Net: every tractable register-model z80-ism cleared; only the struct-copy `ldir` cluster (blocked) + the
+`.globl`/bcall lib-call false-positives remain — see "Session 4" below. Session 3: offsetPair native-add,
+`add hl/iy/ix,sp` elimination, struct-return SIGSEGV fix; ldir attempt reverted — see "Session 3").
+Branch: **`main`** (all work is on main;
 there is no `s1c88-retarget` branch anymore — CLAUDE.md's mention of it is stale). State: **GREEN** —
 compiler builds/links/runs, and the
 **binary toolchain (assembler + linker + banked ROM) is complete**. The remaining work is the **codegen
@@ -150,9 +153,15 @@ the broader operand-placement work so the allocator keeps 16-bit operands in BA/
 > A from-scratch big-bang reshape was tried and **reset** (unverifiable-red for the whole grind). The dead
 > WIP is in reflog `417bed5` — useful only as a reference for the *end-state* register defs.
 
-## Session 4 (2026-06-01) — SP-relative stack-word peeks + IY/BA arg marshalling
+## Session 4 (2026-06-01) — register-model grind: peeks, shifts, compares, indexed stores
 
-**Landed (committed, green; corpus validator 38 → 10 sdas88 errors, rom-smoke still GREEN):**
+**Net result: every *tractable* register-model z80-ism is cleared.** The compare/shift/arg-passing/stack
+peek+store/frame-addressing clusters all validate **0 errors**; `corpus2` is down to **3 errors, all of
+which are the `jrl/carl __mul*/__div*` library-symbol false-positives** (see below). The ONLY remaining
+real z80-ism anywhere is the **struct-copy `ldir` cluster** (blocked — see end of this section).
+rom-smoke GREEN throughout; no regressions across the corpora.
+
+**Part A — stack-word peeks + arg marshalling (corpus 38 → 10):**
 - **`151ee36` native `ld pair,dd(sp)` for stack-word peeks:** the S1C88 has
   `LD {ba,hl,ix,iy},[SP+dd]` (dd a *signed byte*) — 16-bit pair loads support `[SP+dd]` but **NOT
   `[IX+dd]`** (verified vs ISA: pair loads only take `[hhll]/[HL]/[IX]/[IY]/[SP+dd]`, no IX-displacement
@@ -173,30 +182,56 @@ the broader operand-placement work so the allocator keeps 16-bit operands in BA/
   (A low, B high), so genIpush's direct-push branch missed a word already in B:A and built it in phantom
   BC (`ld c,a; push bc`). Use **`aluPairId`** (which *does* recognize BA) to take the direct `push ba`.
 
-**Remaining z80-isms (corpus, 10 errors) — all the documented "hard" cases + symbol false-positives:**
-- **Variable-shift `C` counter** (`ld c,l; inc c; dec c` in `ishl`/`ishr`) — ROOT CAUSE pinned: for
-  `int<<int`, value=BA→moved to HL (shiftop), count=HL, **result itemp also allocated to HL**; the counter
-  must survive the loop while HL holds both the shift value and the result, and A/B (the `left` source) are
-  loaded into HL only *after* `cheapMove(countreg, right)` runs — so at counter-load time A/B still hold
-  the value and can't take the count, forcing the phantom C. `genLeftShift`/`genRightShift` countreg
-  selection (gen.c ~13849-13869) lists `C_IDX`. **Fix needs a real restructure** (one of: reorder
-  value-move-before-counter-load so B can be the counter via `djr nz`; or shift the value byte-wise in BA
-  `add a,a; rl b` and keep the count in L; or a stack/IX/IY counter). HIGH RISK to the *validated* shift
-  cluster — do it carefully with the validator, not rushed.
-- **`ex (sp),hl`** (`cpy`, genPointerSet) — the index-register byte-access machinery (gen.c ~3968-4028,
-  the `from_index`/`to_index` IYL/IYH byte juggling). S1C88 has only `EX BA,SP` (exchanges BA with the SP
-  *register*, NOT the memory word), so there is no direct analog; retarget to SP-relative load/store. Part
-  of the deferred IX/IY index-byte cleanup.
-- **`jrl __mulint`/`jrl __divsint`/`carl __mullong`** — NOT a gen.c z80-ism: sdas88 errors `<u> undefined
-  symbol` because the codegen emits no `.globl` for imported support routines (`--emit-externs` doesn't add
-  them either — they aren't in SDCC's `externs` set). **With `.globl __mullong` declared, `carl`/`jrl`/
-  `bcall` to the external ALL assemble cleanly** (the linker resolves the relocation). So this is a
-  `.globl`/calling-convention matter, entangled with **user directive #4** (emit `bcall`/`bjump` for
-  inter-function calls — gen.c ~6961 `emit2("%s %s", jump?"jp":"call", …)` → peephole `carl`/`jrl`).
-  That's a *separate, broader* workstream needing full assemble→link validation (rom-smoke), not the
-  register-model grind. Treat these 3 as validator false-positives for the z80-ism hunt.
-- The struct-copy `ldir`/`ex de,hl`/`add hl,bc`/`ld bc,#imm` (seen on `*a=*b`) is the session-3
-  genBuiltInMemcpy/ldir work (reverted, blocked on the latent garbage-`aop_stk` bug) — unchanged.
+**Part B — shifts, compares, indexed stores (corpus 10 → 3; new wide corpus also clean):**
+- **`b3dcc3f` variable-shift counter → 16-bit IY** (was the documented "hard" `ld c,l` case): for
+  `int<<int`/`long<<int` all four byte GPRs hold value/count/result, so there is no 5th byte for the
+  counter (the z80 had C). `genLeftShift` now uses **IY** when no byte reg is free — `inc iy / jr / loop /
+  dec iy; jr nz` (16-bit `dec iy` sets Z V N). Allocator-agnostic; the count loads straight into IY
+  (`ld iy,dd(sp)` for a stacked count, `push hl; pop iy` for a register one) and the value-move's `iy_dead`
+  is cleared. `genRightShift` already fell back to legal `A_IDX`, so untouched. Verified char/int/long,
+  signed+unsigned, left+right: 0 errors; 32-bit shift is a correct `add a,a; rl b; adc hl,hl` chain.
+- **`3e21b03` `ex (sp),hl` → `ld dd(sp),{ba,hl}`** (`cpy`'s `*d=*s`): `genCopy`'s register→stack store used
+  the z80 stack-exchange (S1C88 `EX BA,SP` swaps with the SP *register*, not memory). The S1C88 has direct
+  SP-relative pair stores `ld dd(sp),BA`/`ld dd(sp),HL` (74/75); use them (any in-range offset, both pairs
+  via `aluPairId`, no HL-dead requirement). Last `ex (sp),hl` in the compare/pointer corpus gone.
+- **`ab3503c` signed *literal* compares → native `jrs LT/GE`** (drops illegal `ccf`): a signed compare vs a
+  literal whose operand was on the stack, or was a `long`, fell to the z80 `xor#0x80/rl a/ccf/rr a` sign-
+  flip — and `ccf`/`scf`/`rcf` don't exist on the S1C88. genCmp now (a) loads a 16-bit stack operand into a
+  dead HL for native `cp hl,#imm`, and (b) for the byte-wise/long case emits a plain `sub/sbc a,#imm` chain
+  and branches on the native S^V (`signed_native` at `fix:`). Only the rare AOP_CRY result keeps the old
+  map. Verified across char/int/long × ifx/bool × both senses × reg/stack/literal: 0 errors, branch senses
+  correct.
+- **`5f3a3ee` no immediate→indexed store** (`ld d(ix),#imm` is illegal; only `ld (hl),#nn`): two sites —
+  `aopPut`'s AOP_STK store routed constants through A (was direct), and **`z80canAssign`** (the `canAssign`
+  peephole hook, `peep.c`) stopped reporting an immediate as assignable to ix/iy memory, which is what let
+  **peepholes 9/9a** fold `ld a,#0; ld d(ix),a` back into the illegal `ld d(ix),#0` (the generic root cause
+  the session-2 removal of explicit rule 178 missed). Both `--no-peep` and peephole modes now emit 0 such
+  stores. (Diagnosing this: `--no-peep` made it vanish → peephole; `port->peep.canAssign` is the hook.)
+
+**Remaining (everything else is clean) — two *non-register-model* items, both deferred with cause:**
+- **Struct-copy `ldir` cluster** (`ldir` / `ex de,hl` / `add hl,bc` / `ld bc,#count` / `ld l,c` on
+  `*a=*b`, large-member reads, struct return) — the **only remaining real z80-ism**. Still the session-3
+  blocked work: the byte-loop replacement (`ld a,(hl); ld (iy),a; inc hl; inc iy; dec cnt; jr nz`, dest via
+  `ld iy,sp; add iy,#off`) is sound, but it perturbs the regalloc cost model and re-triggers a **latent
+  garbage-`aop_stk` bug**. **Refined diagnosis this session:** it is NOT uninitialised newAsmop memory —
+  `Safe_alloc` is `Safe_calloc` (zeroes), so a fresh aop has `aop_stk == 0`. The random value that *changes
+  between runs* is **union aliasing**: an `AOP_LIT`/`AOP_IMMD` aop has `aopu.aop_lit` (a heap pointer) set,
+  and some unguarded path reads the overlapping `aopu.aop_stk` (low bytes of that pointer → ASLR-random).
+  All `spOffset`/`fpOffset` callers ARE `AOP_STL`-guarded (audited 4969-5019, 8547, 15033); the offending
+  read is a *direct* `aop_stk` access among the ~64 in gen.c that lacks a stack-type guard. **valgrind is
+  not available in this sandbox** — without it (or a deterministic repro) the exact site can't be pinned,
+  so landing the ldir retarget risks the silent miscompile that got it reverted. NEXT: get valgrind (or
+  add a temporary `assert(aop->type==AOP_STK||EXSTK||STL)` before each direct `aop_stk` read and compile
+  the corpus to trip it), fix the guard, *then* land the cost-neutral byte-loop.
+- **`jrl __mulint`/`carl __mullong`/`jrl __divsint`** — NOT a gen.c z80-ism; **validator false-positives.**
+  sdas88 errors `<u> undefined symbol` (verified: *reference* `sdasz80` errors identically — `.globl` is
+  genuinely required, not an as88 bug). Our codegen emits `.globl` for called **C** externs (`_ext` is
+  declared) but NOT for compiler support routines: `SDCCopt.c convertToFcall` only marks them extern for
+  `TARGET_PIC_LIKE`, so `__mulint` never enters SDCC's `externs` set (`--emit-externs` doesn't help). This
+  is upstream-middle-end glue, *outside* the `src/s1c88` overlay, and tangential to the register grind. It
+  intersects **user directive #4** (emit `bcall`/`bjump` for inter-function calls): switching gen.c ~6961
+  `jp/call` → `bjump/bcall` is the right next step there, but a call to an *external* still needs the
+  `.globl`, and the whole thing wants full assemble→link (rom-smoke) validation — a separate workstream.
 
 ## Session 3 (2026-06-01) — frame-addressing + struct-return; ldir attempt reverted
 
@@ -348,7 +383,10 @@ register-model grind / the documented out-of-range-signed-branch gap), **not** p
 
 ## Commit history (branch `main`, all green)
 
-Recent (codegen): `d37814e` genIpush `push ba` for BA low word (via aluPairId) · `3fad33a` push
+Recent (codegen): `5f3a3ee` no immediate→indexed store (aopPut through-A + z80canAssign drops the
+`ld d(ix),#imm` peephole fold) · `ab3503c` signed-literal compares native `jrs LT/GE` (drop illegal `ccf`)
+· `3e21b03` reg→stack store `ld dd(sp),{ba,hl}` not `ex (sp),hl` · `b3dcc3f` variable-shift counter → 16-bit
+IY (kill phantom `ld c`) · `d37814e` genIpush `push ba` for BA low word (via aluPairId) · `3fad33a` push
 stack/frame args through IY not phantom DE/BC (`ld iy,dd(sp); push iy`) · `151ee36` native
 `ld pair,dd(sp)` stack-word peeks (kill pop/push-peek in fetchPairLong + genCopyStack) · `725ca44` drop
 peeph 116/117 (illegal `inc/dec m(ix)` fold) · `d17a167`
