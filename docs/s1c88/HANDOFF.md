@@ -146,13 +146,28 @@ heisenbug**. There is NO such heisenbug — codegen is deterministic per binary 
 8× reruns all stable); the "flicker" was edited-vs-stale builds. Verify an edit landed:
 `strings build/.../sdcc | grep <token>`.
 
-**STILL OPEN — reachable z80-isms = the deep register-model grind (task #7b), needs careful per-trigger
-work:** (1) **`ldir` long global↔global copy** — `long g1=g2` / `swap_l` emit `ld de,#g; ld bc,#4; ldir`
-+ `ex de,hl` (13_swap, 25 errors); session 5's ldir elimination missed this 4-byte mem→mem copy path.
-(2) **DE/BC 16-bit address arithmetic** — `ld c,l; add hl,bc` / `ld e,l; ld d,b; add hl,de` for index×scale
-+ base (09_isr `isr_heavy`, 14_mixed `matrix`, 15_stack); genPlus's 16-bit add picks the z80 2nd-ALU-pair
-(DE/BC) instead of S1C88 `BA` (`add hl,ba`) — blocked on the A/BA-overlap hazard (abi-decision Step 2). Plus
-the deferred `jp GE` out-of-range (#10) and the `bcall _ext` undefined-symbol *false positive* (link-resolved).
+- **`8596ef3` genAssign drop z80 `ldir`/`ldi` block-copy.** `long g1=g2` / `swap_l` emitted `ld de,#g; ld
+  bc,#4; ldir` + `ex de,hl` (no ldir/ldi/DE on S1C88). The path was gated only by a cost model (`l_better`)
+  — forced off so mem→mem copies fall through to genMove's native byte/pair copy. 13_swap 25→0. (The dead
+  z80 cost-model+ldir block stays for the task-#2 sweep.) Large mem→mem genAssign is now straight-line, but
+  rare (large structs go through genBuiltInMemcpy's loop, s5).
+- **`718263a` genPlus STL-address+operand uses BA not DE.** `&arr[i] = framebase + index` moved the addend
+  into DE → `add hl,de` (illegal). Now prefer BA (S1C88 2nd ALU pair), save/restore when not dead; HL setup
+  from the AOP_STL address (`ld hl,#off; add hl,sp`) never touches A/B so BA survives → `add hl,ba`.
+  14_mixed/15_stack 6→0. **Hand-traced** every &arr[i]/&arr[j] (the corpus checks legality+non-regression,
+  NOT runtime semantics — there is no execution test, so the A/BA grind must be hand-verified). 14_mixed's
+  inner loop restructured by cost perturbation but every address is verified correct (one harmless redundant
+  `add hl,#0`).
+
+**STILL OPEN — one reachable z80-ism left = `genMultLit` (multiply-by-constant), the deep A/BA grind.**
+`int b = a*3` emits `ld c,l; ld b,h; add hl,hl; add hl,bc` (09_isr `isr_heavy`, ~line 9911). genMultLit
+defaults `pair=PAIR_BC` (BC is phantom-"dead" so always picked) and is DE/BC/E/C-based across several paths.
+The **int** path (`else` at ~9868: `fetchPair(pair,left); ld l,a; ld h,b; add hl,hl; add hl,ba`) is tractable
+via BA, but the **byteResult/char** path (~9848-9866) uses A as the accumulator — conflicts with BA's low
+byte — so it needs the multiplicand in B (not a BA pair) and careful A/BA handling. Do as a focused effort,
+hand-verifying each path. Plus the deferred `jp GE` out-of-range (#10) and the `bcall _ext` undefined-symbol
+*false positive* (link-resolved). **Corpus now: 13/15 files 0 errors; only 09_isr (this multiply) + 12_arrays
+(the #10 `jp GE`) remain.**
 
 ## Session 13 (2026-06-02) — register-model dead-code sweep (task #7) STARTED
 
