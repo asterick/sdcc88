@@ -7735,11 +7735,10 @@ genRet (const iCode *ic)
            || (IC_LEFT (ic)->aop->type == AOP_DIR || IC_LEFT (ic)->aop->type == AOP_IY) && !(IS_R2K || IS_R2KA))
     {
       setupPairFromSP (PAIR_HL, _G.stack.offset + _G.stack.param_offset + _G.stack.pushed + (_G.omitFramePtr || IS_SM83 ? 0 : 2));
-      emit2 ("ld e, !*hl");
-      cost2 (1, 7, 6, 6, 8, 6, 2, 2);
-      emit3w (A_INC, ASMOP_HL, 0);
-      emit2 ("ld d, !*hl");
-      cost2 (1, 7, 6, 6, 8, 6, 2, 2);
+      /* IY = dest (the caller's hidden return-buffer pointer, 2 bytes via [HL]).
+         S1C88 has no DE; the 16-bit `ld iy,(hl)` reads the pointer in one go. */
+      emit2 ("ld iy, !*hl");
+      cost2 (2, 14, 12, 8, 0, 6, 4, 4);
       if (IC_LEFT (ic)->aop->type == AOP_STK || IC_LEFT (ic)->aop->type == AOP_EXSTK)
         {
           int sp_offset, fp_offset;
@@ -7754,11 +7753,27 @@ genRet (const iCode *ic)
         }
       else
         fetchLitPair (PAIR_HL, IC_LEFT (ic)->aop, 0, true, false);
-      emit2 ("ld bc, !immed%d", size);
-      cost2 (3, 10, 9, 6, 12, 6, 3, 3);
-      emit2 ("ldir");
-      cost2 (2, 21 * size - 5, 14 * size - 2, 7 * size - 1, 0, 18 * size - 4, 2 * size - 1, 4 * size);
-      updatePair (PAIR_HL, size);
+      /* HL = source, IY = dest: copy `size` bytes with a native byte loop.
+         At the epilogue A/B are dead, so B is a free loop counter and A the
+         per-byte temp. (Struct returns are well under 255 bytes.) */
+      {
+        symbol *tlbl;
+        emit2 ("ld b, !immedbyte", (unsigned) size);
+        cost2 (2, 7, 6, 4, 8, 4, 2, 2);
+        tlbl = regalloc_dry_run ? 0 : newiTempLabel (NULL);
+        if (!regalloc_dry_run)
+          emitLabel (tlbl);
+        emit2 ("ld a, !*hl");
+        cost2 (1, 7, 6, 5, 8, 6, 2, 2);
+        emit2 ("ld !*iyx, a", 0);
+        cost2 (1, 7, 7, 7, 8, 6, 2, 2);
+        emit3w (A_INC, ASMOP_HL, 0);
+        emit3w (A_INC, ASMOP_IY, 0);
+        if (!regalloc_dry_run)
+          emit2 ("djr nz, !tlabel", labelKey2num (tlbl->key));
+        regalloc_dry_run_cost += 2;
+      }
+      spillPair (PAIR_HL);
     }
   else
     {
