@@ -194,6 +194,15 @@ avoids (verified: the broad sweep + in-place swaps + long ALU hit none). Elimina
 dead-symbol sweep (abi-decision.md Step 2 "delete each symbol once unused") — a separate, larger refactor
 touching ralloc/the `*_IDX` enum/`_pairs[]`.
 
+**Dead-code sweep (`3f1b6c3`):** removed the now-unused `isLastUse()` (its last caller went in the
+genPackBits rewrite), and **made the sub-port predicates compile-time constants** in `s1c88.h` — sdcc88 is
+single-variant (`z80_opts.sub = SUB_Z80` set once, never changed), so `IS_Z80≡1` and SM83/Z180/Rabbit/
+TLCS90/eZ80/Z80N/R800 ≡ 0. This lets the compiler **dead-code-eliminate the ~494 unreachable z80-variant
+branches** (which carry most of the latent DE/BC/ldi/ex idioms) instead of compiling them in. Proven
+behavior-neutral: **byte-identical codegen across the full 11-input corpus** (modulo the filename-derived
+`.module` line). NEXT level of this: physically delete the now-`if(0)` branch *source*, which removes the
+latent DE/BC textual references and unblocks deleting the C/D/E/DE/BC symbols themselves.
+
 ## Session 6 (2026-06-02) — bcall/bjump for inter-function calls + `.globl` support routines
 
 **Codegen now emits the banked pseudo-ops for direct inter-function transfers, and the last validator
