@@ -7049,12 +7049,18 @@ genFunction (const iCode * ic)
      then save all potentially used registers. */
   if (IFFUNC_ISISR (sym->type))
     {
-      if (!IFFUNC_ISCRITICAL (sym->type))
-        {
-          emit2 ("!ei");
-        }
-
-      emit2 ("!pusha");
+      /* S1C88: the interrupt sequence auto-saves CB:PC and SC (the flags +
+         interrupt-priority mask) and RETE restores them, so the handler only
+         saves the GP registers it may clobber — A,B (BA), L,H (HL), IY; IX is
+         saved by the frame setup below.  There is no ei/di: interrupts of the
+         same or lower priority are masked until RETE (re-set the SC priority
+         level inside the routine to allow same-level nesting). */
+      emit2 ("push ba");
+      cost2 (1, 11, 11, 10, 16, 8, 3, 4);
+      emit2 ("push hl");
+      cost2 (1, 11, 11, 10, 16, 8, 3, 4);
+      emit2 ("push iy");
+      cost2 (2, 15, 14, 12, 16, 8, 4, 5);
     }
   else
     {
@@ -7304,8 +7310,14 @@ genEndFunction (iCode *ic)
      then restore all potentially used registers. */
   if (IFFUNC_ISISR (sym->type))
     {
-      emit2 ("!popa");
-      regalloc_dry_run_cost++;
+      /* Restore the GP registers saved by the prologue, in reverse order
+         (RETE will restore SC/flags + the interrupt mask). */
+      emit2 ("pop iy");
+      cost2 (2, 12, 10, 8, 12, 10, 4, 5);
+      emit2 ("pop hl");
+      cost2 (1, 10, 9, 9, 12, 10, 4, 3);
+      emit2 ("pop ba");
+      cost2 (1, 10, 9, 9, 12, 10, 4, 3);
     }
   else
     {
@@ -7469,36 +7481,14 @@ genEndFunction (iCode *ic)
 
   if (IFFUNC_ISISR (sym->type))
     {
-      if (is_nmi)
-        {
-          emit2 ("retn");
-          cost2 (2, 14, 12, 0, 0, 0, 6, 5);
-        }
-      else if (IS_RAB)
-        {
-          if (IFFUNC_ISCRITICAL (sym->type))
-            {
-              emit2 ("!ei");
-              cost2 (1, 4, 3, 0, 4, 2, 1, 1);
-            }
-          emit2 ("ret");
-          cost2 (1, 10, 9, 8, 16, 10, 5, 3);
-        }
-      else if (IS_SM83)
-        {
-          emit2 (IFFUNC_ISCRITICAL (sym->type) ? "reti" : "ret");
-          cost (1 + IFFUNC_ISCRITICAL (sym->type), 16);
-        }
-      else
-        {
-          if (IFFUNC_ISCRITICAL (sym->type) && !is_nmi)
-            {
-              emit2 ("!ei");
-              cost2 (1, 4, 3, 0, 4, 2, 1, 1);
-            }
-          emit2 ("reti");
-          cost2 (2, 14, 12, 12, 16, 14, 6, 5);
-        }
+      /* S1C88: every exception/interrupt routine returns via RETE, which pops
+         the SC (flags + interrupt-priority mask) and CB:PC that the interrupt
+         sequence pushed — restoring the mask automatically, so no `ei` is
+         needed (critical or not), and NMI returns the same way. (No reti/retn:
+         those are z80/SM83-only and illegal on the S1C88.) */
+      (void) is_nmi;
+      emit2 ("rete");
+      cost2 (2, 14, 12, 12, 16, 14, 6, 5);
     }
   else
     {
