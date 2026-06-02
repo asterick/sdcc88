@@ -7068,25 +7068,15 @@ genFunction (const iCode * ic)
          If critical function then turn interrupts off */
       if (IFFUNC_ISCRITICAL (sym->type))
         {
-          if (IS_SM83 || IS_RAB || IS_TLCS90)
-            {
-              emit2 ("!di");
-            }
-          else
-            {
-              if (s1c88_opts.nmosZ80)
-                emit2 ("call ___sdcc_critical_enter");
-              else
-                {
-                  //get interrupt enable flag IFF2 into P/O
-                  emit2 ("ld a,i");
-                  //disable interrupts
-                  emit2 ("!di");
-                }
-              //save P/O flag
-              emit2 ("push af");
-              _G.stack.param_offset += 2;
-            }
+          /* S1C88 has no ei/di: mask all maskable interrupts by raising the SC
+             interrupt-priority level to 3 (I1:I0 = bits 7:6).  Save the prior
+             SC (level + flags) so the epilogue restores it — this handles the
+             prior level and nesting.  `push sc` is 1 byte (param_offset += 1). */
+          emit2 ("push sc");
+          cost2 (1, 11, 11, 10, 16, 8, 3, 4);
+          emit2 ("or sc, !immedbyte", 0xc0u);
+          cost2 (2, 7, 6, 4, 8, 4, 2, 2);
+          _G.stack.param_offset += 1;
         }
     }
 
@@ -7325,27 +7315,11 @@ genEndFunction (iCode *ic)
          If critical function then turn interrupts back on */
       if (IFFUNC_ISCRITICAL (sym->type))
         {
-          if (IS_SM83 || IS_TLCS90 || IS_RAB)
-            emit2 ("!ei");
-          else
-            {
-              symbol *tlbl = newiTempLabel (NULL);
-              //restore P/O flag
-              if (aopRet (sym->type) && aopRet (sym->type)->regs[A_IDX] >= 0) // Preserve return value in a.
-                {
-                  wassert (!IS_SM83);
-                  emit2 ("ex (sp), hl");
-                  emit2 ("ld h, a");
-                  emit2 ("ex (sp), hl");
-                }
-              emit2 ("pop af");
-              //parity odd <==> P/O=0 <==> interrupt enable flag IFF2 was 0 <==>
-              //don't enable interrupts as they were off before
-              emit2 ("jp PO,!tlabel", labelKey2num (tlbl->key));
-              emit2 ("!ei");
-              emit2 ("!tlabeldef", labelKey2num (tlbl->key));
-              genLine.lineCurr->isLabel = 1;
-            }
+          /* Restore the SC (flags + interrupt-priority mask) saved by the
+             prologue — `pop sc` doesn't touch A/HL, so the return value is
+             safe and no flag/return-value shuffle is needed. */
+          emit2 ("pop sc");
+          cost2 (1, 10, 9, 9, 12, 10, 4, 3);
         }
     }
 
@@ -16650,59 +16624,28 @@ genDummyRead (const iCode * ic)
 static void
 genCritical (const iCode * ic)
 {
-  symbol *tlbl = regalloc_dry_run ? 0 : newiTempLabel (0);
-
-  if (IS_SM83 || IS_RAB || IS_TLCS90)
+  /* S1C88 has no ei/di: a critical section masks all maskable interrupts by
+     raising the SC interrupt-priority level to 3 (I1:I0 = bits 7:6).  The prior
+     SC (level + flags) is saved so genEndCritical can restore it (correct under
+     nesting and for whatever the prior level was). */
+  if (IC_RESULT (ic))
     {
-      emit2 ("!di");
-      regalloc_dry_run_cost += 1;
-    }
-  else if (IC_RESULT (ic))
-    {
+      /* Thread the saved state through the result itemp (the body may use the
+         stack, so don't keep it there). */
       aopOp (IC_RESULT (ic), ic, true, false);
-      cheapMove (IC_RESULT (ic)->aop, 0, ASMOP_ZERO, 0, true);
-      if (!regalloc_dry_run)
-        {
-          if (s1c88_opts.nmosZ80)
-            {
-              emit2 ("call ___sdcc_critical_enter");
-            }
-          else
-            {
-              //get interrupt enable flag IFF2 into P/O
-              emit2 ("ld a,i");
-              //disable interrupt
-              emit2 ("!di");
-            }
-          //parity odd <==> P/O=0 <==> interrupt enable flag IFF2=0
-          emit2 ("jp PO, !tlabel", labelKey2num (tlbl->key));
-        }
-      regalloc_dry_run_cost += 5;
-      cheapMove (IC_RESULT (ic)->aop, 0, ASMOP_ONE, 0, true);
-      if (!regalloc_dry_run)
-        {
-          emit2 ("!tlabeldef", labelKey2num ((tlbl->key)));
-          genLine.lineCurr->isLabel = 1;
-        }
+      emit2 ("ld a, sc");
+      cost2 (2, 8, 6, 4, 0, 6, 2, 2);
+      cheapMove (IC_RESULT (ic)->aop, 0, ASMOP_A, 0, true);
+      emit2 ("or sc, !immedbyte", 0xc0u);
+      cost2 (2, 7, 6, 4, 8, 4, 2, 2);
       freeAsmop (IC_RESULT (ic), NULL);
     }
   else
     {
-      if (s1c88_opts.nmosZ80)
-        emit2 ("call ___sdcc_critical_enter");
-      else
-        {
-          //get interrupt enable flag IFF2 into P/O
-          emit2 ("ld a,i");
-          //disable interrupt
-          emit2 ("!di");
-        }
-      regalloc_dry_run_cost += 3;
-      //save P/O flag
-      if (!regalloc_dry_run)    // _push unbalances _G.stack.pushed.
-        _push (PAIR_AF);
-      else
-        cost2 (1, 11, 11, 10, 16, 8, 3, 4);
+      emit2 ("push sc");
+      cost2 (1, 11, 11, 10, 16, 8, 3, 4);
+      emit2 ("or sc, !immedbyte", 0xc0u);
+      cost2 (2, 7, 6, 4, 8, 4, 2, 2);
     }
 }
 
@@ -16712,45 +16655,20 @@ genCritical (const iCode * ic)
 static void
 genEndCritical (const iCode * ic)
 {
-  symbol *tlbl = regalloc_dry_run ? 0 : newiTempLabel (0);
-
-  if (IS_SM83 || IS_TLCS90 || IS_RAB)
+  /* Restore the SC (interrupt-priority level + flags) saved by genCritical. */
+  if (IC_RIGHT (ic))
     {
-      emit2 ("!ei");
-      cost2 (1, 4, 3, 0, 4, 2, 1, 1);
-    }
-  else if (IC_RIGHT (ic))
-    {
+      /* Saved state was threaded through an itemp: load it and write SC. */
       aopOp (IC_RIGHT (ic), ic, FALSE, TRUE);
-      _toBoolean (IC_RIGHT (ic), TRUE);
-
-      if (!regalloc_dry_run)
-        {
-          //don't enable interrupts if they were off before
-          emit2 ("jp Z, !tlabel", labelKey2num (tlbl->key));
-          emit2 ("!ei");
-          emitLabelSpill (tlbl);
-        }
-      regalloc_dry_run_cost += 4;
+      cheapMove (ASMOP_A, 0, IC_RIGHT (ic)->aop, 0, true);
+      emit2 ("ld sc, a");
+      cost2 (2, 8, 6, 4, 0, 6, 2, 2);
       freeAsmop (IC_RIGHT (ic), NULL);
     }
   else
     {
-      //restore P/O flag
-      if (!regalloc_dry_run)    // _pop unbalances _G.stack.pushed.
-        _pop (PAIR_AF);
-      else
-        regalloc_dry_run_cost++;
-      //parity odd <==> P/O=0 <==> interrupt enable flag IFF2 was 0 <==>
-      //don't enable interrupts as they were off before
-      if (!regalloc_dry_run)
-        {
-          emit2 ("jp PO, !tlabel", labelKey2num (tlbl->key));
-          emit2 ("!ei");
-          emit2 ("!tlabeldef", labelKey2num ((tlbl->key)));
-          genLine.lineCurr->isLabel = 1;
-        }
-      regalloc_dry_run_cost += 4;
+      emit2 ("pop sc");
+      cost2 (1, 10, 9, 9, 12, 10, 4, 3);
     }
 }
 
