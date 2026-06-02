@@ -37,18 +37,26 @@ Z80_OPTS;
 
 extern Z80_OPTS z80_opts;
 
-#define IS_Z80 (z80_opts.sub == SUB_Z80)
-#define IS_Z180 (z80_opts.sub == SUB_Z180)
-#define IS_R2K (z80_opts.sub == SUB_R2K)
-#define IS_R2KA (z80_opts.sub == SUB_R2KA)
-#define IS_R3KA (z80_opts.sub == SUB_R3KA)
-#define IS_RAB (IS_R2K || IS_R2KA || IS_R3KA)
-#define IS_SM83 (z80_opts.sub == SUB_SM83)
-#define IS_TLCS90 (z80_opts.sub == SUB_TLCS90)
-#define IS_EZ80_Z80 (z80_opts.sub == SUB_EZ80_Z80)
-#define IS_Z80N (z80_opts.sub == SUB_Z80N)
-#define IS_R800 (z80_opts.sub == SUB_R800)
-#define HAS_IYL_INST (IS_Z80N || IS_EZ80_Z80 || IS_R800 || IS_Z80 && options.allow_undoc_inst)
+/* sdcc88 is a SINGLE-VARIANT port: main.c fixes z80_opts.sub = SUB_Z80 once and
+   nothing ever changes it (the other -mz80 variants are not built). So the
+   sub-port predicates are compile-time constants — IS_Z80 always true, every
+   other variant always false. Making them literal lets the compiler dead-code-
+   eliminate the ~hundreds of unreachable z80-variant branches (SM83/Rabbit/
+   TLCS90/eZ80/Z80N/R800 code, much of which carries z80-only DE/BC idioms with
+   no S1C88 analog) instead of compiling them in. Verified byte-identical
+   codegen across the corpus — these branches never executed. */
+#define IS_Z80 1
+#define IS_Z180 0
+#define IS_R2K 0
+#define IS_R2KA 0
+#define IS_R3KA 0
+#define IS_RAB 0
+#define IS_SM83 0
+#define IS_TLCS90 0
+#define IS_EZ80_Z80 0
+#define IS_Z80N 0
+#define IS_R800 0
+#define HAS_IYL_INST (options.allow_undoc_inst)
 
 #define IY_RESERVED (z80_opts.reserveIY)
 

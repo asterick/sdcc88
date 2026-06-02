@@ -577,34 +577,6 @@ spOffset (int aop_stk)
   return fpOffset (aop_stk) + _G.stack.pushed + _G.stack.offset;
 }
 
-/* WARNING: This function is dangerous to use. It works literally:
-   It will return true if ic the the last use of op, even if ic might
-   be executed again, e.g. due to a loop. Most of the time you will want
-   to use isPairDead(), or ic->rSurv instead of this function. */
-static bool
-isLastUse (const iCode * ic, operand * op)
-{
-  bitVect *uses = bitVectCopy (OP_USES (op));
-
-  while (!bitVectIsZero (uses))
-    {
-      if (bitVectFirstBit (uses) == ic->key)
-        {
-          if (bitVectnBitsOn (uses) == 1)
-            {
-              return TRUE;
-            }
-          else
-            {
-              return FALSE;
-            }
-        }
-      bitVectUnSetBit (uses, bitVectFirstBit (uses));
-    }
-
-  return FALSE;
-}
-
 static bool
 isRegDead (short rIdx, const iCode * ic)
 {
