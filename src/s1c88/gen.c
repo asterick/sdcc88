@@ -16166,6 +16166,10 @@ genAssign (const iCode *ic)
           else
             l_better = (cyclecost_l < cyclecost_n || cyclecost_l == cyclecost_n && sizecost_l < sizecost_n);
 
+          /* S1C88 has no ldir/ldi and no DE pair — never take the z80 block-copy
+             path; fall through to genMove (native byte/pair copy) below. */
+          l_better = false;
+
           if (l_better)
             {
               if (hl_alive)
