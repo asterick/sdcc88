@@ -3665,7 +3665,7 @@ aopPut (asmop *aop, const char *s, int offset)
 
     case AOP_IY:
       wassert (!IS_SM83);
-      if (!canAssignToPtr (s))
+      if (!canAssignToPtr (s) || isConstantString (s))   /* S1C88: ld (iy+d),#imm illegal — route immediate through A */
         {
           emit2 ("ld a, %s", s);
           setupPair (PAIR_IY, aop, offset);
@@ -3700,7 +3700,7 @@ aopPut (asmop *aop, const char *s, int offset)
       if(!IY_RESERVED)
         {
           wassert (!IS_SM83);
-          if (!canAssignToPtr (s))
+          if (!canAssignToPtr (s) || isConstantString (s))   /* S1C88: ld (iy+d),#imm illegal — route immediate through A */
             {
               emit2 ("ld a, %s", s);
               setupPair (PAIR_IY, aop, offset);
