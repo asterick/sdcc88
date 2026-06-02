@@ -3,7 +3,10 @@
 **This is the single resume entry point.** If the prompt is *"let's pick up where you left off,"* do the
 steps under **NEXT ACTION**. Everything needed to continue is here or linked from here.
 
-_Last updated: 2026-06-02 (session 8: **s1c88 is now a fully independent port** — renamed the 44 globals
+_Last updated: 2026-06-02 (session 9: **indirect / function-pointer calls retargeted** — `f(x)` via ptr /
+`v->op()` / `tbl[i]()` now use `jp hl` (tail) or manufactured-return + `jp hl` (call), no `jp (iy)`/DE-BC/
+`___sdcc_call_*`; 0 errors. New gap logged: ISR prologue/epilogue (`reti`→`rete`, save-all, 2 latent
+`jp (iy)`). See "Session 9". Session 8: **s1c88 is now a fully independent port** — renamed the 44 globals
 that collided with the z80 port, so build.sh no longer `--disable`s the other ports; a full all-ports build
 links `-ms1c88`/`-mz80`/… into one driver with 0 collisions, s1c88 codegen byte-identical. See "Session 8".
 Session 7: **register-model cleanup — all *active* C/D/E + DE/BC z80-isms
@@ -165,6 +168,24 @@ the broader operand-placement work so the allocator keeps 16-bit operands in BA/
 
 > A from-scratch big-bang reshape was tried and **reset** (unverifiable-red for the whole grind). The dead
 > WIP is in reflog `417bed5` — useful only as a reference for the *end-state* register defs.
+
+## Session 9 (2026-06-02) — indirect / function-pointer calls retargeted
+
+**`bc03fff`:** calls through a function pointer (`f(x)` via ptr, `v->op(a,b)`, `tbl[i]()`) were illegal —
+they emitted `jp (iy)` (peephole'd to bogus `jrl (iy)`), a BC pointer load, and `call ___sdcc_call_hl`/
+`___sdcc_call_iy` helpers that don't exist for the S1C88. The only register-indirect transfer the S1C88 has
+is **`jp hl`** (verified: `jp iy`/`call hl`/`jrl (iy)`/`carl (iy)` all illegal). Replaced the whole
+HL/IY/BC/DE/UNIMPLEMENTED branch chain in genCall's `PCALL` case with one legal HL path: move the pointer
+to HL, then **tail-jump** = `jp hl`; **call** = manufacture a return address in a free pair (IY normally, BA
+under `--reserve-iy`), `push` it, `jp hl` — the callee's RET returns to the label right after. No runtime
+helper, no DE/BC. Near function pointers are same-bank so plain `jp hl` is correct (far/banked ptrs = the
+deferred 3-byte ABI). Verified 0 sdas88 errors across tail/non-tail/struct-member/table-indexed forms; full
+12-input corpus + rom-smoke + link-smoke GREEN.
+
+**NEW GAP found — ISR prologue/epilogue (task #11).** `__interrupt` functions emit `reti` (S1C88 = `rete`),
+the save/restore-all `push bc/de/af`…`pop …` over the z80 register set, and the two remaining latent
+`jp (iy)` epilogue sites (genEndFunction merged-adjust ~7262 + ISR ~7375). 28 sdas88 errors on a 2-ISR
+test. Separate workstream; not reachable from ordinary direct/indirect-call codegen.
 
 ## Session 8 (2026-06-02) — s1c88 is now a fully independent port (links alongside z80 et al.)
 
