@@ -15,6 +15,6 @@ typedef struct
 Z80_FLOAT;
 
 /** Convert a native float into 'z80' format */
-int convertFloat (Z80_FLOAT * f, double native);
+int s1c88_convertFloat (Z80_FLOAT * f, double native);
 
 #endif

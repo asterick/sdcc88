@@ -22,11 +22,11 @@
   what you give them.   Help stamp out software-hoarding!
 -------------------------------------------------------------------------*/
 
-bool z80notUsed(const char *what, lineNode *endPl, lineNode *head);
-bool z80notUsedFrom(const char *what, const char *label, lineNode *head);
-bool z80canAssign (const char *dst, const char *src, const char *exotic);
-bool z80symmParmStack (const char *name);
-bool z80canJoinRegs (const char **regs, char dst[20]);
-bool z80canSplitReg (const char *reg, char dst[][16], int nDst);
-int z80instructionSize(lineNode *node);
+bool s1c88notUsed(const char *what, lineNode *endPl, lineNode *head);
+bool s1c88notUsedFrom(const char *what, const char *label, lineNode *head);
+bool s1c88canAssign (const char *dst, const char *src, const char *exotic);
+bool s1c88symmParmStack (const char *name);
+bool s1c88canJoinRegs (const char **regs, char dst[20]);
+bool s1c88canSplitReg (const char *reg, char dst[][16], int nDst);
+int s1c88instructionSize(lineNode *node);
 

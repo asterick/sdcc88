@@ -35,9 +35,9 @@ typedef struct
   }
 Z80_OPTS;
 
-extern Z80_OPTS z80_opts;
+extern Z80_OPTS s1c88_opts;
 
-/* sdcc88 is a SINGLE-VARIANT port: main.c fixes z80_opts.sub = SUB_Z80 once and
+/* sdcc88 is a SINGLE-VARIANT port: main.c fixes s1c88_opts.sub = SUB_Z80 once and
    nothing ever changes it (the other -mz80 variants are not built). So the
    sub-port predicates are compile-time constants — IS_Z80 always true, every
    other variant always false. Making them literal lets the compiler dead-code-
@@ -58,7 +58,7 @@ extern Z80_OPTS z80_opts;
 #define IS_R800 0
 #define HAS_IYL_INST (options.allow_undoc_inst)
 
-#define IY_RESERVED (z80_opts.reserveIY)
+#define IY_RESERVED (s1c88_opts.reserveIY)
 
 #define OPTRALLOC_IY !(IY_RESERVED || IS_SM83)
 

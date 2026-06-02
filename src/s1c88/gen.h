@@ -80,21 +80,21 @@ typedef struct asmop
 }
 asmop;
 
-void genZ80Code (iCode *);
-void z80_emitDebuggerSymbol (const char *);
+void genS1C88Code (iCode *);
+void s1c88_emitDebuggerSymbol (const char *);
 
 
-bool z80IsReturned(const char *what);
+bool s1c88IsReturned(const char *what);
 
 // Check if what is part of the ith argument (counting from 1) to a function of type ftype.
 // If what is 0, just check if hte ith argument is in registers.
-bool z80IsRegArg(struct sym_link *ftype, int i, const char *what);
+bool s1c88IsRegArg(struct sym_link *ftype, int i, const char *what);
 
 // Check if what is part of the any argument (counting from 1) to a function of type ftype.
-bool z80IsParmInCall(sym_link *ftype, const char *what);
+bool s1c88IsParmInCall(sym_link *ftype, const char *what);
 
-extern bool z80_assignment_optimal;
-extern bool should_omit_frame_ptr;
+extern bool s1c88_assignment_optimal;
+extern bool s1c88_should_omit_frame_ptr;
 
 #endif
 

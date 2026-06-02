@@ -27,9 +27,9 @@
 extern "C"
 {
   #include "s1c88.h"
-  float dryZ80iCode (iCode * ic);
-  bool z80_assignment_optimal;
-  bool should_omit_frame_ptr;
+  float dryS1C88iCode (iCode * ic);
+  bool s1c88_assignment_optimal;
+  bool s1c88_should_omit_frame_ptr;
 }
 
 /* Must match the ralloc.h *_IDX ordinals: A,B,L,H are the allocatable S1C88
@@ -540,7 +540,7 @@ static bool Ainst_ok(const assignment &a, unsigned short int i, const G_t &G, co
   if(SKIP_IC2(ic))
     return(true);
 
-  bool exstk = (should_omit_frame_ptr || (currFunc && currFunc->stack > 127) || IS_SM83);
+  bool exstk = (s1c88_should_omit_frame_ptr || (currFunc && currFunc->stack > 127) || IS_SM83);
 
   //std::cout << "Ainst_ok at " << G[i].ic->key << ": A = (" << ia.registers[REG_A][0] << ", " << ia.registers[REG_A][1] << "), inst " << i << ", " << ic->key << "\n";
 
@@ -702,7 +702,7 @@ static bool HLinst_ok(const assignment &a, unsigned short int i, const G_t &G, c
 {
   const iCode *ic = G[i].ic;
 
-  bool exstk = (should_omit_frame_ptr || (currFunc && currFunc->stack > 127) || IS_SM83);
+  bool exstk = (s1c88_should_omit_frame_ptr || (currFunc && currFunc->stack > 127) || IS_SM83);
 
   const i_assignment_t &ia = a.i_assignment;
 
@@ -959,7 +959,7 @@ static bool IYinst_ok(const assignment &a, unsigned short int i, const G_t &G, c
   /*if(ic->key == 40)
     std::cout << "1IYinst_ok: at (" << i << ", " << ic->key << ")\nIYL = (" << ia.registers[REG_IYL][0] << ", " << ia.registers[REG_IYL][1] << "), IYH = (" << ia.registers[REG_IYH][0] << ", " << ia.registers[REG_IYH][1] << ")inst " << i << ", " << ic->key << "\n";*/
 
-  bool exstk = (should_omit_frame_ptr || (currFunc && currFunc->stack > 127));
+  bool exstk = (s1c88_should_omit_frame_ptr || (currFunc && currFunc->stack > 127));
 
   bool unused_IYL = (ia.registers[REG_IYL][1] < 0);
   bool unused_IYH = (ia.registers[REG_IYH][1] < 0);
@@ -1168,7 +1168,7 @@ static void assign_operand_for_cost(operand *o, const assignment &a, unsigned sh
       var_t v = oi->second;
       if(a.global[v] >= 0)
         {
-          sym->regs[I[v].byte] = regsZ80 + a.global[v];
+          sym->regs[I[v].byte] = regsS1C88 + a.global[v];
           sym->accuse = 0;
           sym->isspilt = false;
           sym->nRegs = I[v].size;
@@ -1272,7 +1272,7 @@ static float instruction_cost(const assignment &a, unsigned short int i, const G
     case ENDCRITICAL:
       assign_operands_for_cost(a, i, G, I);
       set_surviving_regs(a, i, G, I);
-      c = dryZ80iCode(ic);
+      c = dryS1C88iCode(ic);
       ic->generated = false;
       return(c);
 
@@ -1542,7 +1542,7 @@ static bool tree_dec_ralloc(T_t &T, G_t &G, const I_t &I, SI_t &SI)
       if(winner.global[v] >= 0)
         {
          
-          sym->regs[I[v].byte] = regsZ80 + winner.global[v];
+          sym->regs[I[v].byte] = regsS1C88 + winner.global[v];
           sym->accuse = 0;
           sym->isspilt = false;
           sym->nRegs = I[v].size;
@@ -1554,9 +1554,9 @@ static bool tree_dec_ralloc(T_t &T, G_t &G, const I_t &I, SI_t &SI)
           sym->accuse = 0;
           sym->nRegs = I[v].size;
           if (USE_OLDSALLOC)
-            sym->isspilt = false; // Leave it to Z80RegFix, which can do some spillocation compaction.
+            sym->isspilt = false; // Leave it to S1C88RegFix, which can do some spillocation compaction.
           else
-            z80SpillThis(sym);
+            s1c88SpillThis(sym);
         }
     }
 
@@ -1574,7 +1574,7 @@ static bool tree_dec_ralloc(T_t &T, G_t &G, const I_t &I, SI_t &SI)
 template <class G_t>
 static bool omit_frame_ptr(const G_t &G)
 {
-  if(IS_SM83 || IY_RESERVED || z80_opts.noOmitFramePtr)
+  if(IS_SM83 || IY_RESERVED || s1c88_opts.noOmitFramePtr)
     return(false);
 
   if(options.omitFramePtr)
@@ -1607,9 +1607,9 @@ static bool omit_frame_ptr(const G_t &G)
 }
 
 // Adjust stack location when deciding to omit frame pointer.
-void move_parms(void)
+void s1c88_move_parms(void)
 {
-  if(!currFunc || IS_SM83 || !should_omit_frame_ptr)
+  if(!currFunc || IS_SM83 || !s1c88_should_omit_frame_ptr)
     return;
 
   for(value *val = FUNC_ARGS (currFunc->type); val; val = val->next)
@@ -1621,7 +1621,7 @@ void move_parms(void)
     }
 }
   
-iCode *z80_ralloc2_cc(ebbIndex *ebbi)
+iCode *s1c88_ralloc2_cc(ebbIndex *ebbi)
 {
   eBBlock **const ebbs = ebbi->bbOrder;
   const int count = ebbi->count;
@@ -1639,8 +1639,8 @@ iCode *z80_ralloc2_cc(ebbIndex *ebbi)
   if (optimize.genconstprop)
     recomputeValinfos (ic, ebbi, "_2");
 
-  should_omit_frame_ptr = omit_frame_ptr(control_flow_graph);
-  move_parms();
+  s1c88_should_omit_frame_ptr = omit_frame_ptr(control_flow_graph);
+  s1c88_move_parms();
 
   if(options.dump_graphs)
     dump_cfg(control_flow_graph);
@@ -1667,9 +1667,9 @@ iCode *z80_ralloc2_cc(ebbIndex *ebbi)
 
   scon_t stack_conflict_graph;
 
-  z80_assignment_optimal = !tree_dec_ralloc(tree_decomposition, control_flow_graph, conflict_graph, stack_conflict_graph);
+  s1c88_assignment_optimal = !tree_dec_ralloc(tree_decomposition, control_flow_graph, conflict_graph, stack_conflict_graph);
 
-  Z80RegFix (ebbs, count);
+  S1C88RegFix (ebbs, count);
 
   if (USE_OLDSALLOC)
     redoStackOffsets ();

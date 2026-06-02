@@ -56,9 +56,9 @@ static struct
   lineNode *head;
 } _G;
 
-extern bool z80_regs_used_as_parms_in_calls_from_current_function[IYH_IDX + 1];
-extern bool z80_symmParm_in_calls_from_current_function;
-extern bool z80_regs_preserved_in_calls_from_current_function[IYH_IDX + 1];
+extern bool s1c88_regs_used_as_parms_in_calls_from_current_function[IYH_IDX + 1];
+extern bool s1c88_symmParm_in_calls_from_current_function;
+extern bool s1c88_regs_preserved_in_calls_from_current_function[IYH_IDX + 1];
 
 /*-----------------------------------------------------------------*/
 /* univisitLines - clear "visited" flag in all lines               */
@@ -169,21 +169,21 @@ static bool argCont(const char *arg, const char *what)
 static bool
 z80MightBeParmInCallFromCurrentFunction(const char *what)
 {
-  if (strchr(what, 'l') && z80_regs_used_as_parms_in_calls_from_current_function[L_IDX])
+  if (strchr(what, 'l') && s1c88_regs_used_as_parms_in_calls_from_current_function[L_IDX])
     return TRUE;
-  if (strchr(what, 'h') && z80_regs_used_as_parms_in_calls_from_current_function[H_IDX])
+  if (strchr(what, 'h') && s1c88_regs_used_as_parms_in_calls_from_current_function[H_IDX])
     return TRUE;
-  if (strchr(what, 'e') && z80_regs_used_as_parms_in_calls_from_current_function[E_IDX])
+  if (strchr(what, 'e') && s1c88_regs_used_as_parms_in_calls_from_current_function[E_IDX])
     return TRUE;
-  if (strchr(what, 'd') && z80_regs_used_as_parms_in_calls_from_current_function[D_IDX])
+  if (strchr(what, 'd') && s1c88_regs_used_as_parms_in_calls_from_current_function[D_IDX])
     return TRUE;
-  if (strchr(what, 'c') && z80_regs_used_as_parms_in_calls_from_current_function[C_IDX])
+  if (strchr(what, 'c') && s1c88_regs_used_as_parms_in_calls_from_current_function[C_IDX])
     return TRUE;
-  if (strchr(what, 'b') && z80_regs_used_as_parms_in_calls_from_current_function[B_IDX])
+  if (strchr(what, 'b') && s1c88_regs_used_as_parms_in_calls_from_current_function[B_IDX])
     return TRUE;
-  if (strchr(what, 'a') && z80_regs_used_as_parms_in_calls_from_current_function[A_IDX])
+  if (strchr(what, 'a') && s1c88_regs_used_as_parms_in_calls_from_current_function[A_IDX])
     return true;
-  if (strstr(what, "iy") && (z80_regs_used_as_parms_in_calls_from_current_function[IYL_IDX] || z80_regs_used_as_parms_in_calls_from_current_function[IYH_IDX]))
+  if (strstr(what, "iy") && (s1c88_regs_used_as_parms_in_calls_from_current_function[IYL_IDX] || s1c88_regs_used_as_parms_in_calls_from_current_function[IYH_IDX]))
     return true;
 
   return false;
@@ -373,7 +373,7 @@ z80MightRead(const lineNode *pl, const char *what)
     {
       const symbol *f = findSym (SymbolTab, 0, pl->line + 6);
       if (f && IS_FUNC (f->type))
-        return z80IsParmInCall(f->type, what);
+        return s1c88IsParmInCall(f->type, what);
       else // Fallback needed for calls through function pointers and for calls to literal addresses.
         return z80MightBeParmInCallFromCurrentFunction(what);
     }
@@ -382,7 +382,7 @@ z80MightRead(const lineNode *pl, const char *what)
     return(strcmp(what, "sp") == 0);
 
   if(ISINST(pl->line, "ret")) // --reserve-regs-iy and the sm83 port use ret in code gen for calls through function pointers
-    return((IY_RESERVED || IS_SM83) ? z80IsReturned(what) || z80MightBeParmInCallFromCurrentFunction(what) : z80IsReturned(what)) || strcmp(what, "sp") == 0;
+    return((IY_RESERVED || IS_SM83) ? s1c88IsReturned(what) || z80MightBeParmInCallFromCurrentFunction(what) : s1c88IsReturned(what)) || strcmp(what, "sp") == 0;
 
   if(!strcmp(pl->line, "ex\t(sp), hl") || !strcmp(pl->line, "ex\t(sp),hl"))
     return(!strcmp(what, "h") || !strcmp(what, "l") || strcmp(what, "sp") == 0);
@@ -837,7 +837,7 @@ callSurelyWrites (const lineNode *pl, const char *what)
   if(f)
     preserved_regs = f->type->funcAttrs.preserved_regs;
   else if (ISINST(pl->line, "call"))
-    preserved_regs = z80_regs_preserved_in_calls_from_current_function;
+    preserved_regs = s1c88_regs_preserved_in_calls_from_current_function;
   else // Err on the safe side for jp and jr - might not be a function call, might e.g. be a jump table.
     return (false);
 
@@ -1036,7 +1036,7 @@ scan4op (lineNode **pl, const char *what, const char *untilOp,
           if (!tlbl) // jp/jr could be a tail call.
             {
               const symbol *f = findSym (SymbolTab, 0, (*pl)->line + 4);
-              if (f && z80IsParmInCall(f->type, what))
+              if (f && s1c88IsParmInCall(f->type, what))
                 {
                   D (("S4O_RD_OP\n"));
                   return S4O_RD_OP;
@@ -1183,32 +1183,32 @@ isRegPair(const char *what)
 /* Check that what is never read after endPl. */
 
 bool
-z80notUsed (const char *what, lineNode *endPl, lineNode *head)
+s1c88notUsed (const char *what, lineNode *endPl, lineNode *head)
 {
   lineNode *pl;
   D(("Checking for %s\n", what));
 
   if(strcmp(what, "af") == 0)
     {
-      if(!z80notUsed("a", endPl, head))
+      if(!s1c88notUsed("a", endPl, head))
         return FALSE;
       what++;
     }
 
   if(strcmp(what, "f") == 0)
-    return z80notUsed("zf", endPl, head) && z80notUsed("cf", endPl, head) &&
-           z80notUsed("sf", endPl, head) && z80notUsed("pf", endPl, head) &&
-           z80notUsed("nf", endPl, head) && z80notUsed("hf", endPl, head);
+    return s1c88notUsed("zf", endPl, head) && s1c88notUsed("cf", endPl, head) &&
+           s1c88notUsed("sf", endPl, head) && s1c88notUsed("pf", endPl, head) &&
+           s1c88notUsed("nf", endPl, head) && s1c88notUsed("hf", endPl, head);
 
   if(strcmp(what, "iy") == 0)
     {
       if(IY_RESERVED)
         return FALSE;
-      return(z80notUsed("iyl", endPl, head) && z80notUsed("iyh", endPl, head));
+      return(s1c88notUsed("iyl", endPl, head) && s1c88notUsed("iyh", endPl, head));
     }
 
   if(strcmp(what, "ix") == 0)
-    return(z80notUsed("ixl", endPl, head) && z80notUsed("ixh", endPl, head));
+    return(s1c88notUsed("ixl", endPl, head) && s1c88notUsed("ixh", endPl, head));
 
   if(isRegPair(what))
     {
@@ -1217,7 +1217,7 @@ z80notUsed (const char *what, lineNode *endPl, lineNode *head)
       high[0] = what[0];
       low[1] = 0;
       high[1] = 0;
-      return(z80notUsed(low, endPl, head) && z80notUsed(high, endPl, head));
+      return(s1c88notUsed(low, endPl, head) && s1c88notUsed(high, endPl, head));
     }
 
   // P/V and L/V (rabbits) are the same flag
@@ -1249,7 +1249,7 @@ z80notUsed (const char *what, lineNode *endPl, lineNode *head)
 }
 
 bool
-z80notUsedFrom (const char *what, const char *label, lineNode *head)
+s1c88notUsedFrom (const char *what, const char *label, lineNode *head)
 {
   lineNode *cpl;
 
@@ -1257,7 +1257,7 @@ z80notUsedFrom (const char *what, const char *label, lineNode *head)
     {
       if (cpl->isLabel && !strncmp (label, cpl->line, strlen(label)))
         {
-          return z80notUsed (what, cpl, head);
+          return s1c88notUsed (what, cpl, head);
         }
     }
 
@@ -1265,7 +1265,7 @@ z80notUsedFrom (const char *what, const char *label, lineNode *head)
 }
 
 bool
-z80canAssign (const char *op1, const char *op2, const char *exotic)
+s1c88canAssign (const char *op1, const char *op2, const char *exotic)
 {
   const char *dst, *src;
 
@@ -1371,7 +1371,7 @@ registerBaseName (const char *op)
 }
 
 // canJoinRegs(reg_hi reg_lo [dst]) returns TRUE,
-bool z80canJoinRegs (const char **regs, char dst[20])
+bool s1c88canJoinRegs (const char **regs, char dst[20])
 {
   //check for only 2 source registers
   if (!regs[0] || !regs[1] || regs[2])
@@ -1400,7 +1400,7 @@ bool z80canJoinRegs (const char **regs, char dst[20])
   return isRegPair (dst);
 }
 
-bool z80canSplitReg (const char *reg, char dst[][16], int nDst)
+bool s1c88canSplitReg (const char *reg, char dst[][16], int nDst)
 {
   int i;
   if (nDst < 0 || nDst > 2)
@@ -1429,7 +1429,7 @@ bool z80canSplitReg (const char *reg, char dst[][16], int nDst)
   return TRUE;
 }
 
-int z80instructionSize(lineNode *pl)
+int s1c88instructionSize(lineNode *pl)
 {
   const char *op1start, *op2start;
 
@@ -1819,10 +1819,10 @@ int z80instructionSize(lineNode *pl)
   return(999);
 }
 
-bool z80symmParmStack (const char *name)
+bool s1c88symmParmStack (const char *name)
 {
   if (!strcmp (name, "___sdcc_enter_ix"))
    return false;
-  return z80_symmParm_in_calls_from_current_function;
+  return s1c88_symmParm_in_calls_from_current_function;
 }
 

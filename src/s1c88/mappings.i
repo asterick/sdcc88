@@ -551,7 +551,7 @@ static const ASM_MAPPINGS _isas = {
     _isas_mapping
 };
 
-const ASM_MAPPINGS _isas_gb = {
+const ASM_MAPPINGS _s1c88_isas_gb = {
     &_isas,
     _isas_gb_mapping
 };
@@ -561,17 +561,17 @@ static const ASM_MAPPINGS _rgbds = {
     _rgbds_mapping
 };
 
-const ASM_MAPPINGS _rgbds_gb = {
+const ASM_MAPPINGS _s1c88_rgbds_gb = {
     &_rgbds,
     _rgbds_gb_mapping
 };
 
-const ASM_MAPPINGS _asxxxx_gb = {
+const ASM_MAPPINGS _s1c88_asxxxx_gb = {
     &asm_asxxxx_mapping,
     _asxxxx_gb_mapping
 };
 
-const ASM_MAPPINGS _asxxxx_z80 = {
+const ASM_MAPPINGS _s1c88_asxxxx_z80 = {
     &asm_asxxxx_mapping,
     _asxxxx_z80_mapping
 };
@@ -581,22 +581,22 @@ static const ASM_MAPPINGS _z80asm = {
     _z80asm_mapping
 };
 
-const ASM_MAPPINGS _z80asm_z80 = {
+const ASM_MAPPINGS _s1c88_z80asm_z80 = {
     &_z80asm,
     _z80asm_z80_mapping
 };
 
-const ASM_MAPPINGS _asxxxx_r2k = {
+const ASM_MAPPINGS _s1c88_asxxxx_r2k = {
     &asm_asxxxx_mapping,
     _asxxxx_r2k_mapping
 };
 
-const ASM_MAPPINGS _gas_gb = {
+const ASM_MAPPINGS _s1c88_gas_gb = {
     &asm_gas_mapping,
     _gas_gb_mapping
 };
 
-const ASM_MAPPINGS _gas_z80 = {
+const ASM_MAPPINGS _s1c88_gas_z80 = {
     &asm_gas_mapping,
     _gas_z80_mapping
 };

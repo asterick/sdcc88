@@ -84,16 +84,16 @@ typedef struct reg_info
   unsigned isFree:1;            /* is currently unassigned  */
 } reg_info;
 
-extern reg_info *regsZ80;
+extern reg_info *regsS1C88;
 
 void assignRegisters (eBBlock **, int);
-reg_info *regWithIdx (int);
+reg_info *s1c88_regWithIdx (int);
 
-void z80_assignRegisters (ebbIndex *);
-bitVect *z80_rUmaskForOp (const operand * op);
+void s1c88_assignRegisters (ebbIndex *);
+bitVect *s1c88_rUmaskForOp (const operand * op);
 
-void z80SpillThis (symbol *);
-iCode *z80_ralloc2_cc(ebbIndex *ebbi);
+void s1c88SpillThis (symbol *);
+iCode *s1c88_ralloc2_cc(ebbIndex *ebbi);
 
-void Z80RegFix (eBBlock ** ebbs, int count);
+void S1C88RegFix (eBBlock ** ebbs, int count);
 #endif

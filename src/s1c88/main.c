@@ -57,11 +57,11 @@ static char _s1c88_defaultRules[] = {
 
 
 
-Z80_OPTS z80_opts;
+Z80_OPTS s1c88_opts;
 
 
 static OPTION _z80_options[] = {
-  {0, OPTION_CALLEE_SAVES_BC, &z80_opts.calleeSavesBC, "Force a called function to always save BC"},
+  {0, OPTION_CALLEE_SAVES_BC, &s1c88_opts.calleeSavesBC, "Force a called function to always save BC"},
   {0, OPTION_PORTMODE,        NULL, "Determine PORT I/O mode (z80/z180)"},
   {0, OPTION_BO,              NULL, "<num> use code bank <num>"},
   {0, OPTION_BA,              NULL, "<num> use data bank <num>"},
@@ -70,11 +70,11 @@ static OPTION _z80_options[] = {
   {0, OPTION_CONST_SEG,       &options.const_seg, "<name> use this name for the const segment", CLAT_STRING},
   {0, OPTION_DATA_SEG,        &options.data_seg, "<name> use this name for the data segment", CLAT_STRING},
   {0, OPTION_NO_STD_CRT0,     &options.no_std_crt0, "Do not link default crt0.rel"},
-  {0, OPTION_RESERVE_IY,      &z80_opts.reserveIY, "Do not use IY (incompatible with --fomit-frame-pointer)"},
-  {0, OPTION_FRAMEPOINTER,    &z80_opts.noOmitFramePtr, "Do not omit frame pointer"},
+  {0, OPTION_RESERVE_IY,      &s1c88_opts.reserveIY, "Do not use IY (incompatible with --fomit-frame-pointer)"},
+  {0, OPTION_FRAMEPOINTER,    &s1c88_opts.noOmitFramePtr, "Do not omit frame pointer"},
   {0, OPTION_EMIT_EXTERNS,    NULL, "Emit externs list in generated asm"},
-  {0, OPTION_LEGACY_BANKING,  &z80_opts.legacyBanking, "Use legacy method to call banked functions"},
-  {0, OPTION_NMOS_Z80,        &z80_opts.nmosZ80, "Generate workaround for NMOS Z80 when saving IFF2"},
+  {0, OPTION_LEGACY_BANKING,  &s1c88_opts.legacyBanking, "Use legacy method to call banked functions"},
+  {0, OPTION_NMOS_Z80,        &s1c88_opts.nmosZ80, "Generate workaround for NMOS Z80 when saving IFF2"},
   {0, OPTION_SDCCCALL,        &options.sdcccall, "Set ABI version for default calling convention", CLAT_INTEGER},
   {0, OPTION_ALLOW_UNDOC_INST,&options.allow_undoc_inst, "Allow use of undocumented instructions"},
   {0, NULL}
@@ -135,27 +135,27 @@ static builtins _z80_builtins[] = {
   {NULL, NULL, 0, {NULL}}
 };
 
-extern reg_info sm83_regs[];
-extern reg_info z80_regs[];
-extern void z80_init_asmops (void);
-extern reg_info *regsZ80;
+extern reg_info s1c88_sm83_regs[];
+extern reg_info s1c88_regs[];
+extern void s1c88_init_asmops (void);
+extern reg_info *regsS1C88;
 
 static void
 _z80_init (void)
 {
-  z80_opts.sub = SUB_Z80;
+  s1c88_opts.sub = SUB_Z80;
   switch (_G.asmType)
     {
     case ASM_TYPE_GAS:
-      asm_addTree (&_gas_z80);
+      asm_addTree (&_s1c88_gas_z80);
       break;
     default:
-      asm_addTree (&_asxxxx_z80);
+      asm_addTree (&_s1c88_asxxxx_z80);
       break;
     }
 
-  regsZ80 = z80_regs;
-  z80_init_asmops ();
+  regsS1C88 = s1c88_regs;
+  s1c88_init_asmops ();
 }
 
 
@@ -187,7 +187,7 @@ _reg_parm (sym_link *l, bool reentrant)
         werror (E_Z88DK_FASTCALL_PARAMETER);
     }
 
-  bool is_regarg = z80IsRegArg (_G.regparam.ftype, ++_G.regparam.n, 0);
+  bool is_regarg = s1c88IsRegArg (_G.regparam.ftype, ++_G.regparam.n, 0);
 
   return (is_regarg ? _G.regparam.n : 0);
 }
@@ -294,19 +294,19 @@ do_pragma (int id, const char *name, const char *cp)
 
         if (!strcmp (str, "z80"))
           {
-            z80_opts.port_mode = 80;
+            s1c88_opts.port_mode = 80;
           }
         else if (!strcmp (str, "z180"))
           {
-            z80_opts.port_mode = 180;
+            s1c88_opts.port_mode = 180;
           }
         else if (!strcmp (str, "save"))
           {
-            z80_opts.port_back = z80_opts.port_mode;
+            s1c88_opts.port_back = s1c88_opts.port_mode;
           }
         else if (!strcmp (str, "restore"))
           {
-            z80_opts.port_mode = z80_opts.port_back;
+            s1c88_opts.port_mode = s1c88_opts.port_back;
           }
         else
           err = 1;
@@ -440,14 +440,14 @@ _parseOptions (int *pargc, char **argv, int *i)
           else if (!strcmp (asmblr, "z80asm"))
             {
               port->assembler.externGlobal = TRUE;
-              asm_addTree (&_z80asm_z80);
+              asm_addTree (&_s1c88_z80asm_z80);
               _G.asmType = ASM_TYPE_ISAS;
               return TRUE;
             }
           else if (!strcmp (asmblr, "gas"))
             {
               port->assembler.externGlobal = TRUE;
-              asm_addTree (&_gas_z80);
+              asm_addTree (&_s1c88_gas_z80);
               _G.asmType = ASM_TYPE_GAS;
               return TRUE;
             }
@@ -458,12 +458,12 @@ _parseOptions (int *pargc, char **argv, int *i)
 
           if (!strcmp (portmode, "z80"))
             {
-              z80_opts.port_mode = 80;
+              s1c88_opts.port_mode = 80;
               return TRUE;
             }
           else if (!strcmp (portmode, "z180"))
             {
-              z80_opts.port_mode = 180;
+              s1c88_opts.port_mode = 180;
               return TRUE;
             }
         }
@@ -572,10 +572,10 @@ _finaliseOptions (void)
     switch (_G.asmType)
       {
       case ASM_TYPE_ASXXXX:
-        asm_addTree (&_asxxxx_gb);
+        asm_addTree (&_s1c88_asxxxx_gb);
         break;
       case ASM_TYPE_GAS:
-        asm_addTree (&_gas_gb);
+        asm_addTree (&_s1c88_gas_gb);
         break;
       case ASM_TYPE_ISAS:
       case ASM_TYPE_RGBDS:
@@ -838,16 +838,16 @@ PORT s1c88_port =
   },
   {                             /* Peephole optimizer */
     _s1c88_defaultRules,
-    z80instructionSize,
+    s1c88instructionSize,
     0,
     0,
     0,
-    z80notUsed,
-    z80canAssign,
-    z80notUsedFrom,
-    z80symmParmStack,
-    z80canJoinRegs,
-    z80canSplitReg,
+    s1c88notUsed,
+    s1c88canAssign,
+    s1c88notUsedFrom,
+    s1c88symmParmStack,
+    s1c88canJoinRegs,
+    s1c88canSplitReg,
   },
   /* Sizes: char, short, int, long, long long, near ptr, far ptr, gptr, func ptr, banked func ptr, bit, float, BitInt (in bits) */
   { 1, 2, 2, 4, 8, 2, 2, 2, 2, 2, 1, 4, 64 },
@@ -889,7 +889,7 @@ PORT s1c88_port =
     true,                       /* use support routine for int x int -> long multiplication */
     false,                      /* do not use support routine for unsigned long x unsigned char -> unsigned long long multiplication */
   },
-  { z80_emitDebuggerSymbol },
+  { s1c88_emitDebuggerSymbol },
   {
     256,                        /* maxCount */
     3,                          /* sizeofElement */
@@ -905,7 +905,7 @@ PORT s1c88_port =
   NULL,
   _finaliseOptions,
   _setDefaultOptions,
-  z80_assignRegisters,
+  s1c88_assignRegisters,
   _getRegName,
   _getRegByName,
   NULL,
