@@ -3,9 +3,14 @@
 **This is the single resume entry point.** If the prompt is *"let's pick up where you left off,"* do the
 steps under **NEXT ACTION**. Everything needed to continue is here or linked from here.
 
-_Last updated: 2026-06-02 (session 12: **`__critical` retargeted** to SC interrupt-level masking
-(`push sc; or sc,#0xc0` / `pop sc`, no ei/di) — 0 errors; ei/di/reti/ld a,i/jp PO now gone from all
-reachable codegen. See "Session 12". Session 11: **struct/union return-by-value implemented** — `return *p` now
+_Last updated: 2026-06-02 (**PAUSED here** — the codegen retarget is **functionally complete**: every
+reachable path emits legal S1C88 (0 `sdas88` errors across a broad corpus), assemble→link→banked-ROM GREEN,
+and s1c88 is an independent port that builds alongside z80. Remaining = cleanup + ABI completeness (tasks
+#7 register-model dead-code/symbol sweep [started s13], #8 IX/IY args, #9 far pointers, #10 assembler
+signed-branch) — see "NEXT ACTION". session 13: register-model dead-code sweep STARTED (`cee1680`, dead
+RAB/TLCS90 epilogue removed) + 3-part scope recorded. session 12: **`__critical` retargeted** to SC
+interrupt-level masking (`push sc; or sc,#0xc0` / `pop sc`, no ei/di) — ei/di/reti/ld a,i/jp PO now gone
+from all reachable codegen. session 11: **struct/union return-by-value implemented** — `return *p` now
 copies sizeof(return type) bytes to the caller's hidden buffer (HL=source, IY=`*(sp+off)`, byte loop);
 0 errors across struct-return forms. See "Session 11". Session 10: **ISR prologue/epilogue retargeted** to
 the S1C88 RETE model —
@@ -33,10 +38,10 @@ stack-word peeks + IY/BA arg-push, variable-shift IY counter, `ex(sp),hl`→`ld 
 compares→native `jrs` (drop `ccf`), immediate→indexed-store fix. Session 3: offsetPair native-add,
 `add hl/iy/ix,sp` elimination, struct-return SIGSEGV fix; ldir attempt reverted — see "Session 3").
 Branch: **`main`** (all work is on main;
-there is no `s1c88-retarget` branch anymore — CLAUDE.md's mention of it is stale). State: **GREEN** —
-compiler builds/links/runs, and the
-**binary toolchain (assembler + linker + banked ROM) is complete**. The remaining work is the **codegen
-retarget** (z80→S1C88 emission cleanup)._
+there is no `s1c88-retarget` branch anymore). State: **GREEN** — compiler builds/links/runs, the binary
+toolchain (assembler + linker + banked ROM) is complete, and the codegen retarget is **functionally
+complete**. The remaining work is cleanup + ABI completeness (the register-model symbol sweep + IX/IY args
++ far pointers + the assembler signed-branch gap)._
 
 ---
 
@@ -53,113 +58,40 @@ retarget** (z80→S1C88 emission cleanup)._
   - A multi-bank Pokémon Mini ROM builds end-to-end (`scripts/rom-smoke.sh`, GREEN).
 - Everything builds + runs **inside the sandbox** — iterate freely, no `! ...`.
 
-## NEXT ACTION (do this) — the codegen retarget
+## NEXT ACTION (do this)
 
-1. Confirm green:
-   ```
-   ./scripts/dev.sh            # overlay src/s1c88 + build compiler + smoke test → "GREEN"
-   ```
-2. Regenerate the validator's to-do list (the live z80-ism list):
-   ```
-   printf 'int cmp(int a,int b){if(a<b)return 1;return 0;}\n' | \
-     build/sdcc-4.5.0/src/sdcc -ms1c88 --c1mode -o /tmp/x.asm
-   scripts/validate-s1c88.sh /tmp/x.asm     # assembles emitted asm; rejects = the z80-isms to fix
-   ```
-3. Clear z80-isms in `src/s1c88/gen.c` one slice at a time, **byte-checking each with the validator**,
-   committing green. **Done so far:** frame setup (`ld ix,sp`), branches (`jr→jrs`, `jp→jrl`, `call→carl`,
-   via `peeph-z80.def`), **signed compare → native `jrs LT/GE`** (`genCmp`/`genIfxJump`; the
-   `z80instructionSize` branch-sizing in `peep.c` came with it), **16-bit `sub ba,hl`** (genMinus/genSub,
-   `fa05339`), and **16-bit `cp ba,hl` for ifx compares** (genCmp, `1dc9d94`). Note (verified vs sdas88):
-   the byte-wise `sub a,l` / `sbc a,h` idiom is *illegal* on the S1C88 — the 8-bit ALU source must be A or B,
-   never L/H — so the 16-bit ALU work is **required**, not just an optimization. The native 16-bit
-   sub/sbc/cp on the two ALU pairs (BA, HL) all assemble; `rr l` / `rrc l` are also illegal (`rr`/`rrc` take
-   only a, b, (br:ll), (hl)). New helper `aluPairId()` recognizes BA (the z80 getPairId helpers don't).
-   **Remaining** (the validator list):
-   - ~~**Byte-wise 16-bit ALU**~~ **DONE**. int `sub`/`cp`/`==`/`!=` native (`661555f` etc.); the byte
-     fallback's L/H operands (`*p-*q` → `sbc a,h`, char `sub a,l`) now route through B via `emit3_8alu`
-     (`6c49c73` compares, `a7e7235` genPlus/genSub).
-   - ~~**Shifts/rotates** (`rr l`, `rr h`, `sla -N(ix)`, `rl -N(ix)`)~~ **DONE** (`ad12cb5`): S1C88
-     shifts only target A/B/[HL]/[BR:ll]; new `emit3_shift` routes L/H/[ix+d] operands through A/B (carry
-     chain preserved via flag-neutral `ld`). Also **removed peephole 21** (it re-folded the routed code
-     back into illegal `sla m(ix)`). Constant int/long/char `<<`/`>>` (signed+unsigned) all 0 errors.
-   - ~~`push af` stack reservation~~ **DONE** (`a69a11f`): `adjustStack` now emits native S1C88 SP moves —
-     reserve via flag-safe `push hl`/`push a` filler, free via `add sp,#n` (flags dead) or `pop hl`/`pop iy`
-     (flags live). Killed `push af`/`pop af`/`pop bc`/`pop de`. NB: on the S1C88 even `inc/dec sp` set
-     Z C V N (unlike z80), so flag-preserving frees must use `pop <pair>`, not `inc/dec sp`.
-   - ~~non-ifx signed compare~~ **DONE** (`eb3adcc`): `return a<b` now does `cp ba,hl; ld a,#1; jrs LT;
-     xor a,a` (native), `>=`/`<=` add `xor a,#1`, unsigned uses `ld a,#0; rl a`. Killed `jp PO`/`rlca`;
-     `outBitC` now emits `rl a` not `rla`.
-   - ~~8-bit char compare~~ **DONE** (`6c49c73`): `sub a,l` (operand in L/H — the 8-bit ALU can't source
-     L/H) now routes through B via new helper `emit3_8alu` (`ld b,l; sub a,b`, push/pop b if B live).
-     Covers signed/unsigned char, ifx/non-ifx, `<`/`>`/`==`.
-   - ~~signed/literal compare~~ **DONE** (`cd83036`): `if(a<100)` now emits native `cp {ba,hl},#imm` +
-     `jrs LT/GE/NC`, replacing the illegal `xor #0x80`/`rla`/`ccf`/`rra` sign-map. **The whole compare
-     test corpus (reg/eq/lc/ce/nb/ch/sc/li) is now 0 sdas88 errors.** Only the rare AOP_CRY (bit) signed
-     result still keeps the z80 fixup. Compares are essentially retargeted; next clusters are the
-     non-compare byte ALU and shifts below.
-   - ~~8-bit AND/OR/XOR with L/H operand~~ **DONE** (`1e860c8`): `and a,l`/`or a,h`/`xor a,l` route through
-     B via `emit3_8alu`, applied to genAnd/genOr/genEor. **`emit3_8alu` now always push/pop B** — these ops
-     have no native 16-bit form so they hit the both-in-pairs case (`a&b`, a=BA b=HL) where B holds the
-     accumulator's high byte mid-op (isRegDead reports B dead *after* the iCode, which was a latent
-     clobber). push/pop B is correct everywhere; the genSub/genPlus/compare uses inherit the fix.
-   - **NEXT — the C/D/E + DE/BC register-model grind** (the dominant residue; ~319 `PAIR_DE` refs total).
-     **Partly done:** `getFreePairId`/`getDeadPairId` now return **BA** not BC/DE (`d17a167`) — fixed the
-     scratch-pair picks (`sbc hl,bc`→`sbc hl,ba`, `add hl,bc`, the `ex (sp),hl` shuffle). **Remaining is
-     several *distinct* idioms, each per-site (NOT one mechanical fix):**
-     - **Callee-cleanup epilogue return-address shuffle** (`gen.c` ~7393–7460): the `bc_free||de_free`
-       branch + the hard `else` path use `_push/_pop(PAIR_BC/DE)`, `ld e,(hl)`/`ld d,(hl)`, and
-       **`ex (sp),hl`** (no S1C88 stack-exchange) to hop the return address over the param area. Retarget to
-       BA/IX/IY scratch + `ld {hl,ba},[sp+dd]` (the S1C88 *has* SP-relative loads/stores — use them instead
-       of the pop/push dance). Compare with the *other* epilogue path that already works (`pop hl; pop iy×N;
-       jp hl`, seen in `_callee`).
-     - **Stack-peek** (`pop de; pop hl; push hl; push de` to reload a 2nd stack word into HL) — replace with
-       a direct `ld hl,[sp+dd]`.
-     - **Variable-shift `C` loop counter** (`ld c,l`/`inc c`/`dec c`): when left=BA and result=HL use all 4
-       byte regs there's no free byte for the counter — needs a 5th slot (stack temp, or `dec iy`/IX
-       counter, or the native `DJR` after the value moves to HL). A real restructure of genLeftShift/
-       genRightShift's `countreg` selection (it still lists `C_IDX`/`D_IDX`).
-     - **saveRegs/restoreRegs around calls** + the remaining direct `asmop_de`/`DEHL`/`HLDE`/`HLBC`/`DEBC`
-       combos and `_push(PAIR_DE)` scratch sites. Per `abi-decision.md` Step 2.
-     - **⚠ DEBUGGING GOTCHA (cost me a whole session):** `emitDebug()` only prints with `--verbose`. Marker
-       traces compiled *without* `--verbose` silently emit nothing → false "this code path isn't hit"
-       conclusions. **Use `fprintf(stderr, …)` for instrumentation, or pass `--verbose`.** The `_vemit2`
-       fprintf trick (check the rendered `p` buffer) reliably catches any emitted line.
-     - **`inc/dec -N(ix)`** (indexed-mem INC/DEC illegal): peeph 116/117 fold removed (`725ca44`). The
-       remaining direct `inc -N(ix)` (e.g. `sum_arr` counter) — my "not emit3_o" conclusion was from a
-       *suppressed* emitDebug, so it's **probably emit3_o after all**; the reverted `emit3_incdec` helper
-       (route stack INC/DEC through A: `ld a,d(ix); inc a; ld d(ix),a`, Z-safe via the trailing ld) was
-       likely the right fix — **re-apply it** and verify with `--verbose`/fprintf. (Reflog has the helper.)
-     - **`set 7,l`** (bit ops only on A/B/[HL]); **`neg`** form. Lower freq.
-   - **Stack-peek `pop de;pop hl;push hl;push de` (idx/mul):** CONFIRMED via `_vemit2` fprintf trace it goes
-     through `_push(pair)`/`_pop(pair)` with a *computed* `pair == PAIR_DE` (NOT the literal `_pop(PAIR_DE)`
-     sites, NOT getFreePairId — already BA'd). The caller selects PAIR_DE some other way; locate it with
-     `fprintf` of `pairId` + `__builtin_return_address(0)` in `_push`, or per-candidate-callsite markers.
-     It peeks the 2nd stack word into HL — **retarget to `ld hl, d(sp)`** (the S1C88 SP-relative load;
-     assembles). deref2's peek is already gone (getFreePairId→BA fixed it).
-   - ~~Accumulator rotates~~ **DONE** (`644576e`): all 41 `emit3(A_RLA/RLCA/RRA/RRCA…)` sites + the live
-     raw `emit2("rla")` substituted to the operand form `rl a`/`rlc a`/`rr a`/`rrc a` (also fixes the
-     cost). Verified no site reads Z/S/V/P after a rotate (all carry-centric), so the operand forms' extra
-     Z/S effects are unused. The peeph.def rotate rules match on the old output, so they just go dead (a
-     couple micro-opts lost, no illegal output).
-   - ~~`push af`/`pop af`~~ **DONE** (`4038be3`): `_push/_pop(PAIR_AF)` now emit `push a; push sc` /
-     `pop sc; pop a` (no AF reg; SC = flag register; preserves A *and* flags). Covers the reachable
-     callers. A few raw `emit2("push af")` sites remain in dead/rare paths (adjustStack's unreachable z80
-     tail, the `#if 0` block) — none hit by fresh codegen; mop up if they ever surface.
-   - Misc: `ex (sp),hl` (no S1C88 stack-exchange — arg/spill shuffle); `set 7,l`/bit set-res-test on L/H
-     (S1C88 bit ops only on A/B/[HL]); `inc -N(ix)` (indexed-memory INC illegal); `neg` form. Lower freq.
-   - **KNOWN GAP (verified 2026-05-31, deferred): out-of-range local signed conditional branch.** The
-     CE-page signed conditions (`LT/LE/GT/GE/V/NV/P/M`, F-flags) are **short-only** — there is *no*
-     `jrl LT`/`carl LT`. The peephole shortens `jp LT → jrs LT` only `if labelInRange`; out of ±127 B it
-     leaves `jp LT`, which sdas88 hard-rejects (`jp takes hl or a (kk) vector`). So a function with a signed
-     compare whose branch target is >127 B away **fails to assemble**. Correct lowering = invert-and-skip
-     (`jrs GE,$skip ; jrl target ; $skip:`); best done in the assembler (it knows the true range), peephole
-     keeps preferring in-range `jrs LT`. **`bcall`/`bjump` are NOT affected** — they only accept C/NC/Z/NZ
-     (both forms exist), always emit the long form, and *reject* signed conditions (error, not miscompile;
-     verified). Also TODO there: a clear "signed cond unsupported" diagnostic for `bcall LT`.
-4. **Per user direction:** when retargeting branch emission, emit **`bcall`/`bjump`** for inter-function
-   calls/tail-jumps (not raw `carl`/`jrl`) so the linker becomes the single place that optimizes branch
-   form + bank switching. Local loop/if branches can stay plain `jrs`/`jrl`. (Memory:
-   `codegen-prefer-bcall-bjump`.)
+1. Confirm green: `./scripts/dev.sh` → builds the compiler + smoke test → `GREEN`.
+2. The codegen retarget is **functionally complete** — every z80-ism in *reachable* code is gone. A broad
+   `--c1mode` corpus (arithmetic, pointers, structs, bitfields, varargs, float, swaps, calls, function
+   pointers, ISRs, `__critical`, struct return) assembles with **0 `sdas88` errors**, and the full
+   assemble→link→banked-ROM pipeline is GREEN. All the feature gaps are closed: compares / 8- and 16-bit
+   ALU / shifts (sessions 1–4), the **`ldir` struct-copy cluster** (session 5), **`bcall`/`bjump` for
+   inter-function calls + `.globl` for support routines** (6), the **active C/D/E+DE/BC z80-isms** (7),
+   **independent port** linking alongside z80 et al. (8), **function-pointer calls** (9), **ISR
+   prologue/epilogue** (10), **struct return-by-value** (11), **`__critical`** (12). See the per-session
+   entries below.
+3. **Remaining work = the open tasks** (cleanup + ABI completeness, not functional gaps):
+   - **#7 — register-model dead-code sweep / symbol removal.** The big careful grind: delete the dead
+     pure-variant branches, retarget the live-but-allocator-avoided z80-isms (`ex (sp),hl` → `ex ba,iy`,
+     residual `push de` — need IY-allocation repros to verify), and finally delete the C/D/E/DE/BC symbols
+     (`PAIR_DE` 301 refs, the `*_IDX` ordinals keyed into `ralloc2.cc`'s Boost allocator). **Started**
+     (`cee1680`); see "Session 13" for the three-part scope/risk. Always-green, build + byte-identical
+     after each step.
+   - **#8 — ABI Phase 2: IX/IY argument passing** (int 3rd/4th + near-ptr 1st/2nd currently spill to stack).
+   - **#9 — ABI Phase 3: 3-byte far pointers + `_near`/`_far` memory model** (large).
+   - **#10 — assembler: out-of-range signed conditional branch + a `bcall LT` diagnostic** (rare edge).
+4. **Validator workflow** (how to check a slice): compile with `sdcc -ms1c88 --c1mode -o /tmp/x.asm`, then
+   `scripts/validate-s1c88.sh /tmp/x.asm` (assembles with `sdas88`; any reject = a z80-ism to fix). For a
+   refactor, also confirm **byte-identical** codegen across the corpus (the strongest safety check).
+5. **Per user direction (applied):** inter-function calls/tail-jumps emit **`bcall`/`bjump`** so the linker
+   is the single place that picks branch form + bank switch (memory `codegen-prefer-bcall-bjump`).
+
+### KNOWN GAP — out-of-range local signed conditional branch (task #10, deferred)
+The CE-page signed conditions (`LT/LE/GT/GE/V/NV/P/M`) are **short-only** — no `jrl LT`/`carl LT`. The
+peephole shortens `jp LT → jrs LT` only `if labelInRange`; out of ±127 B it leaves `jp LT`, which sdas88
+rejects. Correct lowering = invert-and-skip (`jrs GE,$skip ; jrl target ; $skip:`), best done in the
+assembler. **`bcall`/`bjump` are unaffected** (they take only C/NC/Z/NZ, always long, and reject signed
+conditions with a clean error). Rare in practice.
 
 ## The gen.c worklist (the central register-model grind)
 

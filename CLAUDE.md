@@ -4,8 +4,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 > **▶ Resuming / "pick up where you left off"?** Go to **[`docs/s1c88/HANDOFF.md`](docs/s1c88/HANDOFF.md)** —
 > it has the current state and the exact next action. TL;DR: `./scripts/dev.sh` (confirms the build is
-> green + runs a codegen smoke test), then continue the **codegen retarget** per `docs/s1c88/abi-decision.md`,
-> validating each slice with `./scripts/validate-s1c88.sh`. (All work is on **`main`**.)
+> green + runs a codegen smoke test). The codegen retarget is **functionally complete** (all reachable code
+> emits legal S1C88, 0 `sdas88` errors, link→ROM GREEN); remaining work is **cleanup + ABI completeness** —
+> the register-model dead-code/symbol sweep (#7), IX/IY arg passing (#8), far pointers (#9), the assembler
+> signed-branch gap (#10). Validate each change with `./scripts/validate-s1c88.sh` (+ byte-identical for
+> refactors). (All work is on **`main`**.)
 
 ## Project Overview
 
@@ -37,13 +40,17 @@ and builds the compiler.
 > `docs/s1c88/HANDOFF.md` "Peephole audit". **`ldir` is fully eliminated from codegen** (session 5):
 > genBuiltInMemcpy (incl. runtime-count via a borrowed-IX counter + `cp ix,#0` guard) / genPointerSet /
 > genPointerGet / genRet all emit the native byte loop (HL=source, IY=dest) — see HANDOFF "Session 5".
-> **Inter-function calls now emit `bcall`/`bjump`** (linker picks form + bank switch) and **support routines
-> get `.globl`** (session 6) — so a `--c1mode` corpus assembles with **0 sdas88 errors everywhere**.
-> **Remaining:** the rest of the DE/BC register-model cleanup (the `gen.c`
-> scratch-asmop machinery: residual `push de`/`pop de`, `ld de`/`add hl,de` scratch, saveRegs/restoreRegs)
-> + the documented out-of-range `jp GE`. All
-> work is on **`main`**. The design, ABI, and step-by-step plan live in **`docs/s1c88/abi-decision.md`**;
-> the toolchain in `docs/s1c88/{sdas88-retarget,banked-branch}.md`. Read before touching `src/s1c88/`.
+> **Inter-function calls emit `bcall`/`bjump`** (linker picks form + bank switch) + **`.globl` for support
+> routines** (s6); **independent port** linking alongside z80 et al. (s8); **function-pointer calls** via
+> `jp hl`/manufactured-return (s9); **ISR prologue/epilogue** (RETE model, `push ba/hl/iy` save — s10);
+> **struct return-by-value** (copy to the caller's hidden buffer — s11); **`__critical`** via SC
+> interrupt-level masking (`push sc; or sc,#0xc0` / `pop sc` — s12). **The codegen is functionally
+> complete: a broad `--c1mode` corpus assembles with 0 sdas88 errors everywhere and the assemble→link→
+> banked-ROM pipeline is GREEN.** **Remaining (cleanup + ABI, not functional gaps):** the register-model
+> dead-code sweep / C-D-E-DE-BC symbol removal (task #7, started s13), IX/IY argument passing (#8), 3-byte
+> far pointers (#9), and the out-of-range signed-branch assembler gap (#10). All work is on **`main`**.
+> The design, ABI, and plan live in **`docs/s1c88/abi-decision.md`**; current state + next action in
+> **`docs/s1c88/HANDOFF.md`**; the toolchain in `docs/s1c88/{sdas88-retarget,banked-branch}.md`.
 
 ## Current work: the codegen retarget (read `docs/s1c88/abi-decision.md`)
 
@@ -57,11 +64,15 @@ Decided design:
   (A from-scratch big-bang reshape was tried and reset — it breaks ~1144 `gen.c` sites at once with no way
   to verify; the dead WIP is in reflog at `417bed5` as a reference for the end-state register defs.)
 
-**Progress:** frame/branches/compares/16-bit ALU/shifts are retargeted and validate clean with `sdas88`
-(see `HANDOFF.md` for the per-slice commit list). **The remaining grind** is the `gen.c` scratch-asmop
-machinery (`asmop_bc/de`, the combined long asmops `DEHL/HLDE/HLBC/DEBC`, `_pairs[]`, the `[IYH_IDX+1]`
-parm-mask arrays) plus the `countreg` picks that select `C`/`D` — i.e. eliminating the z80 `C/D/E` byte
-regs and re-pointing `DE`/`BC` scratch to `BA`/`IX`/`IY`/stack. See `abi-decision.md` Step 2 for the map.
+**Progress:** the retarget is functionally complete — all reachable codegen emits legal S1C88 (0 `sdas88`
+errors across a broad corpus; assemble→link→ROM GREEN). See `HANDOFF.md` for the per-session commit list.
+**The remaining grind (task #7)** is eliminating the z80 `C/D/E` byte regs + `DE`/`BC` scratch — the
+`gen.c` scratch-asmop machinery (`asmop_bc/de`, the combined long asmops `DEHL/HLDE/HLBC/DEBC`, `_pairs[]`,
+the `[IYH_IDX+1]` parm-mask arrays), the `countreg` `C`/`D` picks, the live-but-allocator-avoided
+`ex (sp),hl` IY-byte-access sites (→ `ex ba,iy`), and finally the `PAIR_DE`/`*_IDX` symbols keyed into
+`ralloc2.cc`'s Boost allocator. This is *cleanup/latent-risk reduction* — the binary is already correct —
+so do it carefully (always-green, byte-identical after each step), not as a big-bang. See `abi-decision.md`
+Step 2 + `HANDOFF.md` "Session 13" for the three-part scope/risk.
 
 ## Build
 
