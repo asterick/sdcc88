@@ -64,20 +64,16 @@ fi
 grep -q 'TARGET_ID_S1C88' "${SDCC}/src/port.h" \
   || { echo "ERROR: port registration patch did not apply (src/port.h missing TARGET_ID_S1C88)" >&2; exit 1; }
 
-# 5. Configure: build only the compiler + s1c88, plus stm8 (kept as the donor for a generated per-port
-#    Makefile, and to validate the Boost-based allocator). Skip the other ports and peripheral tools.
+# 5. Configure: build the compiler with ALL stock ports enabled, alongside s1c88. The s1c88 port used to
+#    require --disable-ing every other port because, as a clone of the z80 port, it kept the z80 port's
+#    global symbol names and collided at link time. Those 44 globals were renamed to unique s1c88_* names
+#    (see git history), so s1c88 is now a fully independent variant that links cleanly next to z80 and the
+#    rest. We only disable the *peripheral* tooling (device libs, ucsim, sdcdb, sdbinutils) — heavyweight
+#    extras unrelated to the s1c88 codegen. s1c88 itself is injected below (configure doesn't know it).
 cd "${SDCC}"
 if [ ! -f config.status ]; then
   echo ">> configure"
-  # Disable ALL stock ports — sdcc88 is an s1c88-only compiler, and our port is a clone of stm8, so
-  # building stm8 too would cause duplicate-symbol link errors. s1c88 is injected below.
   ./configure \
-    --disable-mcs51-port --disable-z80-port --disable-z180-port --disable-z80n-port \
-    --disable-ez80_z80-port --disable-r2k-port --disable-r2ka-port --disable-r3ka-port \
-    --disable-r800-port --disable-sm83-port --disable-tlcs90-port --disable-ds390-port \
-    --disable-ds400-port --disable-pic14-port --disable-pic16-port --disable-hc08-port \
-    --disable-s08-port --disable-stm8-port --disable-pdk13-port --disable-pdk14-port \
-    --disable-pdk15-port --disable-mos6502-port --disable-mos65c02-port --disable-f8-port \
     --disable-device-lib --disable-ucsim --disable-sdcdb --disable-sdbinutils \
     --disable-non-free --disable-packihx
 fi
