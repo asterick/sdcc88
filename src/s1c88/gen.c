@@ -15251,14 +15251,9 @@ genPackBits (sym_link * etype, operand * right, int pair, const iCode * ic)
     {
       mask = ((0xffu << (blen + bstr)) | (0xffu >> (8 - bstr))) & 0xffu;
 
-      if (right->aop->type == AOP_LIT && blen == 1 && (pair == PAIR_HL || pair == PAIR_IX || pair == PAIR_IY))
-        {
-          litval = ullFromVal (right->aop->aopu.aop_lit);
-          emit2 (litval & 1 ? "set %d, !mems" : "res %d, !mems", bstr, _pairs[pair].name);
-          regalloc_dry_run_cost += (pair == PAIR_IX || pair == PAIR_IY) ? 4 : 2;
-          return;
-        }
-      else if (right->aop->type == AOP_LIT)
+      /* S1C88 has no set/res; a 1-bit literal store goes through the general
+         and/or-with-mask path below (set bit = or a,#mask; clear = and a,#~mask). */
+      if (right->aop->type == AOP_LIT)
         {
           /* Case with a bit-field length <8 and literal source */
           litval = (int) ulFromVal (right->aop->aopu.aop_lit);
@@ -15280,13 +15275,8 @@ genPackBits (sym_link * etype, operand * right, int pair, const iCode * ic)
           regalloc_dry_run_cost += (pair == PAIR_IX || pair == PAIR_IY) ? 3 : 1;
           return;
         }
-      else if (blen == 4 && bstr % 4 == 0 && pair == PAIR_HL && !aopInReg (right->aop, 0, A_IDX) && !requiresHL (right->aop) && (IS_Z80 || IS_Z180 || IS_EZ80_Z80 || IS_Z80N || IS_R800))
-        {
-          emit3 ((bstr ? A_RLD : A_RRD), 0, 0);
-          cheapMove (ASMOP_A, 0, right->aop, 0, true);
-          emit3 ((bstr ? A_RRD : A_RLD), 0, 0);
-          return;
-        }
+      /* (z80's nibble-aligned rld/rrd fast path removed — the S1C88 has no
+         rld/rrd; nibble fields use the general and/or-mask merge below.) */
       else
         {
           /* Case with a bit-field length <8 and arbitrary source */
