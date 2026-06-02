@@ -17210,7 +17210,6 @@ genBuiltInMemcpy (const iCode *ic, int nparams, operand **pparams)
 {
   int i;
   operand *from, *to, *count;
-  bool saved_BC = FALSE, saved_DE = FALSE, saved_HL = FALSE;
   unsigned int n;
 
   for (i = 0; i < nparams; i++)
@@ -17329,115 +17328,83 @@ genBuiltInMemcpy (const iCode *ic, int nparams, operand **pparams)
       goto done;
     }
 
-  if (!isPairDead (PAIR_HL, ic))
-    {
+  /* Variable (runtime) count: the same native byte loop, with the count held
+     in the borrowed frame pointer IX (16-bit counter) and a `cp ix,#0` zero
+     guard (a byte loop entered with count==0 would otherwise wrap to 65536,
+     exactly like z80 `ldir` with bc==0). */
+  {
+    bool s_hl = !isPairDead (PAIR_HL, ic);
+    bool s_iy = !isPairDead (PAIR_IY, ic);
+    bool s_af = !isRegDead (A_IDX, ic);          /* A is the per-byte temp */
+    symbol *tlbl, *elbl;
+
+    if (s_hl)
       _push (PAIR_HL);
-      saved_HL = TRUE;
-    }
-  if (!isPairDead (PAIR_DE, ic))
-    {
-      _push (PAIR_DE);
-      saved_DE = TRUE;
-    }
-  if (!isPairDead (PAIR_BC, ic) && n > 2)
-    {
-      _push (PAIR_BC);
-      saved_BC = TRUE;
-    }
+    if (s_iy)
+      _push (PAIR_IY);
+    if (s_af)
+      _push (PAIR_AF);
+    _push (PAIR_IX);                              /* borrow the frame pointer */
 
- setupForMemcpy (ic, to, from, count);
+    /* Count -> IX first, while it is still in its source location.  The HL/IY
+       loads below use A as scratch but never touch IX, so the count survives;
+       and they are 16-bit pair loads (register moves or `ld pair,dd(sp)`), so
+       they do not need IX as a frame pointer. */
+    fetchPair (PAIR_IX, count->aop);
 
-  if (n == 1)
+    /* Source -> HL, dest -> IY (clobber-safe ordering; A is free). */
     {
-      emit2 ("ld a, !*hl");
-      cost2 (1, 7, 6, 5, 8, 6, 2, 2);
-      emit2 ("ld !mems, a", "de");
-      cost2 (1, 7, 7, 7, 8, 6, 2, 2);
-    }
-  else if (n == 2)
-    {
-      emit2 ("ldi");
-      cost2 (2, 16, 12, 10, 0, 14, 5, 4);
-      emit2 ("ld a, !*hl");
-      cost2 (1, 7, 6, 5, 8, 6, 2, 2);
-      emit2 ("ld !mems, a", "de");
-      cost2 (1, 7, 7, 7, 8, 6, 2, 2);
-      if (!isPairDead (PAIR_BC, ic)) /* Restore bc. */
-        emit3w (A_INC, ASMOP_BC, 0);
-    }
-  else if (n <= 4 && IS_Z80 && optimize.codeSpeed || (IS_R2K || IS_R2KA) && n <= 5)
-    {
-      for(unsigned int i = 0; i < n; i++)
+      bool from_in_iy = aopInReg (from->aop, 0, IYL_IDX) || aopInReg (from->aop, 1, IYH_IDX) ||
+                        aopInReg (from->aop, 0, IYH_IDX) || aopInReg (from->aop, 1, IYL_IDX);
+      bool from_in_hl = aopInReg (from->aop, 0, L_IDX) || aopInReg (from->aop, 1, H_IDX) ||
+                        aopInReg (from->aop, 0, H_IDX) || aopInReg (from->aop, 1, L_IDX);
+      if (from_in_iy)
         {
-          emit2 ("ldi");
-          cost2 (2, 16, 12, 10, 0 , 14, 5, 4);
-        }
-    }
-  else
-    {
-      symbol *tlbl = 0;
-      bool to_from_stack = isOperandOnStack (to) && isOperandOnStack (from);
-      if (count->aop->type != AOP_REG) // If in reg: Has been fetched early by setupForMemcpy() above.
-        fetchPair (PAIR_BC, count->aop);
-      if (count->aop->type != AOP_LIT)
-        {
-          emit3 (A_LD, ASMOP_A, ASMOP_B);
-          emit3 (A_OR, ASMOP_A, ASMOP_C);
-          if (!regalloc_dry_run)
-            {
-              tlbl = newiTempLabel (0);
-              emit2 ("jp Z, !tlabel", labelKey2num (tlbl->key));
-            }
-          cost2 (3, 10, 6, 7, 12, 10, 3, 3); // For cycle cost, assume that n is non-zero.
-        }
-      if ((IS_R2K || IS_R2KA) && !to_from_stack && optimize.codeSpeed && n != UINT_MAX) // Work around Rabbit 2000 to Rabbit 3000 ldir wait state bug, but care for speed
-        {
-          wassert (n > 3);
-          if (n % 2)
-            {
-              emit2 ("ldi");
-              cost2 (2, 16, 12, 10, 0 , 14, 5, 4);
-            }
-          if (!regalloc_dry_run)
-            {
-              const symbol *tlbl2 = newiTempLabel (0);
-              emitLabel (tlbl2);
-              emit2("ldi");
-              cost2 (2, 16, 12, 10, 0 , 14, 5, 4);
-              emit2("ldi");
-              cost2 (2, 16, 12, 10, 0 , 14, 5, 4);
-              emit2 ("jp LO, !tlabel", labelKey2num (tlbl2->key));
-            }
-          regalloc_dry_run_cost += 3;         
-        }
-      else if ((IS_R2K || IS_R2KA) && !to_from_stack) // Work around Rabbit 2000 to Rabbit 3000 ldir wait state bug.
-        {
-          if (!regalloc_dry_run)
-            {
-              const symbol *tlbl2 = newiTempLabel (0);
-              emitLabel (tlbl2);
-              emit2("ldi");
-              cost2 (2, 16, 12, 10, 0 , 14, 5, 4);
-              emit2 ("jp LO, !tlabel", labelKey2num (tlbl2->key));
-            }
-          regalloc_dry_run_cost += 3;
+          genMove (ASMOP_HL, from->aop, true, true, true, false);
+          genMove (ASMOP_IY, to->aop,   true, true, true, true);
         }
       else
         {
-          emit2 ("ldir");
-          regalloc_dry_run_cost += 2;
+          genMove (ASMOP_IY, to->aop,   true, !from_in_hl, true, true);
+          genMove (ASMOP_HL, from->aop, true, true, true, false);
         }
-      emitLabel (tlbl);
     }
 
-  spillPair (PAIR_HL);
+    tlbl = regalloc_dry_run ? 0 : newiTempLabel (NULL);
+    elbl = regalloc_dry_run ? 0 : newiTempLabel (NULL);
 
-  if (saved_BC)
-    _pop (PAIR_BC);
-  if (saved_DE)
-    _pop (PAIR_DE);
-  if (saved_HL)
-    _pop (PAIR_HL);
+    emit2 ("cp ix, !immedword", 0u);             /* count == 0 ? */
+    cost2 (3, 12, 10, 7, 0, 6, 3, 3);
+    if (!regalloc_dry_run)
+      emit2 ("jp Z, !tlabel", labelKey2num (elbl->key));   /* peephole -> jrs Z */
+    regalloc_dry_run_cost += 2;
+
+    if (!regalloc_dry_run)
+      emitLabel (tlbl);
+    emit2 ("ld a, !*hl");
+    cost2 (1, 7, 6, 5, 8, 6, 2, 2);
+    emit2 ("ld !*iyx, a", 0);
+    cost2 (1, 7, 7, 7, 8, 6, 2, 2);
+    emit3w (A_INC, ASMOP_HL, 0);
+    emit3w (A_INC, ASMOP_IY, 0);
+    emit2 ("dec ix");
+    cost2 (2, 10, 8, 4, 0, 6, 2, 2);
+    if (!regalloc_dry_run)
+      emit2 ("jp NZ, !tlabel", labelKey2num (tlbl->key));   /* peephole -> jrs NZ */
+    regalloc_dry_run_cost += 2;
+    if (!regalloc_dry_run)
+      emitLabel (elbl);
+
+    _pop (PAIR_IX);
+    spillPair (PAIR_HL);
+    spillPair (PAIR_IY);
+    if (s_af)
+      _pop (PAIR_AF);
+    if (s_iy)
+      _pop (PAIR_IY);
+    if (s_hl)
+      _pop (PAIR_HL);
+  }
 
 done:
   freeAsmop (count, NULL);
