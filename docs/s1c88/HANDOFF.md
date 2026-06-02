@@ -177,6 +177,30 @@ the broader operand-placement work so the allocator keeps 16-bit operands in BA/
 > A from-scratch big-bang reshape was tried and **reset** (unverifiable-red for the whole grind). The dead
 > WIP is in reflog `417bed5` — useful only as a reference for the *end-state* register defs.
 
+## Session 13 (2026-06-02) — register-model dead-code sweep (task #7) STARTED
+
+**`cee1680`:** deleted the dead RAB/TLCS90-only "merged stack adjustment" epilogue in genEndFunction (gated
+on `IS_RAB||IS_TLCS90` ≡ 0; it carried the illegal `jp (iy)`). Byte-identical across the 15-input corpus.
+
+**Scope assessment for the rest of #7 (the register-model finish):** it splits into three parts of very
+different risk —
+- **(a) SAFE / byte-identical:** ~48 provably-dead pure-variant-macro branches (`if (IS_SM83)` / `IS_RAB`
+  / `IS_TLCS90` / …, all compile-time 0). Deletable with byte-identical verification, but mostly
+  *cosmetic* (the compiler already DCEs them) — value only where a branch carries an illegal-on-S1C88
+  emit (like the one above).
+- **(b) RISKY / hard-to-test:** the live-but-allocator-avoided z80-isms — `ex (sp),hl` (21 sites in
+  cheapMove/genCopy/genIpush/genSwap/genAssign, used for **IY-byte access**; the S1C88 idiom is
+  `ex ba,iy`), residual `push de`, etc. These fire under IY allocation, which the corpus avoids, so they
+  need per-site repros — blind edits risk a silent miscompile (cf. the ldir revert). `ex ba,iy`/`ex ba,ix`
+  verified legal.
+- **(c) STRUCTURAL:** delete the C/D/E/DE/BC symbols themselves — `PAIR_DE` (301 refs), `ASMOP_DE` (72),
+  `C/D/E_IDX` (~100 each), `IYL/IYH_IDX` (~98), the combined long asmops, and the `*_IDX` ordinals
+  hard-keyed into the Boost allocator in `ralloc2.cc`. This is the big-bang that was reset at reflog
+  `417bed5`; do it incrementally, always-green, build + byte-identical after each step.
+
+The compiler is correct for all *reachable* code today, so #7 is cleanup + latent-risk reduction, not a
+functional gap — best done as a careful dedicated effort rather than rushed.
+
 ## Session 12 (2026-06-02) — __critical sections retargeted (SC interrupt-level masking)
 
 **`e962677`:** `__critical` functions/blocks emitted the z80 idiom (`ld a,i; di; push af` … `pop af; jp PO;
