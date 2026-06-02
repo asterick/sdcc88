@@ -17196,6 +17196,84 @@ genBuiltInMemcpy (const iCode *ic, int nparams, operand **pparams)
   else if (!(n = (unsigned int) ulFromVal (pparams[2]->aop->aopu.aop_lit))) /* Check for zero length copy. */
     goto done;
 
+  /* S1C88 has no ldir and no DE pair.  Copy with a forward byte loop
+       HL = source, IY = dest, B = count
+     which matches memcpy()'s no-overlap (forward) semantics, exactly like
+     ldir.  Any literal count <= 255 takes this path; larger or variable
+     counts fall back to the z80 ldir machinery below. */
+  if (n != UINT_MAX && n <= 255)
+    {
+      bool s_hl = !isPairDead (PAIR_HL, ic);
+      bool s_iy = !isPairDead (PAIR_IY, ic);
+      /* B is the loop counter, A the per-byte temp.  If B is live, save the
+         whole BA pair (covers A too, keeps the stack even); else if only A is
+         live, save it via AF. */
+      bool s_ba = !isRegDead (B_IDX, ic);
+      bool s_af = !s_ba && !isRegDead (A_IDX, ic);
+      bool a_dead;
+      symbol *tlbl;
+
+      if (s_hl)
+        _push (PAIR_HL);
+      if (s_iy)
+        _push (PAIR_IY);
+      if (s_ba)
+        _push (PAIR_BA);
+      else if (s_af)
+        _push (PAIR_AF);
+      a_dead = true;                        /* A is free (saved or dead) */
+
+      /* Load source -> HL and dest -> IY without clobbering each other.
+         IY is not byte-addressable, so loading it never touches L/H, and
+         loading HL never touches IY; the only hazard is a source overlapping
+         the other destination, handled by ordering + genMove's dead-set. */
+      {
+        bool from_in_iy = aopInReg (from->aop, 0, IYL_IDX) || aopInReg (from->aop, 1, IYH_IDX) ||
+                          aopInReg (from->aop, 0, IYH_IDX) || aopInReg (from->aop, 1, IYL_IDX);
+        bool from_in_hl = aopInReg (from->aop, 0, L_IDX) || aopInReg (from->aop, 1, H_IDX) ||
+                          aopInReg (from->aop, 0, H_IDX) || aopInReg (from->aop, 1, L_IDX);
+        if (from_in_iy)
+          {
+            genMove (ASMOP_HL, from->aop, a_dead, true, true, false);
+            genMove (ASMOP_IY, to->aop,   a_dead, true, true, true);
+          }
+        else
+          {
+            genMove (ASMOP_IY, to->aop,   a_dead, !from_in_hl, true, true);
+            genMove (ASMOP_HL, from->aop, a_dead, true, true, false);
+          }
+      }
+
+      emit2 ("ld b, !immedbyte", (unsigned) n);
+      cost2 (2, 7, 6, 4, 8, 4, 2, 2);
+
+      tlbl = regalloc_dry_run ? 0 : newiTempLabel (NULL);
+      if (!regalloc_dry_run)
+        emitLabel (tlbl);
+      emit2 ("ld a, !*hl");
+      cost2 (1, 7, 6, 5, 8, 6, 2, 2);
+      emit2 ("ld !*iyx, a", 0);
+      cost2 (1, 7, 7, 7, 8, 6, 2, 2);
+      emit3w (A_INC, ASMOP_HL, 0);
+      emit3w (A_INC, ASMOP_IY, 0);
+      if (!regalloc_dry_run)
+        emit2 ("djr nz, !tlabel", labelKey2num (tlbl->key));
+      regalloc_dry_run_cost += 2;
+
+      spillPair (PAIR_HL);
+      spillPair (PAIR_IY);
+      if (s_ba)
+        _pop (PAIR_BA);
+      else if (s_af)
+        _pop (PAIR_AF);
+      if (s_iy)
+        _pop (PAIR_IY);
+      if (s_hl)
+        _pop (PAIR_HL);
+
+      goto done;
+    }
+
   if (!isPairDead (PAIR_HL, ic))
     {
       _push (PAIR_HL);
