@@ -7477,11 +7477,14 @@ genEndFunction (iCode *ic)
           cost2 (2, 8, 6, 6, 0, 8, 4, 2);
           goto done;
         }
-      else if (bc_free || de_free)
+      else if (iy_free)
        {
-         _pop (bc_free ? PAIR_BC : PAIR_DE);
-         adjustStack (poststackadjust, !aopRet (sym->type) || aopRet (sym->type)->regs[A_IDX] < 0, false, bc_free && de_free, false, false);
-         _push (bc_free ? PAIR_BC : PAIR_DE);
+         /* S1C88 has no DE/BC pair: hop the return address over the param
+            area in IY — the only free pair here (HL holds the return value,
+            and IX was just restored as the caller's frame pointer). */
+         _pop (PAIR_IY);
+         adjustStack (poststackadjust, !aopRet (sym->type) || aopRet (sym->type)->regs[A_IDX] < 0, false, false, false, false);
+         _push (PAIR_IY);
        }
       else // Do it the hard way: Copy return address on stack before stack pointer adjustment.
         {
@@ -13407,16 +13410,11 @@ genSwap (iCode * ic)
 
       if (sameRegs (result->aop, left->aop) || operandsEqu (result, left))
         {
-          // avoid push/pop by finding free register
+          // avoid push/pop by finding a free register. S1C88: the only spare
+          // byte GPR besides A is B (C/D/E don't exist); fall back to A+push.
           asmop *free_reg = ASMOP_A;
           if (isRegDead (B_IDX, ic))
             free_reg = ASMOP_B;
-          if (isRegDead (C_IDX, ic))
-            free_reg = ASMOP_C;
-          if (isRegDead (D_IDX, ic))
-            free_reg = ASMOP_D;
-          if (isRegDead (E_IDX, ic))
-            free_reg = ASMOP_E;
           cheapMove (ASMOP_A, 0, left->aop, 0, true);
           if (free_reg == ASMOP_A)
             {
@@ -15357,8 +15355,6 @@ genPackBits (sym_link * etype, operand * right, int pair, const iCode * ic)
   unsigned bstr;                /* bit-field starting bit within byte */
   unsigned long long litval;    /* source literal value (if AOP_LIT) */
   unsigned mask;                /* bitmask within current byte */
-  int extraPair;                /* a tempory register */
-  bool needPopExtra = 0;        /* need to restore original value of temp reg */
   unsigned int pairincrement = 0;
 
   emitDebug ("; genPackBits", "");
@@ -15421,35 +15417,32 @@ genPackBits (sym_link * etype, operand * right, int pair, const iCode * ic)
               cost2 (2, 7, 6, 4, 8, 4, 2, 2);
             }
 
-          extraPair = getFreePairId (ic);
-          if (extraPair == PAIR_INVALID)
-            {
-              if (pair != PAIR_HL)
-                extraPair = PAIR_HL;
-              else
-                {
-                  extraPair = PAIR_BC;
-                  if (getPairId (right->aop) != PAIR_BC || !isLastUse (ic, right))
-                    {
-                      _push (extraPair);
-                      needPopExtra = 1;
-                    }
-                }
-            }
-          emit2 ("ld %s, a", _pairs[extraPair].l);
-          ld_cost (ASMOP_L, 0, ASMOP_A, 0, true);
-          spillPair (extraPair);
-          emit2 ("ld a, !mems", _pairs[pair].name);
-          regalloc_dry_run_cost += (pair == PAIR_IX || pair == PAIR_IY) ? 3 : 1;
-
-          emit2 ("and a, !immedbyte", mask);
-          cost2 (2, 7, 6, 4, 8, 4, 2, 2);
-          emit2 ("or a, %s", _pairs[extraPair].l);
-          cost2 (1, 4, 4, 2, 4, 4, 1, 1);
-          emit2 ("ld !mems, a", _pairs[pair].name);
-          regalloc_dry_run_cost += (pair == PAIR_IX || pair == PAIR_IY) ? 3 : 1;
-          if (needPopExtra)
-            _pop (extraPair);
+          /* S1C88: stash the shifted value in B for the read-modify-write
+             merge — `or a,X` can only source A or B (C/D/E don't exist).
+             B is the lone spare byte GPR; save it on the stack when live. */
+          {
+            bool save_b = !isRegDead (B_IDX, ic);
+            if (save_b)
+              {
+                emit2 ("push b");
+                cost2 (1, 11, 11, 10, 16, 8, 3, 4);
+                _G.stack.pushed += 1;
+              }
+            emit3 (A_LD, ASMOP_B, ASMOP_A);
+            emit2 ("ld a, !mems", _pairs[pair].name);
+            regalloc_dry_run_cost += (pair == PAIR_IX || pair == PAIR_IY) ? 3 : 1;
+            emit2 ("and a, !immedbyte", mask);
+            cost2 (2, 7, 6, 4, 8, 4, 2, 2);
+            emit3 (A_OR, ASMOP_A, ASMOP_B);
+            emit2 ("ld !mems, a", _pairs[pair].name);
+            regalloc_dry_run_cost += (pair == PAIR_IX || pair == PAIR_IY) ? 3 : 1;
+            if (save_b)
+              {
+                emit2 ("pop b");
+                cost2 (1, 10, 9, 9, 12, 8, 4, 3);
+                _G.stack.pushed -= 1;
+              }
+          }
           return;
         }
     }
@@ -15521,44 +15514,39 @@ genPackBits (sym_link * etype, operand * right, int pair, const iCode * ic)
           emit2 ("and a, !immedbyte", (~mask) & 0xffu);
           cost2 (2, 7, 6, 4, 8, 4, 2, 2);
 
-          extraPair = getFreePairId (ic);
-          if (extraPair == PAIR_INVALID)
-            {
-              if (pair != PAIR_HL)
-                extraPair = PAIR_HL;
-              else
-                {
-                  extraPair = PAIR_BC;
-                  if (getPairId (right->aop) != PAIR_BC || !isLastUse (ic, right))
-                    {
-                      _push (extraPair);
-                      needPopExtra = 1;
-                    }
-                }
-            }
+          /* S1C88: stash the shifted value in B for the merge (see the
+             blen<8 case above); the trailing store writes A back. */
+          {
+            bool save_b = !isRegDead (B_IDX, ic);
+            if (save_b)
+              {
+                emit2 ("push b");
+                cost2 (1, 11, 11, 10, 16, 8, 3, 4);
+                _G.stack.pushed += 1;
+              }
+            emit3 (A_LD, ASMOP_B, ASMOP_A);
 
-          emit2 ("ld %s, a", _pairs[extraPair].l);
-          ld_cost (ASMOP_L, 0, ASMOP_A, 0, true);
-          spillPair (extraPair);
+            if (pair == PAIR_IX || pair == PAIR_IY)
+              {
+                emit2 ("ld a, %d !mems", pair_offset, _pairs[pair].name);
+                regalloc_dry_run_cost += 3;
+              }
+            else
+              {
+                emit2 ("ld a, !mems", _pairs[pair].name);
+                cost2 (1, 7, 6, 6, 8, 6, 2, 2);
+              }
 
-          if (pair == PAIR_IX || pair == PAIR_IY)
-            {
-              emit2 ("ld a, %d !mems", pair_offset, _pairs[pair].name);
-              regalloc_dry_run_cost += 3;
-            }
-          else
-            {
-              emit2 ("ld a, !mems", _pairs[pair].name);
-              cost2 (1, 7, 6, 6, 8, 6, 2, 2);
-            }
-
-          emit2 ("and a, !immedbyte", mask);
-          cost2 (2, 7, 6, 4, 8, 4, 2, 2);
-          emit2 ("or a, %s", _pairs[extraPair].l);
-          cost2 (1, 4, 4, 2, 4, 4, 1, 1);
-          if (needPopExtra)
-            _pop (extraPair);
-
+            emit2 ("and a, !immedbyte", mask);
+            cost2 (2, 7, 6, 4, 8, 4, 2, 2);
+            emit3 (A_OR, ASMOP_A, ASMOP_B);
+            if (save_b)
+              {
+                emit2 ("pop b");
+                cost2 (1, 10, 9, 9, 12, 8, 4, 3);
+                _G.stack.pushed -= 1;
+              }
+          }
         }
       if (pair == PAIR_IX || pair == PAIR_IY)
         {
