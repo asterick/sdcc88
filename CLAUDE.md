@@ -102,9 +102,11 @@ printf 'int add1(int x){return x+1;}\n' | \
    the outer repo and **silently no-ops (exit 0)**, leaving the build to fail later with
    `TARGET_ID_S1C88 undeclared`. `build.sh` now hard-fails if the patch didn't land. Regenerate the patch
    with `git diff` against pristine extracted sources — never hand-edit hunk headers.
-4. **Configure** with *all stock ports disabled* (`--disable-*-port`, incl. all z80 variants) plus
-   device-lib/ucsim/sdcdb/etc. off. Disabling z80 is required: our port is its clone and would otherwise
-   collide on non-`z80`-named globals at link time.
+4. **Configure** with *all stock ports enabled* alongside s1c88, plus device-lib/ucsim/sdcdb/etc. off.
+   (Historically every port had to be `--disable`d because s1c88, a z80 clone, kept the z80 port's global
+   symbol names and collided at link time; those 44 globals were renamed to unique `s1c88_*` names, so the
+   port is now a fully independent variant that links cleanly next to z80 and the rest — `-ms1c88`,
+   `-mz80`, … coexist in one driver.)
 5. **Inject** the port: append `s1c88` to `ports.build`/`ports.all` and generate `src/s1c88/Makefile`
    from `Makefile.in` via `./config.status --file=...`.
 6. **`make -C src`** builds the `sdcc` driver. `port.mk` turns every `*.def` into a `*.rul` via
@@ -116,9 +118,12 @@ printf 'int add1(int x){return x+1;}\n' | \
 
 Cloned from SDCC 4.5.0's `src/z80` (file `z80.h`→`s1c88.h`; the registered `z80_port`→`s1c88_port` with
 `.target="s1c88"`). The other 9 z80 variant PORT structs were pruned; it's a single-variant port that runs
-the plain-z80 codegen path (`z80_opts.sub == SUB_Z80`, so `IS_Z80` is true). Many internal identifiers
-keep their z80 names (`z80_regs`, `genZ80Code`, `z80_opts`, the `IS_*`/`PAIR_*` machinery) — they're
-port-internal and harmless (the real z80 port is disabled, so no collision).
+the plain-z80 codegen path (`IS_Z80` is hardcoded `1`, every other variant `0` — see `s1c88.h`). Every
+global symbol that used to collide with the z80 port (`z80_regs`→`s1c88_regs`, `genZ80Code`→`genS1C88Code`,
+`z80_opts`→`s1c88_opts`, the peephole predicates, the asm-dialect tables, …) was **renamed to a unique
+`s1c88_*` name**, so the port links cleanly alongside z80 and all other ports in one driver. The remaining
+shared *type/enum* names (`Z80_OPTS`, `SUB_Z80`, the `PAIR_*` ordinals) carry no link symbol, so they're
+harmless; some internal identifiers still read "z80" but are port-private.
 
 Per-file roles: `main.c` (the `PORT s1c88_port` struct + options), `gen.c`/`gen.h` (iCode → asm, the
 bulk), `ralloc.c`/`ralloc.h` + `ralloc2.cc` (register allocation; `ralloc2.cc` instantiates SDCC's generic

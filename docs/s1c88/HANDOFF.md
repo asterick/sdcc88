@@ -3,7 +3,10 @@
 **This is the single resume entry point.** If the prompt is *"let's pick up where you left off,"* do the
 steps under **NEXT ACTION**. Everything needed to continue is here or linked from here.
 
-_Last updated: 2026-06-02 (session 7: **register-model cleanup — all *active* C/D/E + DE/BC z80-isms
+_Last updated: 2026-06-02 (session 8: **s1c88 is now a fully independent port** — renamed the 44 globals
+that collided with the z80 port, so build.sh no longer `--disable`s the other ports; a full all-ports build
+links `-ms1c88`/`-mz80`/… into one driver with 0 collisions, s1c88 codegen byte-identical. See "Session 8".
+Session 7: **register-model cleanup — all *active* C/D/E + DE/BC z80-isms
 cleared** (bitfield store→B, callee-cleanup epilogue→IY, genSwap free-reg→A/B); a broad `--c1mode` sweep is
 0 errors + 0 residue. NEW gap found: **indirect/function-pointer calls** aren't retargeted (`jrl (iy)`,
 BC pointer load, `___sdcc_call_*` — a separate workstream). Remaining DE/BC residue is deeply latent
@@ -162,6 +165,27 @@ the broader operand-placement work so the allocator keeps 16-bit operands in BA/
 
 > A from-scratch big-bang reshape was tried and **reset** (unverifiable-red for the whole grind). The dead
 > WIP is in reflog `417bed5` — useful only as a reference for the *end-state* register defs.
+
+## Session 8 (2026-06-02) — s1c88 is now a fully independent port (links alongside z80 et al.)
+
+**sdcc88 no longer has to `--disable` every other port to build.** It was a verbatim z80 clone that kept the
+z80 port's global symbol names, so the two couldn't coexist in one `sdcc` binary (duplicate symbols) — hence
+build.sh disabled all 24 stock ports. Fixed:
+- **`c8757ba` rename the 44 colliding globals** → unique `s1c88_*` names. The set was found *exactly* by
+  intersecting the two ports' object symbol tables (`nm src/z80/*.o` ∩ `nm src/s1c88/*.o`). Covers the
+  `z80_*`/`z80X` family, `genZ80Code`→`genS1C88Code`, `dryZ80iCode`, `Z80RegFix`, `regsZ80`, the
+  peephole predicates, `convertFloat`/`findAssignToSym`/`regWithIdx`/`regsUsedIniCode`/`sm83_regs`/
+  `should_omit_frame_ptr`, the C++ `move_parms`, and the asm-dialect tables `_asxxxx_z80`/`_gas_z80`/….
+  Special cases: `rUmaskForOp` (internal) vs `z80_rUmaskForOp` (wrapper) got distinct names; the `isFree`
+  collision is the DEFSETFUNC *function* only (→`s1c88_isFree`) — the identically-named `reg_info` bit-field
+  is untouched. None of the 44 are referenced from SDCC core (core reaches the port via the PORT struct +
+  peephole hooks), so the rename is fully contained to `src/s1c88`.
+- **`4ece413` build.sh drops all `--disable-*-port`** (keeps only the peripheral disables). 
+
+Verified: a full all-ports build (`mcs51 z80 ds390 pic14 pic16 hc08 stm8 pdk mos6502 f8 s1c88`) links with
+**0 duplicate-symbol errors** into one driver; `-ms1c88`/`-mz80`/`-mstm8` all work in that single binary;
+the s1c88 objects share **zero** globals with z80; and `-ms1c88` codegen is **byte-identical** to the old
+standalone build across the 11-input corpus. dev.sh + rom-smoke + sdas88 validation GREEN throughout.
 
 ## Session 7 (2026-06-02) — register-model cleanup: active C/D/E + DE/BC z80-isms cleared
 
