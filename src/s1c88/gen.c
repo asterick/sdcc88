@@ -15636,37 +15636,61 @@ genPointerSet (iCode *ic)
       goto release;
     }
 
-  // Using ldir is cheapest for large memory-to-memory transfers.
-  // sm83 doesn't have ldir. Rabbit 2000 to Rabbit 3000 (i.e. r2k and r2ka ports) have a wait-state bug breaking ldir between different types of memory.
-  if (!IS_SM83 && (!IS_R2K && !IS_R2KA || result->aop->type == AOP_STL) && (right->aop->type == AOP_STK || right->aop->type == AOP_EXSTK) && size > 2)
+  // Large memory-to-memory transfer from a stack source.  The S1C88 has no
+  // ldir/DE, so copy with a native forward byte loop: IY = dest pointer,
+  // HL = source (SP-relative), B = count.  size here is a scalar store (<= 8),
+  // well within the byte counter's range.
+  if (!IS_SM83 && (right->aop->type == AOP_STK || right->aop->type == AOP_EXSTK) && size > 2 && size <= 255)
     {
       int fp_offset, sp_offset;
+      bool s_iy = !isPairDead (PAIR_IY, ic);
+      bool s_hl = !isPairDead (PAIR_HL, ic);
+      bool s_ba = !isRegDead (B_IDX, ic);
+      bool s_af = !s_ba && !isRegDead (A_IDX, ic);
+      symbol *tlbl;
 
-      if(!isPairDead (PAIR_DE, ic))
-        _push (PAIR_DE);
-      if(!isPairDead (PAIR_BC, ic))
-        _push (PAIR_BC);
-      if(!isPairDead (PAIR_HL, ic))
+      if (s_iy)
+        _push (PAIR_IY);
+      if (s_hl)
         _push (PAIR_HL);
+      if (s_ba)
+        _push (PAIR_BA);
+      else if (s_af)
+        _push (PAIR_AF);
 
-      fetchPair (PAIR_DE, result->aop);
+      fetchPair (PAIR_IY, result->aop);
 
       fp_offset = right->aop->aopu.aop_stk + (right->aop->aopu.aop_stk > 0 ? _G.stack.param_offset : 0);
       sp_offset = fp_offset + _G.stack.pushed + _G.stack.offset;
       emit2 ("!ldahlsp", sp_offset);
       regalloc_dry_run_cost += 4;
-      emit2 ("ld bc, !immedword", (unsigned)size);
-      cost2 (3, 10, 9, 6, 12, 6, 3, 3);
-      emit2 ("ldir");
-      cost2 (2, 21 * size - 5, 14 * size - 2, 7 * size - 1, 0, 18 * size - 4, 2 * size - 1, 4 * size);
-      spillPair (PAIR_HL);
 
-      if(!isPairDead (PAIR_HL, ic))
+      emit2 ("ld b, !immedbyte", (unsigned) size);
+      cost2 (2, 7, 6, 4, 8, 4, 2, 2);
+      tlbl = regalloc_dry_run ? 0 : newiTempLabel (NULL);
+      if (!regalloc_dry_run)
+        emitLabel (tlbl);
+      emit2 ("ld a, !*hl");
+      cost2 (1, 7, 6, 5, 8, 6, 2, 2);
+      emit2 ("ld !*iyx, a", 0);
+      cost2 (1, 7, 7, 7, 8, 6, 2, 2);
+      emit3w (A_INC, ASMOP_HL, 0);
+      emit3w (A_INC, ASMOP_IY, 0);
+      if (!regalloc_dry_run)
+        emit2 ("djr nz, !tlabel", labelKey2num (tlbl->key));
+      regalloc_dry_run_cost += 2;
+
+      spillPair (PAIR_HL);
+      spillPair (PAIR_IY);
+
+      if (s_ba)
+        _pop (PAIR_BA);
+      else if (s_af)
+        _pop (PAIR_AF);
+      if (s_hl)
         _pop (PAIR_HL);
-      if(!isPairDead (PAIR_BC, ic))
-        _pop (PAIR_BC);
-      if(!isPairDead (PAIR_DE, ic))
-        _pop (PAIR_DE);
+      if (s_iy)
+        _pop (PAIR_IY);
       goto release;
     }
 
