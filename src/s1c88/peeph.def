@@ -1897,6 +1897,28 @@ replace restart {
 	; common peephole 136 replaced call at end of function by jump moving call beyond pop ix (tail call optimization).
 } if symmParmStack(%1)
 
+// S1C88: the same tail-call optimization for the banked pseudo-ops (the rules
+// above match z80 `call`, but s1c88 codegen emits `bcall`/`bjump`). `bcall f;
+// ret` -> `bjump f`: f's RET returns straight to our caller (and, in maximum
+// mode, restores the caller's bank that its own bcall pushed).
+replace restart {
+	bcall	%1
+	ret
+} by {
+	bjump	%1
+	; s1c88 tail call optimization (bcall;ret -> bjump).
+} if symmParmStack(%1)
+
+replace restart {
+	bcall	%1
+	pop	ix
+	ret
+} by {
+	pop	ix
+	bjump	%1
+	; s1c88 tail call optimization (bcall beyond pop ix -> bjump).
+} if symmParmStack(%1)
+
 replace restart {
 	ld	%1,#%2
 	ld	%3,%4

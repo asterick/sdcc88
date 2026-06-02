@@ -6989,12 +6989,29 @@ genCall (const iCode *ic)
             }
           else
             {
-              emit2 ("%s %s", jump ? "jp" : "call",
+              /* Compiler-support routines (__mulint, __divsint, …) are created
+                 by funcOfType() with cdef=1 and never enter SDCC's publics/
+                 externs sets, so no `.globl` is emitted and the assembler then
+                 rejects the (undefined) reference. Register them as global so
+                 printPublics emits the needed `.globl`. (User C externs already
+                 reach publics via the normal symbol-table path.) */
+              {
+                symbol *csym = OP_SYMBOL (IC_LEFT (ic));
+                if (csym->cdef && !IS_STATIC (csym->etype))
+                  addSetIfnotP (&publics, csym);
+              }
+
+              /* Inter-function transfer: emit the banked pseudo-ops so the
+                 LINKER picks the short/long branch form and inserts/omits the
+                 `ld nb` bank switch (see docs/s1c88/banked-branch.md). Worst-
+                 case slot is 6 bytes (ld nb,#bb + long branch); unused bytes
+                 become nop. */
+              emit2 ("%s %s", jump ? "bjump" : "bcall",
                 (OP_SYMBOL (IC_LEFT (ic))->rname[0] ? OP_SYMBOL (IC_LEFT (ic))->rname : OP_SYMBOL (IC_LEFT (ic))->name));
               if (jump)
-                cost2 (3, 10, 9, 8, 16,	8, 4, 3);
+                cost2 (6, 13, 12, 11, 19, 11, 7, 6);
               else
-                cost2 (3, 17, 16, 12, 24, 14, 5, 3);
+                cost2 (6, 20, 19, 15, 27, 17, 8, 6);
             }
         }
     }
