@@ -7237,32 +7237,9 @@ genEndFunction (iCode *ic)
 
   int poststackadjust = isFuncCalleeStackCleanup (sym->type) ? stackparmbytes : 0;
 
-  if (poststackadjust && // Try to merge both stack adjustments.
-    _G.omitFramePtr &&
-    (IS_RAB && _G.stack.offset <= 255 || IS_TLCS90 && _G.stack.offset <= 127) &&
-    (hl_free || iy_free) && 
-    !_G.calleeSaves.pushedDE && !_G.calleeSaves.pushedBC &&
-    !IFFUNC_ISISR (sym->type) && !IFFUNC_ISCRITICAL (sym->type))
-    {
-      emit2 (hl_free ? "ld hl, %d (sp)" : "ld iy, %d (sp)", _G.stack.offset);
-      if (hl_free)
-        cost2 (2 + IS_TLCS90, 0, 0, 9, 0, 12, 0, 0);
-      else
-        cost2 (3, 0, 0, 11, 0, 12, 0, 0);
-      adjustStack (_G.stack.offset + 2 + poststackadjust,
-      !aopRet (sym->type)  || aopRet (sym->type)->regs[A_IDX] < 0,
-      bc_free,
-      de_free,
-      false,
-      iy_free && hl_free);
-      emit2 (hl_free ? "!jphl" : "jp (iy)");
-      if (hl_free)
-        cost2 (1 + IS_TLCS90, 4, 3, 4, 4, 8, 3, 1);
-      else
-        cost2 (2, 8, 6, 6, 0, 8, 4, 2);
-      goto done;
-    }
-  else if (!IS_SM83 && !_G.omitFramePtr && sym->stack > (optimize.codeSize ? 2 : 1))
+  /* (The z80 "merge both stack adjustments" fast path was RAB/TLCS90-only —
+     dead on the S1C88 — and emitted the illegal `jp (iy)`; removed.) */
+  if (!_G.omitFramePtr && sym->stack > (optimize.codeSize ? 2 : 1))
     {
       emit2 ("ld sp, ix");
       cost2 (2, 10, 7, 4, 0, 6, 2, 2);
