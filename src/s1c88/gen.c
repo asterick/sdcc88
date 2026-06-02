@@ -8475,19 +8475,24 @@ genPlus (iCode * ic)
         }
       else if (!maskedword && leftop->type == AOP_STL && !i && i + 1 < size && hl_dead && (size <= 2 || leftop->type != AOP_EXSTK /* (hl) would be pointed to result, overwritten by addition here */))
         {
+          /* S1C88: the 2nd ALU pair is BA (not the z80 DE). Move the addend into
+             BA and `add hl, ba`; save/restore BA when it isn't dead (never fall
+             back to the nonexistent DE). Setting up HL from the AOP_STL address
+             is `ld hl,#off; add hl,sp` — it never touches A/B, so BA survives. */
           PAIR_ID pair = getPairId (rightop);
-          if (pair != PAIR_BC)
-            pair = PAIR_DE;
-          if (pair == PAIR_DE && !de_dead)
-            _push (PAIR_DE);
-          genMove (pair == PAIR_BC ? ASMOP_BC : ASMOP_DE, rightop, true, true, de_dead, false);
-          genMove (ASMOP_HL, leftop, true, true, de_dead && pair != PAIR_DE, false);
+          if (pair != PAIR_BC && pair != PAIR_BA)
+            pair = PAIR_BA;
+          const bool save_ba = (pair == PAIR_BA && !isPairDead (PAIR_BA, ic));
+          if (save_ba)
+            _push (PAIR_BA);
+          genMove (pair == PAIR_BC ? ASMOP_BC : ASMOP_BA, rightop, true, true, de_dead, false);
+          genMove (ASMOP_HL, leftop, true, true, de_dead, false);
           emit2 ("add hl, %s", _pairs[pair].name);
           spillPair (pair);
           cost2 (1 + IS_TLCS90, 11, 7, 2, 8, 8, 1, 1);
           started = true;
-          if (pair == PAIR_DE && !de_dead)
-            _pop (PAIR_DE);
+          if (save_ba)
+            _pop (PAIR_BA);
           genMove_o (IC_RESULT (ic)->aop, 0, ASMOP_HL, 0, 2, true, true, de_dead, false, i + 2 == size);
           i += 2;
           continue;
