@@ -3,10 +3,11 @@
 **This is the single resume entry point.** If the prompt is *"let's pick up where you left off,"* do the
 steps under **NEXT ACTION**. Everything needed to continue is here or linked from here.
 
-_Last updated: 2026-06-01 (session 5: **the `ldir` struct-copy cluster is eliminated** for all fixed-size
-copies — genBuiltInMemcpy / genPointerSet / genPointerGet / genRet all emit the native S1C88 byte loop
-(HL=source, IY=dest, B or borrowed-IX counter). The feared latent garbage-`aop_stk` bug did NOT recur.
-Only a variable-count `__builtin_memcpy` keeps the ldir fallback (rare). See "Session 5" below. Session 4:
+_Last updated: 2026-06-02 (session 5: **`ldir` is fully eliminated from codegen** — genBuiltInMemcpy
+(incl. variable/runtime count via a borrowed-IX 16-bit counter + `cp ix,#0` zero guard) / genPointerSet /
+genPointerGet / genRet all emit the native S1C88 byte loop (HL=source, IY=dest). The feared latent
+garbage-`aop_stk` bug did NOT recur. The only validator flag left anywhere is the unrelated `jrl __mulint`
+`.globl` false-positive. See "Session 5" below. Session 4:
 stack-word peeks + IY/BA arg-push, variable-shift IY counter, `ex(sp),hl`→`ld dd(sp)`, signed-literal
 compares→native `jrs` (drop `ccf`), immediate→indexed-store fix. Session 3: offsetPair native-add,
 `add hl/iy/ix,sp` elimination, struct-return SIGSEGV fix; ldir attempt reverted — see "Session 3").
@@ -174,6 +175,11 @@ All five emit sites now use a native forward byte loop — `ld a,(hl); ld 0(iy),
 - **`148f9cf` genBuiltInMemcpy count > 255**: borrow the frame pointer **IX** as a 16-bit counter
   (`push ix; ld ix,#n; … dec ix; jp NZ` → peephole `jrs NZ`; `pop ix`). IX isn't referenced inside the
   loop, and the address loads run before the push, so (ix+d)/SP offsets are unaffected.
+- **`f651906` genBuiltInMemcpy variable (runtime) count**: load `n` → IX first, `cp ix,#0; jrs Z,end` zero
+  guard (so count==0 copies nothing instead of wrapping to 65536), `dec ix; jrs NZ` loop. Removed the dead
+  z80 fallback (setupForMemcpy-into-DE, the n==1/2/≤4 `ldi` cases, the ldir/Rabbit paths) + unused
+  saved_BC/DE/HL. **This was the last ldir — codegen now emits none.** The feared 3-operand clobber didn't
+  materialise: count→IX loads while still in its source, and the pair loads use A/SP-relative, never IX.
 
 **The feared "latent garbage-`aop_stk` bug" did NOT recur.** Verified clean (0 sdas88 errors) across
 register-pointer, stack-source, stack-dest, global, and IMMD operands — `local=*p`, `*p=local`, `g=local`,
@@ -184,10 +190,14 @@ copy_word are byte-identical to baseline). **valgrind reconfirmed unusable here:
 stripped, and although a downloaded `libc6-dbg` has the matching build-id, valgrind's mandatory early
 `strlen`-in-ld.so redirect isn't satisfied by `--extra-debuginfo-path` (and there's no root to install it).
 
-**Only remaining `ldir`:** a *variable*-count `__builtin_memcpy(d,s,n)` (runtime `n`) still uses the z80
-fallback — rare. To finish it: load `n` → IX, guard the zero case with `cp ix,#0; jrs Z,end` (the S1C88 has
-`cp ix,#imm`; verified), and handle the 3-operand register clobber (count must survive the HL/IY loads,
-which need IX as the frame pointer when from/to are stack operands). rom-smoke GREEN throughout.
+**`ldir` is now gone from EVERY codegen path** — the variable-count `__builtin_memcpy(d,s,n)` was finished
+in `f651906`: load runtime `n` → IX first (while still in its source location), then the source/dest pair
+loads (register moves / `ld pair,dd(sp)` — they use A as scratch but never touch IX, and 16-bit pair loads
+don't need IX as a frame pointer, so the count survives and the feared 3-operand clobber doesn't bite),
+then `cp ix,#0; jrs Z,end` zero guard + `dec ix; jrs NZ` loop. The dead z80 fallback (setupForMemcpy-into-
+DE, the n==1/2/≤4 `ldi` cases, the ldir/Rabbit paths) was removed. Verified 0 sdas88 errors for register-,
+stack-, and call-result-count memcpy. rom-smoke GREEN throughout. **The only validator flag anywhere is now
+the unrelated `jrl __mulint` support-routine `.globl` false-positive** (item 2 above).
 
 ## Session 4 (2026-06-01) — register-model grind: peeks, shifts, compares, indexed stores
 
@@ -244,11 +254,12 @@ rom-smoke GREEN throughout; no regressions across the corpora.
   the session-2 removal of explicit rule 178 missed). Both `--no-peep` and peephole modes now emit 0 such
   stores. (Diagnosing this: `--no-peep` made it vanish → peephole; `port->peep.canAssign` is the hook.)
 
-**Remaining (everything else is clean) — two *non-register-model* items:**
+**Remaining (everything else is clean) — one *non-register-model* item (the `.globl` false-positive):**
 - ~~**Struct-copy `ldir` cluster**~~ **DONE (session 5)** — see "Session 5" below. ldir is eliminated from
-  **all fixed-size copies**: struct copy/assign + literal-count `__builtin_memcpy` (genBuiltInMemcpy, B
-  counter ≤255 / borrowed-IX 16-bit counter >255), scalar store-through-pointer (genPointerSet), read-
-  into-stack (genPointerGet), and struct return-by-value (genRet). All use the native byte loop
+  **all** copies: struct copy/assign + `__builtin_memcpy` of any count (genBuiltInMemcpy — B counter ≤255,
+  borrowed-IX 16-bit counter >255, and IX + `cp ix,#0` zero guard for runtime counts), scalar store-
+  through-pointer (genPointerSet), read-into-stack (genPointerGet), and struct return-by-value (genRet).
+  All use the native byte loop
   `ld a,(hl); ld 0(iy),a; inc hl; inc iy; djr nz` (HL=source, IY=dest). **The "latent garbage-`aop_stk`
   bug" did NOT surface** with this approach — the byte loop computes correct SP-relative offsets across
   register/stack/global/IMMD operands (verified `local=*p`, `*p=local`, `g=local`, stacked args). The
@@ -256,8 +267,9 @@ rom-smoke GREEN throughout; no regressions across the corpora.
   copies oddly; the current change only fires for memcpy iCodes (copy_small/copy_word byte-identical to
   baseline). valgrind was reconfirmed unusable in this sandbox (stripped ld.so; downloaded libc6-dbg
   build-id matches but `--extra-debuginfo-path` doesn't satisfy the mandatory ld.so `strlen` redirect; no
-  root). **Only remaining ldir:** a *variable*-count `__builtin_memcpy(d,s,n)` (runtime n) still falls back
-  to the z80 ldir — rare; needs count→IX with a `cp ix,#0` zero guard + 3-operand clobber handling.
+  root). **ldir is now gone from every codegen path** — the variable/runtime-count case was finished in
+  `f651906` (see "Session 5"); the feared 3-operand clobber didn't bite (count→IX loads first, the pair
+  loads use A/SP-relative and never touch IX).
 - **`jrl __mulint`/`carl __mullong`/`jrl __divsint`** — NOT a gen.c z80-ism; **validator false-positives.**
   sdas88 errors `<u> undefined symbol` (verified: *reference* `sdasz80` errors identically — `.globl` is
   genuinely required, not an as88 bug). Our codegen emits `.globl` for called **C** externs (`_ext` is
