@@ -37,6 +37,8 @@ and builds the compiler.
 > `docs/s1c88/HANDOFF.md` "Peephole audit". **`ldir` is fully eliminated from codegen** (session 5):
 > genBuiltInMemcpy (incl. runtime-count via a borrowed-IX counter + `cp ix,#0` guard) / genPointerSet /
 > genPointerGet / genRet all emit the native byte loop (HL=source, IY=dest) — see HANDOFF "Session 5".
+> **Inter-function calls now emit `bcall`/`bjump`** (linker picks form + bank switch) and **support routines
+> get `.globl`** (session 6) — so a `--c1mode` corpus assembles with **0 sdas88 errors everywhere**.
 > **Remaining:** the rest of the DE/BC register-model cleanup (the `gen.c`
 > scratch-asmop machinery: residual `push de`/`pop de`, `ld de`/`add hl,de` scratch, saveRegs/restoreRegs)
 > + the documented out-of-range `jp GE`. All

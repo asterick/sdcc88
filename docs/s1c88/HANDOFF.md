@@ -3,11 +3,13 @@
 **This is the single resume entry point.** If the prompt is *"let's pick up where you left off,"* do the
 steps under **NEXT ACTION**. Everything needed to continue is here or linked from here.
 
-_Last updated: 2026-06-02 (session 5: **`ldir` is fully eliminated from codegen** — genBuiltInMemcpy
-(incl. variable/runtime count via a borrowed-IX 16-bit counter + `cp ix,#0` zero guard) / genPointerSet /
-genPointerGet / genRet all emit the native S1C88 byte loop (HL=source, IY=dest). The feared latent
-garbage-`aop_stk` bug did NOT recur. The only validator flag left anywhere is the unrelated `jrl __mulint`
-`.globl` false-positive. See "Session 5" below. Session 4:
+_Last updated: 2026-06-02 (session 6: **codegen emits `bcall`/`bjump` for inter-function calls/tail-jumps**
+(linker picks form + bank switch), and **`.globl` is now emitted for compiler support routines** — so a
+`--c1mode` corpus assembles with **0 sdas88 errors everywhere** (the last `jrl __mulint` false-positive is
+gone). End-to-end compile→assemble→link verified. See "Session 6" below. Session 5: **`ldir` is fully
+eliminated from codegen** — genBuiltInMemcpy (incl. variable/runtime count via a borrowed-IX 16-bit counter
++ `cp ix,#0` zero guard) / genPointerSet / genPointerGet / genRet all emit the native S1C88 byte loop
+(HL=source, IY=dest); the feared latent garbage-`aop_stk` bug did NOT recur. Session 4:
 stack-word peeks + IY/BA arg-push, variable-shift IY counter, `ex(sp),hl`→`ld dd(sp)`, signed-literal
 compares→native `jrs` (drop `ccf`), immediate→indexed-store fix. Session 3: offsetPair native-add,
 `add hl/iy/ix,sp` elimination, struct-return SIGSEGV fix; ldir attempt reverted — see "Session 3").
@@ -155,6 +157,32 @@ the broader operand-placement work so the allocator keeps 16-bit operands in BA/
 
 > A from-scratch big-bang reshape was tried and **reset** (unverifiable-red for the whole grind). The dead
 > WIP is in reflog `417bed5` — useful only as a reference for the *end-state* register defs.
+
+## Session 6 (2026-06-02) — bcall/bjump for inter-function calls + `.globl` support routines
+
+**Codegen now emits the banked pseudo-ops for direct inter-function transfers, and the last validator
+false-positive is gone — a `--c1mode` corpus is now 0 sdas88 errors *everywhere*.** Commit `da38e3f`:
+- **`genCall` named-symbol path → `bcall _f` (call) / `bjump _f` (tail-jump).** The linker becomes the
+  single place that picks short/long form + inserts/omits the `ld nb` bank switch (per
+  `banked-branch.md` + memory [[codegen-prefer-bcall-bjump]]). Indirect/register (`call (iy)`, `___sdcc_
+  call_hl`) and literal-address calls are left on the existing path. Cost bumped to the 6-byte worst-case
+  slot.
+- **Two peephole rules** mirror the z80 tail-call opts 135/136 for the pseudo-ops: `bcall f; ret`→`bjump f`
+  (+ the `pop ix` variant), guarded by `symmParmStack`.
+- **`.globl` for compiler support routines** (`__mulint`/`__divsint`/`__mullong`/…): they are created by
+  `funcOfType()` with `cdef=1` and never enter SDCC's publics/externs sets (`convertToFcall` only marks
+  them extern for `TARGET_PIC_LIKE`), so the assembler rejected the undefined reference (verified genuinely
+  required: stock `sdasz80` errors identically). `genCall` now `addSetIfnotP(&publics, csym)` for a `cdef`
+  target so `printPublics` emits the `.globl`. **This kills the long-standing `jrl __mulint` validator
+  flag.**
+- **Verified end-to-end:** compiled C with `bcall _f` assembles AND links — the linker resolves the slot to
+  `[ld nb omitted] carl <disp>` for a bank-0 target (decoded from a linked `.ihx`). Tail calls become
+  `bjump`. corpus/stk/wide/calls/support-routine corpora all 0 errors; rom-smoke + link-smoke GREEN.
+
+**Next:** the residual DE/BC register-model cleanup (saveRegs/restoreRegs around calls, remaining `push de`
+scratch sites, the `asmop_de`/long-combo machinery) per `abi-decision.md` Step 2; full struct return-by-
+value (the copy half works now via genRet's byte loop); and the documented out-of-range signed `jp LT`
+assembler gap.
 
 ## Session 5 (2026-06-01) — the `ldir` struct-copy cluster, eliminated
 
