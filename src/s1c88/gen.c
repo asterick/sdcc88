@@ -7617,7 +7617,51 @@ genRet (const iCode *ic)
           if (aopRet (currFunc->type))
             genMove (aopRet (currFunc->type), IC_LEFT (ic)->aop, true, true, true, true);
           else
-            UNIMPLEMENTED;
+            {
+              /* Struct/union return-by-value (bigreturn): aopRet()==NULL, and
+                 `return *p` reaches genRet as a pointer-sized operand — the
+                 address of the source struct.  Copy sizeof(return type) bytes
+                 from [that pointer] (HL) to the caller's hidden return buffer
+                 (IY, read from the hidden-pointer slot on the stack). */
+              int structsize = getSize (currFunc->type->next);
+              if (structsize < 1 || structsize > 255)
+                UNIMPLEMENTED;   /* giant struct return — needs a 16-bit counter */
+              else
+                {
+                  symbol *tlbl;
+                  int off;
+                  /* HL = source pointer FIRST — IC_LEFT is often the near-ptr
+                     arg living in HL, so it must be read before HL is reused. */
+                  genMove (ASMOP_HL, IC_LEFT (ic)->aop, true, true, true, true);
+                  /* IY = hidden return-buffer pointer = *(sp+off).  Save the
+                     source over the read (HL is the only pair that can deref
+                     `(hl)`), so this works for any frame offset.  `off` is
+                     computed after the push so it includes the saved word. */
+                  _push (PAIR_HL);
+                  off = _G.stack.offset + _G.stack.param_offset + _G.stack.pushed + (_G.omitFramePtr ? 0 : 2);
+                  setupPairFromSP (PAIR_HL, off);
+                  emit2 ("ld iy, !*hl");
+                  cost2 (2, 14, 12, 8, 0, 6, 4, 4);
+                  _pop (PAIR_HL);
+                  /* copy structsize bytes [HL] -> [IY] (A temp, B counter; both dead here) */
+                  emit2 ("ld b, !immedbyte", (unsigned) structsize);
+                  cost2 (2, 7, 6, 4, 8, 4, 2, 2);
+                  tlbl = regalloc_dry_run ? 0 : newiTempLabel (NULL);
+                  if (!regalloc_dry_run)
+                    emitLabel (tlbl);
+                  emit2 ("ld a, !*hl");
+                  cost2 (1, 7, 6, 5, 8, 6, 2, 2);
+                  emit2 ("ld !*iyx, a", 0);
+                  cost2 (1, 7, 7, 7, 8, 6, 2, 2);
+                  emit3w (A_INC, ASMOP_HL, 0);
+                  emit3w (A_INC, ASMOP_IY, 0);
+                  if (!regalloc_dry_run)
+                    emit2 ("djr nz, !tlabel", labelKey2num (tlbl->key));
+                  regalloc_dry_run_cost += 2;
+                  spillPair (PAIR_HL);
+                  spillPair (PAIR_IY);
+                }
+            }
         }
     }
   else if (IC_LEFT (ic)->aop->type == AOP_LIT)
