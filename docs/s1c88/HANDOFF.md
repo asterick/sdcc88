@@ -3,7 +3,10 @@
 **This is the single resume entry point.** If the prompt is *"let's pick up where you left off,"* do the
 steps under **NEXT ACTION**. Everything needed to continue is here or linked from here.
 
-_Last updated: 2026-06-02 (session 9: **indirect / function-pointer calls retargeted** — `f(x)` via ptr /
+_Last updated: 2026-06-02 (session 10: **ISR prologue/epilogue retargeted** to the S1C88 RETE model —
+`push ba/hl/iy` save, `rete` return, no `ei`/`pusha`/`reti`; 0 errors across ISR shapes. New gap logged:
+non-ISR `__critical` (di/ei → SC-bit masking). See "Session 10". Session 9: **indirect / function-pointer
+calls retargeted** — `f(x)` via ptr /
 `v->op()` / `tbl[i]()` now use `jp hl` (tail) or manufactured-return + `jp hl` (call), no `jp (iy)`/DE-BC/
 `___sdcc_call_*`; 0 errors. New gap logged: ISR prologue/epilogue (`reti`→`rete`, save-all, 2 latent
 `jp (iy)`). See "Session 9". Session 8: **s1c88 is now a fully independent port** — renamed the 44 globals
@@ -168,6 +171,28 @@ the broader operand-placement work so the allocator keeps 16-bit operands in BA/
 
 > A from-scratch big-bang reshape was tried and **reset** (unverifiable-red for the whole grind). The dead
 > WIP is in reflog `417bed5` — useful only as a reference for the *end-state* register defs.
+
+## Session 10 (2026-06-02) — ISR prologue/epilogue retargeted (RETE model)
+
+**`4e825c5`:** `__interrupt` functions emitted z80-isms (`!ei` at entry, the save/restore-all
+`!pusha`/`!popa` = `push af/bc/de/hl/iy`, and `reti`/`retn`) — all illegal on the S1C88 (`ei`/`di`/`reti`/
+`retn` don't exist). Per the Epson model (cpu-operation-interrupts.md §3.5) the exception sequence
+auto-evacuates **CB:PC and SC** (result flags + the I0/I1 interrupt-priority mask) and **RETE restores
+them**, so:
+- **Prologue:** save only the GP regs the handler may clobber — `push ba; push hl; push iy` (IX via the
+  frame setup). No SC/AF save (RETE handles SC), no `ei` (same-or-lower priority masked until RETE).
+- **Epilogue:** `pop iy; pop hl; pop ba`, then `rete`.
+- **Return:** always `rete` (NMI/critical/normal — it restores the mask).
+
+Verified 0 sdas88 errors for a plain ISR, an ISR that calls a function, and an IY-heavy ISR; save set is
+balanced. Full 13-input corpus + rom-smoke + link-smoke GREEN. The two latent epilogue `jp (iy)` sites are
+now provably unreachable (one gated on `IS_RAB||IS_TLCS90` ≡ 0, the other needs an ISR with stack params —
+impossible) → they DCE out, to be deleted with the dead-branch sweep.
+
+**NEW GAP (task #12): non-ISR `__critical`** still emits the z80 idiom (`ld a,i; di; push af` … `pop af;
+jp PO; ei`). S1C88 fix = the SC priority bits (I1=bit7, I0=bit6): `push sc; or sc,#0xC0` (mask all maskable)
+/ `pop sc` (restore) — for both the function-level paths and the block-level `genCritical`/
+`___sdcc_critical_enter` helpers. Separate workstream.
 
 ## Session 9 (2026-06-02) — indirect / function-pointer calls retargeted
 
