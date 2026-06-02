@@ -3,7 +3,12 @@
 **This is the single resume entry point.** If the prompt is *"let's pick up where you left off,"* do the
 steps under **NEXT ACTION**. Everything needed to continue is here or linked from here.
 
-_Last updated: 2026-06-02 (session 6: **codegen emits `bcall`/`bjump` for inter-function calls/tail-jumps**
+_Last updated: 2026-06-02 (session 7: **register-model cleanup — all *active* C/D/E + DE/BC z80-isms
+cleared** (bitfield store→B, callee-cleanup epilogue→IY, genSwap free-reg→A/B); a broad `--c1mode` sweep is
+0 errors + 0 residue. NEW gap found: **indirect/function-pointer calls** aren't retargeted (`jrl (iy)`,
+BC pointer load, `___sdcc_call_*` — a separate workstream). Remaining DE/BC residue is deeply latent
+(~40 unreachable sites → the dead-symbol sweep). See "Session 7" below. Session 6: **codegen emits
+`bcall`/`bjump` for inter-function calls/tail-jumps**
 (linker picks form + bank switch), and **`.globl` is now emitted for compiler support routines** — so a
 `--c1mode` corpus assembles with **0 sdas88 errors everywhere** (the last `jrl __mulint` false-positive is
 gone). End-to-end compile→assemble→link verified. See "Session 6" below. Session 5: **`ldir` is fully
@@ -157,6 +162,37 @@ the broader operand-placement work so the allocator keeps 16-bit operands in BA/
 
 > A from-scratch big-bang reshape was tried and **reset** (unverifiable-red for the whole grind). The dead
 > WIP is in reflog `417bed5` — useful only as a reference for the *end-state* register defs.
+
+## Session 7 (2026-06-02) — register-model cleanup: active C/D/E + DE/BC z80-isms cleared
+
+**Found by a broad `--c1mode` sweep (bitfields, callee-cleanup epilogues, swaps, long ALU, varargs,
+struct copy, pointer chains): three paths still emitted z80 scratch regs that don't exist on the S1C88,
+each reachable under realistic code. All fixed (`a369049`), 0 sdas88 errors + 0 textual de/bc/iy?/ix?
+residue across the whole sweep; rom-smoke + link-smoke GREEN.**
+- **genPackBits** (bitfield store, both merge sites): `getFreePairId` INVALID → PAIR_BC → `ld c,a; … or a,c`
+  (C nonexistent, `or a,c` illegal). Now stashes the shifted value in **B** (the only legal non-A `or`
+  source), `push b`/`pop b` when B live. `p->bf=v` → `ld b,a; ld a,(hl); and a,#mask; or a,b; ld (hl),a`.
+- **genEndFunction callee-cleanup epilogue**: the return-address hop took `bc_free || de_free` →
+  `pop de; …; push de`. `de_free` is *always* true on the S1C88 (D/E never hold a return value), so it
+  always fired with a phantom pair. Replaced with the **`iy_free`** branch (`pop iy; add sp,#n; push iy`) —
+  IY is the only free pair there (HL holds the return value, IX was just restored as the frame pointer).
+- **genSwap** (2-byte same-reg swap): the free-scratch scan ran A→B→C→D→E and, since C/D/E are
+  phantom-"dead", always settled on `ASMOP_E` (`ld e,…`). Restricted to **A/B**.
+
+**NEW GAP IDENTIFIED — indirect / function-pointer calls (a *separate* workstream, deferred).** `f(x)` via a
+function pointer, `v->op(a,b)`, `table[i]()` are NOT retargeted: they emit `jrl (iy)` (S1C88 jumps via
+register only with `jp hl`; there is no `jp iy`/`jrl (iy)`), load the pointer through BC (`ld c,(hl);
+ld b,(hl)`), and `carl ___sdcc_call_hl`/`___sdcc_call_iy` trampolines that lack `.globl` (and need S1C88
+definitions). Fixing it = the `jp hl` register-indirect idiom + a real-pair pointer load + the
+`___sdcc_call_*` helper/`.globl` story. (Direct calls — the common case — are fine via Session 6's
+bcall/bjump.)
+
+**Remaining register-model residue is now deeply latent** (~40 literal `push de`/`pop de`/`ex (sp),hl`/
+`ld {d,e,c},…` emit sites in gen.c) but **unreachable under realistic direct-call codegen** — they sit
+behind IS_SM83 / banked / z88dk-fastcall / `--reserve-iy` / specific top-of-stack layouts the allocator
+avoids (verified: the broad sweep + in-place swaps + long ALU hit none). Eliminating them is the
+dead-symbol sweep (abi-decision.md Step 2 "delete each symbol once unused") — a separate, larger refactor
+touching ralloc/the `*_IDX` enum/`_pairs[]`.
 
 ## Session 6 (2026-06-02) — bcall/bjump for inter-function calls + `.globl` support routines
 
