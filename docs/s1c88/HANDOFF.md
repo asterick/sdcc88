@@ -3,7 +3,9 @@
 **This is the single resume entry point.** If the prompt is *"let's pick up where you left off,"* do the
 steps under **NEXT ACTION**. Everything needed to continue is here or linked from here.
 
-_Last updated: 2026-06-02 (session 11: **struct/union return-by-value implemented** — `return *p` now
+_Last updated: 2026-06-02 (session 12: **`__critical` retargeted** to SC interrupt-level masking
+(`push sc; or sc,#0xc0` / `pop sc`, no ei/di) — 0 errors; ei/di/reti/ld a,i/jp PO now gone from all
+reachable codegen. See "Session 12". Session 11: **struct/union return-by-value implemented** — `return *p` now
 copies sizeof(return type) bytes to the caller's hidden buffer (HL=source, IY=`*(sp+off)`, byte loop);
 0 errors across struct-return forms. See "Session 11". Session 10: **ISR prologue/epilogue retargeted** to
 the S1C88 RETE model —
@@ -174,6 +176,24 @@ the broader operand-placement work so the allocator keeps 16-bit operands in BA/
 
 > A from-scratch big-bang reshape was tried and **reset** (unverifiable-red for the whole grind). The dead
 > WIP is in reflog `417bed5` — useful only as a reference for the *end-state* register defs.
+
+## Session 12 (2026-06-02) — __critical sections retargeted (SC interrupt-level masking)
+
+**`e962677`:** `__critical` functions/blocks emitted the z80 idiom (`ld a,i; di; push af` … `pop af; jp PO;
+ei`) — all illegal on the S1C88 (no `ei`/`di`/`ld a,i`; `jp PO` is z80 parity). The S1C88 masks interrupts
+via the SC interrupt-priority bits (I1=bit7, I0=bit6): **level 3 (`or sc,#0xc0`) masks all maskable
+IRQ1-3**.
+- **Function-level** (genFunction/genEndFunction `IFFUNC_ISCRITICAL`): prologue `push sc; or sc,#0xc0`
+  (save SC = level+flags, raise to 3), epilogue `pop sc`. `push sc` is 1 byte (`param_offset += 1`); `pop
+  sc` doesn't touch A/HL so the old return-value/flag shuffle is gone.
+- **Block-level** (`genCritical`/`genEndCritical`): the no-result form (what SDCC emits for `__critical {}`)
+  is `push sc; or sc,#0xc0` / `pop sc`. The result-capturing form threads the prior SC through the itemp
+  (`ld a,sc`→result; `ld sc,a`←right) — implemented for completeness (not emitted by normal usage here).
+
+push/pop sc naturally handle nesting + the prior level (restore the exact saved SC), so no IFF dance.
+Verified 0 sdas88 errors for function-level, block statement, block-with-locals, and control-flow/loop/call
+inside the section; full 15-input corpus + rom-smoke + link-smoke GREEN. (`ei`/`di`/`reti`/`ld a,i`/
+`jp PO` are now gone from all reachable codegen.)
 
 ## Session 11 (2026-06-02) — struct/union return-by-value implemented
 
