@@ -5517,7 +5517,7 @@ _toBoolean (const operand *oper, bool needflag)
       _push(PAIR_HL);
       genMove (ASMOP_HL, oper->aop, true, false, false, false);
       emit2 ("ld a, l");
-      emit2 ("or a, h");
+      emit3_8alu (A_OR, ASMOP_HL, 1, 0);   /* S1C88: or a,h is illegal — route h through b */
       _pop (PAIR_HL);
       return;
     }
@@ -5545,7 +5545,7 @@ _toBoolean (const operand *oper, bool needflag)
         if (!HAS_IYL_INST && (aopInReg (oper->aop, size, IYL_IDX) || aopInReg (oper->aop, size, IYH_IDX)))
           UNIMPLEMENTED;
         else
-          emit3_o (A_OR, ASMOP_A, 0, oper->aop, size);
+          emit3_8alu (A_OR, oper->aop, size, 0);   /* S1C88: route an L/H source through B (or a,l/h illegal) */
       }
 }
 
