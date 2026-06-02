@@ -6780,117 +6780,44 @@ genCall (const iCode *ic)
           else
             cost2 (3, 17, 16, 12, 24, 14, 5, 3);
         }
-      else if (getPairId (IC_LEFT (ic)->aop) != PAIR_IY && hl_free)
-        {
-          spillPair (PAIR_HL);
-          genMove (ASMOP_HL, IC_LEFT (ic)->aop, a_free, hl_free, de_free, true);
-          adjustStack (prestackadjust, a_not_parm, bc_not_parm, de_not_parm, false, false);
-          emit2 (jump ? "!jphl" : "call ___sdcc_call_hl");
-          if (jump)
-            cost2 (1, 4, 3, 4, 4, 8, 3, 1);
-          else
-            {
-              cost2 (3, 17, 16, 12, 24, 14, 5, 3);
-              // todo: add cycles spent in ___sdcc_call_hl here
-            }
-        }
-      else if (!IS_SM83 && !IY_RESERVED && !s1c88IsParmInCall (ftype, "iy")) // Ensure that we don't access the stack via iy when reading IC_LEFT (ic).
-        {
-          spillPair (PAIR_IY);
-          if (IC_LEFT (ic)->aop->type == AOP_EXSTK) // Ensure that we don't directly overwrite iyl while accessing the stack via iy.
-            {
-              _push (PAIR_HL);
-              genMove (ASMOP_HL, IC_LEFT (ic)->aop, a_not_parm, true, de_not_parm, true);
-              emit2 ("ex (sp), hl");
-              cost2 (1 + IS_RAB, 19, 16, 15, 0, 14, 5, 5);
-              _pop (PAIR_IY);
-            }
-          else
-            genMove (ASMOP_IY, IC_LEFT (ic)->aop, a_not_parm, hl_not_parm, de_not_parm, true);
-          adjustStack (prestackadjust, a_not_parm, bc_not_parm, de_not_parm, hl_not_parm, false);
-          emit2 (jump ? "jp (iy)" : "call ___sdcc_call_iy");
-          if (jump)
-            cost2 (2, 8, 6, 6, 0, 8, 4, 2);
-          else
-            {
-              cost2 (3, 17, 16, 12, 24, 14, 5, 3);
-              // todo: add cycles spent in ___sdcc_call_iy here
-            }
-        }
-      else if (bc_not_parm && (ic->left->aop->regs[B_IDX] < 0 && ic->left->aop->regs[C_IDX] < 0 || de_free)) // Try bc, since it is the only 16-bit register guarateed to be free even for __z88dk_fastcall with --reserve-regs-iy
-        {
-          wassert (!prestackadjust);
-          wassert (IY_RESERVED || IS_SM83); // The peephole optimizer handles ret for purposes other than returning only for --reserve-regs-iy
-          symbol *tlbl = 0;
-          if (ic->left->aop->regs[B_IDX] >= 0 || ic->left->aop->regs[C_IDX] >= 0)
-            {
-              wassert (de_free);
-              if (!regalloc_dry_run)
-                {
-                  tlbl = newiTempLabel (NULL);
-                  emit2 ("ld de, !immed!tlabel", labelKey2num (tlbl->key));
-                  _push (PAIR_DE);
-                }
-              cost2 (3, 10, 9, 6, 12, 6, 3, 3);
-            }
-          else if (!regalloc_dry_run)
-            {
-              if (!regalloc_dry_run)
-                {
-                  tlbl = newiTempLabel (NULL);
-                  emit2 ("ld bc, !immed!tlabel", labelKey2num (tlbl->key));
-                  _push (PAIR_BC);
-                }
-              cost2 (3, 10, 9, 6, 12, 6, 3, 3);
-            }
-          genMove (ASMOP_BC, IC_LEFT (ic)->aop, a_not_parm, hl_not_parm, de_not_parm, true);
-          emit2 ("push bc");
-          cost2 (1, 11, 11, 10, 16, 8, 3, 4);
-          emit2 ("ret");
-          cost2 (1, 10, 9, 8, 16, 10, 5, 3);
-          if (!regalloc_dry_run)
-            _G.stack.pushed -= 2;
-          if (tlbl)
-            emitLabel (tlbl);
-        }
-      else if (de_not_parm && (ic->left->aop->regs[D_IDX] < 0 && ic->left->aop->regs[E_IDX] < 0 || bc_free)) // Try de.
-        {
-          wassert (!prestackadjust);
-          wassert (IY_RESERVED || IS_SM83); // The peephole optimizer handles ret for purposes other than returning only for --reserve-regs-iy
-          symbol *tlbl = 0;
-          if (ic->left->aop->regs[D_IDX] >= 0 || ic->left->aop->regs[E_IDX] >= 0)
-            {
-              wassert (bc_free);
-              if (!regalloc_dry_run)
-                {
-                  tlbl = newiTempLabel (NULL);
-                  emit2 ("ld bc, !immed!tlabel", labelKey2num (tlbl->key));
-                  _push (PAIR_BC);
-                }
-              cost2 (3, 10, 9, 6, 12, 6, 3, 3);
-            }
-          else if (!regalloc_dry_run)
-            {
-              if (!regalloc_dry_run)
-                {
-                  tlbl = newiTempLabel (NULL);
-                  emit2 ("ld de, !immed!tlabel", labelKey2num (tlbl->key));
-                  _push (PAIR_DE);
-                }
-              cost2 (3, 10, 9, 6, 12, 6, 3, 3);
-            }
-          genMove (ASMOP_DE, IC_LEFT (ic)->aop, a_not_parm, hl_not_parm, true, true);
-          emit2 ("push de");
-          cost2 (1, 11, 11, 10, 16, 8, 3, 4);
-          emit2 ("ret");
-          cost2 (1, 10, 9, 8, 16, 10, 5, 3);
-          if (!regalloc_dry_run)
-            _G.stack.pushed -= 2;
-          if (tlbl)
-            emitLabel (tlbl);
-        }
       else
-        UNIMPLEMENTED;
+        {
+          /* S1C88: the only register-indirect transfer is `jp hl` (there is no
+             `jp iy`/`call hl`/`call (iy)`, and no ___sdcc_call_* helper here).
+             Put the function pointer in HL.  For a tail-jump just `jp hl`; for
+             a call, manufacture a return address in a free pair (IY normally,
+             BA when IY is reserved), push it, then `jp hl` — the callee's RET
+             returns to the label emitted right after.  Near function pointers
+             are same-bank, so a plain jp hl is correct. */
+          spillPair (PAIR_HL);
+          genMove (ASMOP_HL, IC_LEFT (ic)->aop, a_not_parm, true, de_not_parm, true);
+          adjustStack (prestackadjust, a_not_parm, bc_not_parm, de_not_parm, false, false);
+
+          if (jump)
+            {
+              emit2 ("!jphl");
+              cost2 (1, 4, 3, 4, 4, 8, 3, 1);
+            }
+          else
+            {
+              symbol *tlbl = regalloc_dry_run ? 0 : newiTempLabel (NULL);
+              PAIR_ID rp = !IY_RESERVED ? PAIR_IY : PAIR_BA;   /* free pair to hold the return address */
+              if (!regalloc_dry_run)
+                emit2 ("ld %s, !immed!tlabel", _pairs[rp].name, labelKey2num (tlbl->key));
+              cost2 (rp == PAIR_IY ? 4 : 3, 10, 9, 6, 12, 6, 3, 3);
+              /* raw push: the return address is consumed by the callee's RET,
+                 so _G.stack.pushed is unchanged across the call. */
+              emit2 ("push %s", _pairs[rp].name);
+              if (rp == PAIR_IY)
+                cost2 (2, 15, 14, 12, 16, 8, 4, 5);
+              else
+                cost2 (1, 11, 11, 10, 16, 8, 3, 4);
+              emit2 ("!jphl");
+              regalloc_dry_run_cost += 1;
+              if (tlbl)
+                emitLabel (tlbl);
+            }
+        }
     }
   else
     {
