@@ -3,7 +3,10 @@
 **This is the single resume entry point.** If the prompt is *"let's pick up where you left off,"* do the
 steps under **NEXT ACTION**. Everything needed to continue is here or linked from here.
 
-_Last updated: 2026-06-02 (session 10: **ISR prologue/epilogue retargeted** to the S1C88 RETE model —
+_Last updated: 2026-06-02 (session 11: **struct/union return-by-value implemented** — `return *p` now
+copies sizeof(return type) bytes to the caller's hidden buffer (HL=source, IY=`*(sp+off)`, byte loop);
+0 errors across struct-return forms. See "Session 11". Session 10: **ISR prologue/epilogue retargeted** to
+the S1C88 RETE model —
 `push ba/hl/iy` save, `rete` return, no `ei`/`pusha`/`reti`; 0 errors across ISR shapes. New gap logged:
 non-ISR `__critical` (di/ei → SC-bit masking). See "Session 10". Session 9: **indirect / function-pointer
 calls retargeted** — `f(x)` via ptr /
@@ -171,6 +174,24 @@ the broader operand-placement work so the allocator keeps 16-bit operands in BA/
 
 > A from-scratch big-bang reshape was tried and **reset** (unverifiable-red for the whole grind). The dead
 > WIP is in reflog `417bed5` — useful only as a reference for the *end-state* register defs.
+
+## Session 11 (2026-06-02) — struct/union return-by-value implemented
+
+**`1ddb2c3`:** `return *p` from a struct-returning function hit a FATAL `Unimplemented` in genRet — a
+bigreturn has `aopRet()==NULL`, and the frontend lowers the return to a *pointer-sized* operand (the address
+of the source struct), so it landed in the `size<=4 && !IS_STRUCT` branch with no destination. (The
+`return localstruct` form — the struct *value* on the stack — was already handled by session 5's byte-loop
+at the AOP_STK path.) Implemented the copy to the caller's hidden return buffer:
+- **HL = source pointer** — loaded first (it's usually the near-ptr arg in HL, so read before HL is reused).
+- **IY = hidden buffer pointer = `*(sp+off)`** via `push hl; ld hl,sp; add hl,#off; ld iy,(hl); pop hl` —
+  HL is the only pair that can deref `(hl)`; saving the source over the read + computing `off` after the
+  push makes it correct for any frame offset. (Note: `ld iy,(iy)` would be cleaner but the dialect formats
+  it as the illegal `ld iy,0(iy)` — IY has no register-indirect-with-displacement pair load.)
+- byte loop `ld a,(hl); ld 0(iy),a; inc hl; inc iy; djr nz`. Struct > 255 B stays a clean Unimplemented.
+
+Verified end-to-end (callee copies to the hidden buffer = this fix; caller allocates it + passes the
+pointer = already worked, they agree): `return *p`/global/local/deref-modify-return, 2-byte and 10-byte
+structs all 0 sdas88 errors; full 14-input corpus + rom-smoke GREEN.
 
 ## Session 10 (2026-06-02) — ISR prologue/epilogue retargeted (RETE model)
 
