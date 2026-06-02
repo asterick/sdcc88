@@ -13,3 +13,4 @@
 
 # scratch: raw PDF text extraction
 docs/_extract/
+scripts/corpus/.baseline/
