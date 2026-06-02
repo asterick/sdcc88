@@ -3,10 +3,12 @@
 **This is the single resume entry point.** If the prompt is *"let's pick up where you left off,"* do the
 steps under **NEXT ACTION**. Everything needed to continue is here or linked from here.
 
-_Last updated: 2026-06-01 (session 4: stack-word peeks + IY/BA arg-push, variable-shift IY counter,
-`ex(sp),hl`→`ld dd(sp)`, signed-literal compares→native `jrs` (drop `ccf`), immediate→indexed-store fix.
-Net: every tractable register-model z80-ism cleared; only the struct-copy `ldir` cluster (blocked) + the
-`.globl`/bcall lib-call false-positives remain — see "Session 4" below. Session 3: offsetPair native-add,
+_Last updated: 2026-06-01 (session 5: **the `ldir` struct-copy cluster is eliminated** for all fixed-size
+copies — genBuiltInMemcpy / genPointerSet / genPointerGet / genRet all emit the native S1C88 byte loop
+(HL=source, IY=dest, B or borrowed-IX counter). The feared latent garbage-`aop_stk` bug did NOT recur.
+Only a variable-count `__builtin_memcpy` keeps the ldir fallback (rare). See "Session 5" below. Session 4:
+stack-word peeks + IY/BA arg-push, variable-shift IY counter, `ex(sp),hl`→`ld dd(sp)`, signed-literal
+compares→native `jrs` (drop `ccf`), immediate→indexed-store fix. Session 3: offsetPair native-add,
 `add hl/iy/ix,sp` elimination, struct-return SIGSEGV fix; ldir attempt reverted — see "Session 3").
 Branch: **`main`** (all work is on main;
 there is no `s1c88-retarget` branch anymore — CLAUDE.md's mention of it is stale). State: **GREEN** —
@@ -153,6 +155,40 @@ the broader operand-placement work so the allocator keeps 16-bit operands in BA/
 > A from-scratch big-bang reshape was tried and **reset** (unverifiable-red for the whole grind). The dead
 > WIP is in reflog `417bed5` — useful only as a reference for the *end-state* register defs.
 
+## Session 5 (2026-06-01) — the `ldir` struct-copy cluster, eliminated
+
+**Net result: `ldir` is gone from every fixed-size copy path.** The S1C88 has no `ldir` and no `DE`, so the
+z80 block-copy idiom (`ld e,l; ld d,h; ld hl,..; ld bc,#n; ldir` and its `ex de,hl` variants) was illegal.
+All five emit sites now use a native forward byte loop — `ld a,(hl); ld 0(iy),a; inc hl; inc iy; <dec/djr>;
+<branch>` with **HL = source, IY = dest** — committed as five always-green slices on `main`:
+- **`114d44f` genBuiltInMemcpy** (struct copy/assign): IY ← dest, HL ← source (clobber-safe ordering via
+  genMove dead-set; IY non-byte-addressable so it never disturbs L/H), `ld b,#count`, `djr nz`. A/B saved
+  via BA/AF when live, with correct `_G.stack.pushed` accounting so the SP-relative address math stays right.
+- **`57e4ecd` genPointerSet** (`p->longmember = v`, stack-source scalar store): same loop; source via
+  `!ldahlsp` (peephole → `ld hl,sp; add hl,#off`), dest pointer → IY.
+- **`5176132` genPointerGet** (read-pointer-into-stack): source pointer → HL (rightval via `offsetPair`;
+  IMMD folds into the literal), dest stack address → IY (`setupPairFromSP` handles IY). Dropped the dead
+  EZ80 `lea`/ix sub-branch.
+- **`e9551f2` genRet** (struct return-by-value / bigreturn): read the caller's hidden buffer pointer in one
+  16-bit `ld iy,(hl)`, source in HL, byte loop. `gget` (`struct S t=*p; return t;`) byte-loops both copies.
+- **`148f9cf` genBuiltInMemcpy count > 255**: borrow the frame pointer **IX** as a 16-bit counter
+  (`push ix; ld ix,#n; … dec ix; jp NZ` → peephole `jrs NZ`; `pop ix`). IX isn't referenced inside the
+  loop, and the address loads run before the push, so (ix+d)/SP offsets are unaffected.
+
+**The feared "latent garbage-`aop_stk` bug" did NOT recur.** Verified clean (0 sdas88 errors) across
+register-pointer, stack-source, stack-dest, global, and IMMD operands — `local=*p`, `*p=local`, `g=local`,
+stacked long args, `__builtin_memcpy(d,s,16)` and `(…,300)`. The earlier revert was caused by the original
+attempt's cost model driving the *middle-end* to route tiny `*d=*s` through memcpy into a bad stack-address
+path; this change only fires for genuine memcpy iCodes, so unrelated codegen is untouched (copy_small/
+copy_word are byte-identical to baseline). **valgrind reconfirmed unusable here:** the WSL2 ld.so is
+stripped, and although a downloaded `libc6-dbg` has the matching build-id, valgrind's mandatory early
+`strlen`-in-ld.so redirect isn't satisfied by `--extra-debuginfo-path` (and there's no root to install it).
+
+**Only remaining `ldir`:** a *variable*-count `__builtin_memcpy(d,s,n)` (runtime `n`) still uses the z80
+fallback — rare. To finish it: load `n` → IX, guard the zero case with `cp ix,#0; jrs Z,end` (the S1C88 has
+`cp ix,#imm`; verified), and handle the 3-operand register clobber (count must survive the HL/IY loads,
+which need IX as the frame pointer when from/to are stack operands). rom-smoke GREEN throughout.
+
 ## Session 4 (2026-06-01) — register-model grind: peeks, shifts, compares, indexed stores
 
 **Net result: every *tractable* register-model z80-ism is cleared.** The compare/shift/arg-passing/stack
@@ -208,21 +244,20 @@ rom-smoke GREEN throughout; no regressions across the corpora.
   the session-2 removal of explicit rule 178 missed). Both `--no-peep` and peephole modes now emit 0 such
   stores. (Diagnosing this: `--no-peep` made it vanish → peephole; `port->peep.canAssign` is the hook.)
 
-**Remaining (everything else is clean) — two *non-register-model* items, both deferred with cause:**
-- **Struct-copy `ldir` cluster** (`ldir` / `ex de,hl` / `add hl,bc` / `ld bc,#count` / `ld l,c` on
-  `*a=*b`, large-member reads, struct return) — the **only remaining real z80-ism**. Still the session-3
-  blocked work: the byte-loop replacement (`ld a,(hl); ld (iy),a; inc hl; inc iy; dec cnt; jr nz`, dest via
-  `ld iy,sp; add iy,#off`) is sound, but it perturbs the regalloc cost model and re-triggers a **latent
-  garbage-`aop_stk` bug**. **Refined diagnosis this session:** it is NOT uninitialised newAsmop memory —
-  `Safe_alloc` is `Safe_calloc` (zeroes), so a fresh aop has `aop_stk == 0`. The random value that *changes
-  between runs* is **union aliasing**: an `AOP_LIT`/`AOP_IMMD` aop has `aopu.aop_lit` (a heap pointer) set,
-  and some unguarded path reads the overlapping `aopu.aop_stk` (low bytes of that pointer → ASLR-random).
-  All `spOffset`/`fpOffset` callers ARE `AOP_STL`-guarded (audited 4969-5019, 8547, 15033); the offending
-  read is a *direct* `aop_stk` access among the ~64 in gen.c that lacks a stack-type guard. **valgrind is
-  not available in this sandbox** — without it (or a deterministic repro) the exact site can't be pinned,
-  so landing the ldir retarget risks the silent miscompile that got it reverted. NEXT: get valgrind (or
-  add a temporary `assert(aop->type==AOP_STK||EXSTK||STL)` before each direct `aop_stk` read and compile
-  the corpus to trip it), fix the guard, *then* land the cost-neutral byte-loop.
+**Remaining (everything else is clean) — two *non-register-model* items:**
+- ~~**Struct-copy `ldir` cluster**~~ **DONE (session 5)** — see "Session 5" below. ldir is eliminated from
+  **all fixed-size copies**: struct copy/assign + literal-count `__builtin_memcpy` (genBuiltInMemcpy, B
+  counter ≤255 / borrowed-IX 16-bit counter >255), scalar store-through-pointer (genPointerSet), read-
+  into-stack (genPointerGet), and struct return-by-value (genRet). All use the native byte loop
+  `ld a,(hl); ld 0(iy),a; inc hl; inc iy; djr nz` (HL=source, IY=dest). **The "latent garbage-`aop_stk`
+  bug" did NOT surface** with this approach — the byte loop computes correct SP-relative offsets across
+  register/stack/global/IMMD operands (verified `local=*p`, `*p=local`, `g=local`, stacked args). The
+  earlier revert was specific to the original attempt's cost model driving the middle-end to route tiny
+  copies oddly; the current change only fires for memcpy iCodes (copy_small/copy_word byte-identical to
+  baseline). valgrind was reconfirmed unusable in this sandbox (stripped ld.so; downloaded libc6-dbg
+  build-id matches but `--extra-debuginfo-path` doesn't satisfy the mandatory ld.so `strlen` redirect; no
+  root). **Only remaining ldir:** a *variable*-count `__builtin_memcpy(d,s,n)` (runtime n) still falls back
+  to the z80 ldir — rare; needs count→IX with a `cp ix,#0` zero guard + 3-operand clobber handling.
 - **`jrl __mulint`/`carl __mullong`/`jrl __divsint`** — NOT a gen.c z80-ism; **validator false-positives.**
   sdas88 errors `<u> undefined symbol` (verified: *reference* `sdasz80` errors identically — `.globl` is
   genuinely required, not an as88 bug). Our codegen emits `.globl` for called **C** externs (`_ext` is

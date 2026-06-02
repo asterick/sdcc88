@@ -34,10 +34,12 @@ and builds the compiler.
 > **`add hl/iy/ix,sp` fully eliminated** (peephole `ld pair,sp; add pair,#off`), and struct return-by-value
 > no longer SIGSEGVs (clean "Unimplemented"). The **peephole rules were audited for S1C88 validity and
 > collapsed into one file** (`peeph.def`; the z80 `peeph-z80.def` + 5 dead variant files removed) — see
-> `docs/s1c88/HANDOFF.md` "Peephole audit". **Remaining:** the DE/BC register-model cleanup (the `gen.c`
-> scratch-asmop machinery: `push de`/`pop de` stack-peek, `ex (sp),hl`, `ld de`/`add hl,de` scratch, the
-> `ldir` struct-copy — byte-loop-via-IY works but is blocked on a latent garbage-`aop_stk` bug, see
-> HANDOFF "Session 3") + the documented out-of-range `jp GE`. All
+> `docs/s1c88/HANDOFF.md` "Peephole audit". The **`ldir` struct-copy cluster is eliminated** (session 5):
+> genBuiltInMemcpy / genPointerSet / genPointerGet / genRet all emit the native byte loop (HL=source,
+> IY=dest, B or borrowed-IX counter) — see HANDOFF "Session 5"; only a *variable*-count `__builtin_memcpy`
+> keeps the ldir fallback. **Remaining:** the rest of the DE/BC register-model cleanup (the `gen.c`
+> scratch-asmop machinery: residual `push de`/`pop de`, `ld de`/`add hl,de` scratch, saveRegs/restoreRegs)
+> + the documented out-of-range `jp GE`. All
 > work is on **`main`**. The design, ABI, and step-by-step plan live in **`docs/s1c88/abi-decision.md`**;
 > the toolchain in `docs/s1c88/{sdas88-retarget,banked-branch}.md`. Read before touching `src/s1c88/`.
 
