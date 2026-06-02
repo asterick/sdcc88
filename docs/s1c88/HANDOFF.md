@@ -3,9 +3,15 @@
 **This is the single resume entry point.** If the prompt is *"let's pick up where you left off,"* do the
 steps under **NEXT ACTION**. Everything needed to continue is here or linked from here.
 
-_Last updated: 2026-06-02 (**PAUSED here** — the codegen retarget is **functionally complete**: every
-reachable path emits legal S1C88 (0 `sdas88` errors across a broad corpus), assemble→link→banked-ROM GREEN,
-and s1c88 is an independent port that builds alongside z80. Remaining = cleanup + ABI completeness (tasks
+_Last updated: 2026-06-02 (session 14: **built a byte-identical corpus harness** (`scripts/corpus/` +
+`corpus-check.sh`) which **disproved "functionally complete"** — a broader corpus exposed REACHABLE z80-isms
+the narrower prior corpus missed. Fixed 3 (`a6bf7e4` `or a,l/h` in `&&`/`||`; `20b9d72` bitfield
+`set/res`+`rld/rrd`; `5f890f1` `ld (iy+d),#imm`). STILL OPEN (reachable, = the deep register-model grind
+#7b): `ldir` long global↔global copy + DE/BC 16-bit address arithmetic. **Also: there is NO codegen
+heisenbug** — a long false hunt was edited-vs-stale builds; always rebuild via the overlay
+(`dev.sh`/`corpus-check.sh`), never raw `make -C build/.../src`. See "Session 14". —
+Earlier state: the codegen retarget was believed **functionally complete**: assemble→link→banked-ROM GREEN,
+s1c88 an independent port alongside z80. Remaining = cleanup + ABI completeness (tasks
 #7 register-model dead-code/symbol sweep [started s13], #8 IX/IY args, #9 far pointers, #10 assembler
 signed-branch) — see "NEXT ACTION". session 13: register-model dead-code sweep STARTED (`cee1680`, dead
 RAB/TLCS90 epilogue removed) + 3-part scope recorded. session 12: **`__critical` retargeted** to SC
@@ -108,6 +114,45 @@ the broader operand-placement work so the allocator keeps 16-bit operands in BA/
 
 > A from-scratch big-bang reshape was tried and **reset** (unverifiable-red for the whole grind). The dead
 > WIP is in reflog `417bed5` — useful only as a reference for the *end-state* register defs.
+
+## Session 14 (2026-06-02) — verification corpus + reachable z80-isms it exposed
+
+**Built a byte-identical corpus harness and used it to fix reachable codegen bugs that the prior narrower
+corpus missed — "functionally complete" was overstated.**
+
+- **`865cef1` corpus harness** — `scripts/corpus/01..15_*.c` (15 diverse pre-cpp'd inputs) + `scripts/
+  corpus-check.sh {snapshot|check}`: overlays+builds, compiles the corpus, normalizes the filename-derived
+  `.module` line, reports per-file **IDENTICAL/DIFF vs baseline** + **sdas88 errors**. See memory
+  [[sdcc88-corpus-harness]]. It immediately surfaced **real reachable** instructions sdas88 rejects (a
+  program using these features would not assemble) — the previous "0 errors" held only for the narrower
+  corpus tested before.
+- **`a6bf7e4` `_toBoolean` `or a,l/h` → through B.** `a && b` / `a || b` collapse a 16-bit value with
+  `ld a,h; or a,l`, but the 8-bit OR source can't be L/H. Routed via `emit3_8alu` (the B-routing session 1
+  added to genAnd/Or/Eor; _toBoolean bypassed it). 02_logic 2→0 errors.
+- **`20b9d72` genPackBits drop `set/res` + `rld/rrd`.** `f->bit1 = 1` emitted `set N,(hl)` (no set/res on
+  S1C88); a nibble-aligned `f->nib = v` emitted `rld/rrd` (no BCD nibble-rotate). Both z80 fast paths gated
+  on `IS_Z80`(≡1) so live; deleted → the general and/or-mask merge (already legal). 06_bitfields 3→0.
+- **`5f890f1` aopPut AOP_IY/EXSTK route immediate through A.** `g=1; f();` (const store to a global that
+  lands in IY because HL is busy before a call) emitted `ld 0(iy),#imm` — illegal. Session 4 fixed the
+  identical **AOP_STK** case (`|| isConstantString(s)`) but missed **AOP_IY/AOP_EXSTK**. 09_isr `ld
+  0(iy),#0x01`→`ld a,#1; ld 0(iy),a`. (Ripple: a 14_mixed global const-store moves `ld hl,#g; ld (hl),#n`
+  → `ld a,#n; ld (#g),a` — byte-identical *encoding*, verified `CE D4 ..` == `ld (g),a`; 0 new errors.)
+
+**⚠ METHODOLOGY (cost me hours; now a memory [[sdcc88-build-via-overlay-only]]):** rebuild the port ONLY
+via the overlay (`dev.sh`/`corpus-check.sh`, which `cp` repo `src/s1c88` → build tree before `make`).
+Raw `make -C build/.../src` compiles the build tree's **stale own copy**, not your edits. Mixing the two
+produced inconsistent output that masqueraded as **non-deterministic codegen / an uninitialized-memory
+heisenbug**. There is NO such heisenbug — codegen is deterministic per binary (`MALLOC_PERTURB_`, env-pad,
+8× reruns all stable); the "flicker" was edited-vs-stale builds. Verify an edit landed:
+`strings build/.../sdcc | grep <token>`.
+
+**STILL OPEN — reachable z80-isms = the deep register-model grind (task #7b), needs careful per-trigger
+work:** (1) **`ldir` long global↔global copy** — `long g1=g2` / `swap_l` emit `ld de,#g; ld bc,#4; ldir`
++ `ex de,hl` (13_swap, 25 errors); session 5's ldir elimination missed this 4-byte mem→mem copy path.
+(2) **DE/BC 16-bit address arithmetic** — `ld c,l; add hl,bc` / `ld e,l; ld d,b; add hl,de` for index×scale
++ base (09_isr `isr_heavy`, 14_mixed `matrix`, 15_stack); genPlus's 16-bit add picks the z80 2nd-ALU-pair
+(DE/BC) instead of S1C88 `BA` (`add hl,ba`) — blocked on the A/BA-overlap hazard (abi-decision Step 2). Plus
+the deferred `jp GE` out-of-range (#10) and the `bcall _ext` undefined-symbol *false positive* (link-resolved).
 
 ## Session 13 (2026-06-02) — register-model dead-code sweep (task #7) STARTED
 
