@@ -142,7 +142,6 @@ extern reg_info *regsS1C88;
 static void
 _z80_init (void)
 {
-  s1c88_opts.sub = SUB_Z80;
   switch (_G.asmType)
     {
     case ASM_TYPE_GAS:
