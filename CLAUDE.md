@@ -10,8 +10,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 > builtins (`__builtin_memset/strcpy/strncpy/strchr` — a reachable blind spot) retargeted to native
 > byte loops; session 15: `genMult`→BA/B, `MLT`, block-scope `.globl`, #10 `jp <signed cc>`, **plus the
 > critical branch-displacement off-by-one — see HANDOFF "THE BRANCH DISPLACEMENT CONVENTION"**):
-> **17/17 corpus files assemble with 0 sdas88 errors**. Remaining work: #7b (4 latent `push de` sites)
-> + #7c (the C/D/E/DE/BC symbol removal), IX/IY arg passing (#8), far pointers (#9). Validate each
+> **17/17 corpus files assemble with 0 sdas88 errors**. Remaining work: the #7c
+> symbol-deletion finale (s17: #7b closed, all option modes fixed, ~26 census-proven-dead sites left),
+> IX/IY arg passing (#8), far pointers (#9). Validate each
 > change with `./scripts/corpus-check.sh` (byte-identical +
 > sdas88) — **always rebuild via the overlay (`dev.sh`/`corpus-check.sh`), never raw `make -C
 > build/.../src` (it compiles a stale copy).** (All work is on **`main`**.)
@@ -62,8 +63,9 @@ and builds the compiler.
 > macro refs port-wide** (~2,000 dead lines, every `ex (sp),hl`/`ldir` emit gone) + the reachable
 > builtin cluster (`__builtin_memset/strcpy/strncpy/strchr`) retargeted to native byte loops with
 > corpus file `17_builtins.c`. **17/17 corpus files assemble
-> with 0 sdas88 errors.** **Remaining work:** #7b (4 latent `push de` sites) + #7c (the C-D-E-DE-BC
-> symbol removal), IX/IY argument passing (#8), 3-byte far pointers (#9).
+> with 0 sdas88 errors.** **Remaining work:** the #7c symbol-deletion finale (s17 closed #7b
+> and fixed every option mode — fomit-frame-pointer/opt-code-size were broken), IX/IY argument
+> passing (#8), 3-byte far pointers (#9).
 > All work is on **`main`**.
 > The design, ABI, and plan live in **`docs/s1c88/abi-decision.md`**; current state + next action in
 > **`docs/s1c88/HANDOFF.md`**; the toolchain in `docs/s1c88/{sdas88-retarget,banked-branch}.md`.

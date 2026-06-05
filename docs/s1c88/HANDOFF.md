@@ -3,7 +3,12 @@
 **This is the single resume entry point.** If the prompt is *"let's pick up where you left off,"* do the
 steps under **NEXT ACTION**. Everything needed to continue is here or linked from here.
 
-_Last updated: 2026-06-05 (session 16: **#7a — the dead variant-branch sweep — is COMPLETE**: all 599
+_Last updated: 2026-06-05 (session 17: **#7b COMPLETE + #7c nearly done** — every option mode
+(`--fomit-frame-pointer`/`--opt-code-size`/`--reserve-iy` combos) now produces 0 sdas88 errors (two
+were broken); the EXSTK/omit machinery, genIpush, call-saves, IY-half access, commitPair, makeFreePairId
+all retargeted to BA/IY idioms; `__sfr` = plain memory; 108 constant liveness predicates folded; the 26
+surviving phantom-asmop sites are census-proven guard-dead. Remaining: the #7c symbol-deletion finale —
+see "Session 17". Earlier: session 16: **#7a — the dead variant-branch sweep — is COMPLETE**: all 599
 sub-port variant-macro refs (468 in gen.c + 131 in peep.c/ralloc2.cc/main.c/ralloc.c) constant-folded
 or deleted; the `IS_Z80/IS_SM83/…` predicates, the `Z80_SUB_PORT` enum, the SM83 reg table, the
 GB/RGBDS/ISAS/r2k dialect tables, the gbz80 add/sub helpers and `genMultTwoChar` are GONE (~2,000
@@ -153,6 +158,63 @@ the broader operand-placement work so the allocator keeps 16-bit operands in BA/
 
 > A from-scratch big-bang reshape was tried and **reset** (unverifiable-red for the whole grind). The dead
 > WIP is in reflog `417bed5` — useful only as a reference for the *end-state* register defs.
+
+## Session 17 (2026-06-05) — #7b COMPLETE; #7c mostly done (the symbol deletion finale remains)
+
+**#7b is CLOSED and #7c is down to guard-dead residue + the symbol deletion proper.** Commits
+`c3ef689`..`ff8941a`:
+
+- **The method that drove it: canary-instrumented reachability census.** Wrap every suspect emit
+  statement in `{ fprintf (stderr, "CANARY %d %s", __LINE__, dry?"dry":"REAL"); stmt }`, compile the
+  corpus + stress files under 8 option combos, classify. First census: 54 sites — only
+  fetchPairLong's `ex de,hl` STL trick fired REAL (under `--fomit-frame-pointer`), the cheapMove
+  IY-half paths fired dry-only, everything else silent. Final census: the 26 surviving phantom-asmop
+  sites get ZERO hits, not even dry.
+- **`--fomit-frame-pointer` was a broken option mode** (and `omit_frame_ptr()` is a HEURISTIC that can
+  fire in default mode!): the EXSTK machinery still used DE. Fixed: genPlus EXSTK extrapair → BA;
+  fetchPairLong STL → `ex ba, hl` pivot; **setupToPreserveCarry**'s three-distinct-carry-destroying-
+  operands case (z80: right→HL, result→DE-ptr, left via cached IY) **collapses left into result**
+  (carry-free pre-copy, then the chain runs in place — left/result share the IY pointer). Fixing that
+  exposed an upstream latent bug: **aopGet's AOP_PAIRPTR-via-IX/IY both moved the pair AND printed the
+  displacement** (double-applied offset) — IX/IY PAIRPTR access is now displacement-form off a fixed
+  base, never moving the pair (aopGet + aopPut symmetric; HL keeps the move-protocol).
+- **`--opt-code-size` was broken too**: `!enters` mapped to `call ___sdcc_enter_ix` — no such runtime
+  helper; now expands inline (mappings.i ×3 dialects).
+- **genIpush word push**: free-pair candidates HL → BA → IY (BA halves work in the literal-caching
+  loop via PAIR_BA; IY loads any source incl. literals via genMove_o). The phantom bc/de picks — which
+  pushed GARBAGE (`push bc` never loaded) for literal high words under forced omit — are gone. The
+  all-pairs-live fallback replaces `ex (sp), hl` with `push hl; push hl; ld 2 (sp), hl; pop hl`.
+- **genCall saves: B gets a byte-granular 1-byte slot** (`push b`/`pop b`, `_G.stack.pushed += 1` keeps
+  all SP-relative math right); restoreRegs' bc arm pops the byte (`inc sp` when the result occupies B),
+  the DE arms are gone everywhere (genCall, restoreRegs, genFunction callee-saves).
+- **genCast sign-extend**: the illegal `sbc hl, hl` fast path deleted (byte-wise `sbc a, a` serves it).
+- **cheapMove IY-half access** (the dry-considered family): the z80 `push iy / ex (sp), hl / ex de,hl`
+  machinery replaced by two idioms — the **fully self-restoring BA pivot** `ex ba, iy; ld A/B↔L/H;
+  ex ba, iy` (restores BA, the other IY half, everything — usable when the partner is L/H) and **HL
+  staging** `push hl; ld hl, iy; …; [ld iy, hl;] pop hl` otherwise (memory partners keep IY free for
+  their own addressing; IY re-loaded from the HL copy in case they re-pointed it).
+- **makeFreePairId → BA/HL** (it returned phantom PAIR_BC whenever B was dead — latent `ld c,…`);
+  **commitPair got its missing PAIR_BA arm** (getDeadPairId returns BA → the old switch wassert(0)'d),
+  BC/DE arms deleted; setupPairFromSP wassert(HL||IY).
+- **`__sfr` is plain memory now**: AOP_SFR (z80 in/out codegen) is never created — S1C88 hardware regs
+  are memory-mapped, so `p = 1` emits `ld a,#1; ld (#_p),a` (was illegal `out (_p),a`). Every AOP_SFR
+  consumer arm deleted (~120 lines incl. the genCmp ASMOP_C cluster).
+- **The constant z80 liveness predicates folded** (108 sites): `isPairDead(PAIR_DE)` ≡ true,
+  `isRegDead(C/D/E/DE_IDX)` ≡ true, `isPairDead(PAIR_BC)` → `isRegDead(B_IDX)`, rMask C/D/E bits ≡ 0 —
+  sound because the allocator never assigns the phantom bytes (num_regs == 4) and post-#7b no codegen
+  keeps values there. + 34 dead if-arms deleted by the statement folder with operand-scoped
+  `aopInReg(op, n, C/D/E_IDX)` ≡ false atoms (genPlus's byte-in-C/E add helpers among them).
+- 07_calls re-baselined once (cost-shift; hand-verified instruction by instruction).
+
+**Remaining #7c (the finale, well-scoped):** ~26 emit sites referencing ASMOP_C/D/E/DE/BC remain, ALL
+guard-dead per the census (zero dry hits) — they sit behind operand-shape guards that can't occur.
+Deleting them + the symbols themselves: `PAIR_DE/PAIR_BC` enum members (~70/35 refs, mostly in those
+dead branches + `_pairs[]`), `asmop_c/d/e/de/bc` + combined `dehl/hlde/hlbc/debc` defs, the
+`genMove/genMove_o` `de_dead` parameter (pure plumbing now — every caller passes `true`), C/D/E_IDX
+from ralloc.h's enum + the `s1c88_regs[]` table + the `[IYH_IDX+1]` parm-mask arrays + ralloc2.cc's
+`REG_C/D/E` defines (renumbering IYL/IYH is safe — the allocator only assigns 0..3). **Decision
+recorded: IYL/IYH_IDX stay** — they are the byte-wise representation of ASMOP_IY (load-bearing for
+the IY-pair support), unlike the truly phantom C/D/E.
 
 ## Session 16 (2026-06-05) — #7a dead variant-branch sweep COMPLETE; builtins retargeted
 
