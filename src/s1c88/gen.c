@@ -880,14 +880,6 @@ ld_cost (const asmop *op1, int offset1, const asmop *op2, int offset2, bool coun
                 cost2 (2, 7, 6, 4, 8, 4, 2, 2); // ld r, #n
               return (2);
             }
-        case AOP_SFR:
-          if (count)
-            {
-              cost2 (2, 11, 9, 0, 0, 0, 3, 3); // in a, (n)
-              if (!aopInReg (op1, 0, A_IDX) && op1type != AOP_DUMMY)
-                cost2 (1, 4, 4, 2, 4, 2, 1, 1); // ld r, a
-            }
-          return ((aopInReg (op1, 0, A_IDX) || op1type == AOP_DUMMY) ? 2 : 3);
         case AOP_STK:
           if (count)
             cost2 (3, 19, 14, 9, 0, 10, 4, 5); // ld r, d(ix)
@@ -934,13 +926,6 @@ ld_cost (const asmop *op1, int offset1, const asmop *op2, int offset2, bool coun
           fprintf (stderr, "ld_cost op1: AOP_REG, op2: %d\n", (int) (op2type));
           wassert (0);
         }
-    case AOP_SFR:
-      if (count)
-        cost2 (2, 11, 10, 0, 0, 0, 3, 3); // out (n), a
-      if (aopInReg (op1, 0, A_IDX))
-        return (2);
-      else
-        return (2 + ld_cost (ASMOP_A, 0, op2, offset2, count));
     case AOP_IY:               /* 4 from ld iy, #... */
     case AOP_EXSTK:            /* 4 from ld iy, #... */
       switch (op2type)
@@ -948,8 +933,6 @@ ld_cost (const asmop *op1, int offset1, const asmop *op2, int offset2, bool coun
         case AOP_IMMD:
         case AOP_LIT:
           return (8);
-        case AOP_SFR:          /* 2 from in a, (...) */
-          return (9);
         case AOP_STK:
         case AOP_HL:           /* 3 from ld hl, #... */
           return (10);
@@ -968,13 +951,6 @@ ld_cost (const asmop *op1, int offset1, const asmop *op2, int offset2, bool coun
           if (count)
             cost2 (4, 19, 15, 11, 0, 12, 5, 5); // ld d(ix), n
           return (4);
-        case AOP_SFR:          /* 2 from in a, (...) */
-          if (count)
-            {
-              cost2 (2, 11, 9, 0, 0, 0, 3, 3); // in a, (n)
-              cost2 (3, 19, 15, 10, 0, 10, 4, 5); // ld d(ix), a
-            }
-          return (5);
         case AOP_STK:
           if (count)
             {
@@ -1029,13 +1005,6 @@ ld_cost (const asmop *op1, int offset1, const asmop *op2, int offset2, bool coun
               cost2 (1, 7, 7, 6, 8, 6, 2, 2); // ld (hl), a
             }
           return (7);
-        case AOP_SFR:
-          if (count)
-            {
-              cost2 (2, 11, 9, 0, 0, 0, 3, 3); // in a, (n)
-              cost2 (1, 7, 7, 6, 8, 6, 2, 2); // ld (hl), a
-            }
-          return (6);
         case AOP_HL:
           if (count)
             {
@@ -1727,22 +1696,9 @@ aopForSym (const iCode * ic, symbol * sym, bool requires_a)
       return aop;
     }
 
-  if (IN_REGSP (space))
-    {
-      /*.p.t.20030716 minor restructure to add SFR support to the Z80 */
-      {
-          /*.p.t.20030716 adding SFR support to the Z80 port */
-          aop = newAsmop (AOP_SFR);
-          sym->aop = aop;
-          aop->aopu.aop_dir = sym->rname;
-          aop->size = getSize (sym->type);
-          aop->paged = FUNC_REGBANK (sym->type);
-          aop->bcInUse = isPairInUse (PAIR_BC, ic);
-          /* emitDebug (";Z80 AOP_SFR for %s banked:%d bc:%d", sym->rname, FUNC_REGBANK (sym->type), aop->bcInUse); */
-
-          return (aop);
-        }
-    }
+  /* S1C88: __sfr space falls through to the ordinary absolute-memory aops —
+     the hardware registers are memory-mapped (no z80-style I/O space), so
+     AOP_SFR (z80 in/out codegen) is never created. */
 
   /* only remaining is far space */
   /* in which case DPTR gets the address */
@@ -1919,8 +1875,7 @@ sameRegs (const asmop *aop1, const asmop *aop2)
 {
   int i;
 
-  if (aop1->type == AOP_SFR || aop2->type == AOP_SFR)
-    return FALSE;
+  
 
   if (aop1 == aop2)
     return TRUE;
@@ -2010,10 +1965,7 @@ aopOp (operand *op, const iCode *ic, bool result, bool requires_a)
   /* if already has a asmop then continue */
   if (op->aop)
     {
-      if (op->aop->type == AOP_SFR)
-        {
-          op->aop->bcInUse = isPairInUse (PAIR_BC, ic);
-        }
+      
       return;
     }
 
@@ -2021,10 +1973,7 @@ aopOp (operand *op, const iCode *ic, bool result, bool requires_a)
   if (IS_SYMOP (op) && OP_SYMBOL (op)->aop)
     {
       op->aop = OP_SYMBOL (op)->aop;
-      if (op->aop->type == AOP_SFR)
-        {
-          op->aop->bcInUse = isPairInUse (PAIR_BC, ic);
-        }
+      
       if (result && ic->resultvalinfo)
         valinfo_union (&(op->aop->valinfo), *ic->resultvalinfo);
       else if (result)
@@ -2489,7 +2438,6 @@ aopGetLitWordLong (const asmop *aop, int offset, bool with_hash)
     case AOP_REG:
     case AOP_STK:
     case AOP_DIR:
-    case AOP_SFR:
     case AOP_STL:
     case AOP_CRY:
     case AOP_EXSTK:
@@ -3218,32 +3166,6 @@ aopGet (asmop *aop, int offset, bool bit16)
           dbuf_append_char (&dbuf, 'a');
           break;
 
-        case AOP_SFR:
-          {
-              /*.p.t.20030716 handling for i/o port read access for Z80 */
-              if (aop->paged)
-                {
-                  /* banked mode */
-                  /* reg A goes to address bits 15-8 during "in a,(x)" instruction */
-                  emit2 ("ld a, !msbimmeds", aop->aopu.aop_dir);
-                  emit2 ("in a, (!lsbimmeds)", aop->aopu.aop_dir);
-                }
-              else if (s1c88_opts.port_mode == 180)
-                {
-                  /* z180 in0/out0 mode */
-                  emit2 ("in0 a, !mems", aop->aopu.aop_dir);
-                }
-              else
-                {
-                  /* 8 bit mode */
-                  emit2 ("in a, !mems", aop->aopu.aop_dir);
-                  cost2 (2, 11, 9, 0, 0, 0, 3, 3);
-                }
-
-              dbuf_append_char (&dbuf, 'a');
-            }
-          break;
-
         case AOP_REG:
           if (bit16)
             {
@@ -3408,45 +3330,6 @@ aopPut (asmop *aop, const char *s, int offset)
       if (strcmp (s, "a"))
         emit2 ("ld a, %s", s);
       emit2 ("ld (%s+%d),a", aop->aopu.aop_dir, offset);
-      break;
-
-    case AOP_SFR:
-      {
-          /*.p.t.20030716 handling for i/o port read access for Z80 */
-          if (aop->paged)
-            {
-              /* banked mode */
-              if (aop->bcInUse)
-                emit2 ("push bc");
-
-              if (strlen (s) != 1 || (s[0] != 'a' && s[0] != 'd' && s[0] != 'e' && s[0] != 'h' && s[0] != 'l'))
-                {
-                  emit2 ("ld a, %s", s);
-                  s = "a";
-                }
-
-              emit2 ("ld bc, !hashedstr", aop->aopu.aop_dir);
-              emit2 ("out (c), %s", s);
-
-              if (aop->bcInUse)
-                emit2 ("pop bc");
-              else
-                spillPair (PAIR_BC);
-            }
-          else if (s1c88_opts.port_mode == 180)
-            {
-              /* z180 in0/out0 mode */
-              emit2 ("ld a, %s", s);
-              emit2 ("out0 (%s), a", aop->aopu.aop_dir);
-            }
-          else
-            {
-              /* 8 bit mode */
-              if (strcmp (s, "a"))
-                emit2 ("ld a, %s", s);
-              emit2 ("out (%s), a", aop->aopu.aop_dir);
-            }
-        }
       break;
 
     case AOP_REG:
@@ -3834,7 +3717,7 @@ cheapMove (asmop *to, int to_offset, asmop *from, int from_offset, bool a_dead)
       emit2 ("ld (%s+%d), a", to->aopu.aop_dir, to_offset);
       cost2 (3, 13, 13, 10, 16, 10, 4, 4);
     }
-  else if (!aopInReg (to, to_offset, A_IDX) && !aopInReg (from, from_offset, A_IDX) && (from->type == AOP_DIR || from->type == AOP_SFR || to->type == AOP_SFR || (to->type == AOP_HL || to->type == AOP_IY || to->type == AOP_EXSTK || to->type == AOP_STK) && (from->type == AOP_HL || from->type == AOP_IY || from->type == AOP_EXSTK || from->type == AOP_STK) || (to->type == AOP_HL || to->type == AOP_EXSTK) && (aopInReg(from, from_offset, L_IDX) || aopInReg(from, from_offset, H_IDX))) || to->type == AOP_PAIRPTR && from->type == AOP_PAIRPTR)
+  else if (!aopInReg (to, to_offset, A_IDX) && !aopInReg (from, from_offset, A_IDX) && (from->type == AOP_DIR || (to->type == AOP_HL || to->type == AOP_IY || to->type == AOP_EXSTK || to->type == AOP_STK) && (from->type == AOP_HL || from->type == AOP_IY || from->type == AOP_EXSTK || from->type == AOP_STK) || (to->type == AOP_HL || to->type == AOP_EXSTK) && (aopInReg(from, from_offset, L_IDX) || aopInReg(from, from_offset, H_IDX))) || to->type == AOP_PAIRPTR && from->type == AOP_PAIRPTR)
     {
       if (!a_dead)
         _push (PAIR_AF);
@@ -3922,20 +3805,21 @@ commitPair (asmop *aop, PAIR_ID id, const iCode *ic, bool dont_destroy) // Obsol
         {
           switch (id)
             {
-            case PAIR_BC:
-              cheapMove (aop, 0, ASMOP_C, 0, true);
-              cheapMove (aop, 1, ASMOP_B, 0, true);
-              break;
-            case PAIR_DE:
-              if (aop->type == AOP_REG && aop->aopu.aop_reg[0]->rIdx == L_IDX && aop->aopu.aop_reg[1]->rIdx == H_IDX && !dont_destroy)
+            case PAIR_BA:
+              if (aop->type == AOP_REG && aop->aopu.aop_reg[0]->rIdx == B_IDX && aop->aopu.aop_reg[1]->rIdx == A_IDX)
                 {
-                  emit3w (A_EX, ASMOP_DE, ASMOP_HL);
-                  swapPairs (PAIR_DE, PAIR_HL);
+                  emit2 ("ex a, b");   /* result wants the halves swapped */
+                  cost2 (1, 0, 0, 0, 0, 0, 0, 0);
+                }
+              else if (aop->type == AOP_REG && aop->aopu.aop_reg[0]->rIdx == B_IDX)
+                {                      /* low half lands in B: write high first */
+                  cheapMove (aop, 1, ASMOP_B, 0, true);
+                  cheapMove (aop, 0, ASMOP_A, 0, true);
                 }
               else
                 {
-                  cheapMove (aop, 0, ASMOP_E, 0, true);
-                  cheapMove (aop, 1, ASMOP_D, 0, true);
+                  cheapMove (aop, 0, ASMOP_A, 0, true);
+                  cheapMove (aop, 1, ASMOP_B, 0, true);
                 }
               break;
             case PAIR_HL:
@@ -8103,40 +7987,7 @@ genSub (const iCode *ic, asmop *result, asmop *left, asmop *right)
       bool hl_dead = l_dead && h_dead;
       bool pushed_hl = false;
 
-      if (right->type == AOP_SFR) // Right operand needs to go through a
-        {
-          asmop *tmpaop;
-
-          if (aopInReg (left, offset, H_IDX))
-            tmpaop = ASMOP_L;
-          else if (aopInReg (left, offset, L_IDX))
-            tmpaop = ASMOP_H;
-          else if (!l_dead && h_dead)
-            tmpaop = ASMOP_H;
-          else
-            tmpaop = ASMOP_L;
-
-          bool tmpaop_dead = aopInReg (tmpaop, 0, L_IDX) ? l_dead : h_dead;
-          if (!tmpaop_dead)
-            {
-              _push (PAIR_HL);
-              pushed_hl = true;
-            }
-
-          if (aopInReg (left, offset, A_IDX) ||
-            (aopInReg (tmpaop, 0, L_IDX) || aopInReg (tmpaop, 0, H_IDX)) && requiresHL (left))
-            {
-              cheapMove (ASMOP_A, 0, left, offset, true);
-              cheapMove (tmpaop, 0, right, offset, false);
-            }
-          else
-            {
-              cheapMove (tmpaop, 0, right, offset, true);
-              cheapMove (ASMOP_A, 0, left, offset, true);
-            }
-          emit3_o (offset ? A_SBC : A_SUB, ASMOP_A, 0, tmpaop, 0);
-        }
-      else if (right->type != AOP_LIT)
+      if (right->type != AOP_LIT)
         {
           if ((requiresHL (left) && left->type != AOP_REG || requiresHL (right) && right->type != AOP_REG) && !hl_dead)
             {
@@ -8928,37 +8779,7 @@ genCmp (operand * left, operand * right, operand * result, iCode * ifx, int sign
       /* Do a long subtract of right from left. */
       size = max (left->aop->size, right->aop->size);
 
-      if (right->aop->type == AOP_SFR)  /* Avoid overwriting A */
-        {
-          bool save_a, save_b, save_bc;
-          wassertl (size == 1, "Right side sfr in comparison with more than 8 bits.");
-
-          save_b = !isRegDead (B_IDX, ic);
-          save_bc = (save_b && !isRegDead (C_IDX, ic));
-          save_a = (aopInReg (left->aop, 0, A_IDX) ||
-                    aopInReg (left->aop, 0, B_IDX) && save_b ||
-                    aopInReg (left->aop, 0, C_IDX) && !save_b && save_bc);
-
-          if (save_bc)
-            _push (PAIR_BC);
-          if (save_a)
-            {
-              cheapMove (ASMOP_A, 0, right->aop, 0, true);
-              _push (PAIR_AF);
-            }
-          else
-            cheapMove (ASMOP_A, 0, right->aop, 0, true);
-          cheapMove (save_b ? ASMOP_C : ASMOP_B, 0, ASMOP_A, 0, true);
-          if (save_a)
-            _pop (PAIR_AF);
-          else
-            cheapMove (ASMOP_A, 0, left->aop, 0, true);
-          emit3_o (A_SUB, ASMOP_A, 0, save_b ? ASMOP_C : ASMOP_B, offset);
-          if (save_bc)
-            _pop (PAIR_BC);
-          result_in_carry = TRUE;
-          goto fix;
-        }
+      
 
       // Preserve A if necessary
       if (ifx && size == 1 && !sign && aopInReg (left->aop, 0, A_IDX) && !isRegDead (A_IDX, ic) &&
@@ -10333,12 +10154,12 @@ genAnd (const iCode * ic, iCode * ifx)
           if (requiresHL (right->aop) && right->aop->type != AOP_REG && !hl_free)
             _push (PAIR_HL);
 
-          if ((right->aop->type == AOP_SFR || (aopInReg (right->aop, i, IYL_IDX) || aopInReg (right->aop, i, IYH_IDX)) && !HAS_IYL_INST) && hl_free)
+          if (((aopInReg (right->aop, i, IYL_IDX) || aopInReg (right->aop, i, IYH_IDX)) && !HAS_IYL_INST) && hl_free)
             {
               cheapMove (ASMOP_L, 0, left->aop, i, false);
               emit3 (A_AND, ASMOP_A, ASMOP_L);
             }
-          else if (right->aop->type == AOP_SFR || !HAS_IYL_INST && (aopInReg (right->aop, i, IYL_IDX) || aopInReg (right->aop, i, IYH_IDX)))
+          else if (!HAS_IYL_INST && (aopInReg (right->aop, i, IYL_IDX) || aopInReg (right->aop, i, IYH_IDX)))
             UNIMPLEMENTED;
           else
             emit3_8alu (A_AND, right->aop, i, ic);
@@ -10588,19 +10409,18 @@ genOr (const iCode * ic, iCode * ifx)
           a_free = true;
         }
 
-      if (aopInReg (right->aop, i, A_IDX) || right->aop->type == AOP_SFR ||
-        !HAS_IYL_INST && (aopInReg (right->aop, i, IYL_IDX) || aopInReg (right->aop, i, IYH_IDX)))
+      if (aopInReg (right->aop, i, A_IDX) || !HAS_IYL_INST && (aopInReg (right->aop, i, IYL_IDX) || aopInReg (right->aop, i, IYH_IDX)))
         {
           cheapMove (ASMOP_A, 0, right->aop, i, true);
 
           if (requiresHL (left->aop) && left->aop->type != AOP_REG && !hl_free)
             _push (PAIR_HL);
-          if ((left->aop->type == AOP_SFR || (aopInReg (right->aop, i, IYL_IDX) || aopInReg (right->aop, i, IYH_IDX)) && !HAS_IYL_INST) && hl_free)
+          if (((aopInReg (right->aop, i, IYL_IDX) || aopInReg (right->aop, i, IYH_IDX)) && !HAS_IYL_INST) && hl_free)
             {
               cheapMove (ASMOP_L, 0, left->aop, i, false);
               emit3 (A_OR, ASMOP_A, ASMOP_L);
             }
-          else if (left->aop->type == AOP_SFR || aopInReg (right->aop, i, A_IDX) ||
+          else if (aopInReg (right->aop, i, A_IDX) ||
             !HAS_IYL_INST && (aopInReg (right->aop, i, IYL_IDX) || aopInReg (right->aop, i, IYH_IDX)))
             UNIMPLEMENTED;
           else
@@ -10655,7 +10475,7 @@ genEor (const iCode *ic, iCode *ifx, asmop *result_aop, asmop *left_aop, asmop *
   bool a_free = isRegDead (A_IDX, ic) && left_aop->regs[A_IDX] <= 0 && right_aop->regs[A_IDX] <= 0;
 
   /* if left is a literal & right is not then exchange them */
-  if ((left_aop->type == AOP_LIT && right_aop->type != AOP_LIT) || ((right_aop->type == AOP_SFR || right_aop->type == AOP_CRY) && !(left_aop->type == AOP_SFR || left_aop->type == AOP_CRY)))
+  if ((left_aop->type == AOP_LIT && right_aop->type != AOP_LIT) || ((right_aop->type == AOP_CRY) && !(left_aop->type == AOP_CRY)))
     {
       asmop *taop = right_aop;
       right_aop = left_aop;
@@ -10663,7 +10483,7 @@ genEor (const iCode *ic, iCode *ifx, asmop *result_aop, asmop *left_aop, asmop *
     }
 
   /* if result = right then exchange them */
-  if (sameRegs (result_aop, right_aop) && !(left_aop->type == AOP_SFR || left_aop->type == AOP_CRY))
+  if (sameRegs (result_aop, right_aop) && !(left_aop->type == AOP_CRY))
     {
       asmop *taop = right_aop;
       right_aop = left_aop;
@@ -10681,7 +10501,7 @@ genEor (const iCode *ic, iCode *ifx, asmop *result_aop, asmop *left_aop, asmop *
   /* Make sure A is on the left to not overwrite it. */
   if (aopInReg (right_aop, 0, A_IDX))
     {
-      wassert (!(left_aop->type == AOP_SFR || left_aop->type == AOP_CRY));
+      wassert (!(left_aop->type == AOP_CRY));
       asmop *taop = right_aop;
       right_aop = left_aop;
       left_aop = taop;
@@ -10838,7 +10658,7 @@ genEor (const iCode *ic, iCode *ifx, asmop *result_aop, asmop *left_aop, asmop *
                _pop (PAIR_HL);
             if (right_aop->type == AOP_LIT && byteOfVal (right_aop->aopu.aop_lit, i) == 0xff)
               emit3 (A_CPL, ASMOP_A, 0);   // S1C88 cpl needs an explicit operand (cpl a)
-            else if (right_aop->type == AOP_SFR || right_aop->type == AOP_STL || aopInReg (right_aop, i, IYL_IDX) || aopInReg (right_aop, i, IYH_IDX))
+            else if (right_aop->type == AOP_STL || aopInReg (right_aop, i, IYL_IDX) || aopInReg (right_aop, i, IYH_IDX))
               {
                 if (!hl_free)
                   _push (PAIR_HL);
