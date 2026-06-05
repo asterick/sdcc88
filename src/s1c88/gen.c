@@ -6892,11 +6892,15 @@ genCall (const iCode *ic)
                  by funcOfType() with cdef=1 and never enter SDCC's publics/
                  externs sets, so no `.globl` is emitted and the assembler then
                  rejects the (undefined) reference. Register them as global so
-                 printPublics emits the needed `.globl`. (User C externs already
-                 reach publics via the normal symbol-table path.) */
+                 printPublics emits the needed `.globl`. (File-scope user C
+                 externs already reach publics via the normal symbol-table path
+                 — SDCCglue adds a used level-0 function — but a BLOCK-scope
+                 `extern void f(void);` lives in an inner scope table the glue
+                 never walks, so it needs the same registration. level > 0
+                 can't duplicate the glue's entry, which is level-0-only.) */
               {
                 symbol *csym = OP_SYMBOL (IC_LEFT (ic));
-                if (csym->cdef && !IS_STATIC (csym->etype))
+                if ((csym->cdef || csym->level > 0) && !IS_STATIC (csym->etype))
                   addSetIfnotP (&publics, csym);
               }
 
