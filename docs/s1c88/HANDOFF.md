@@ -3,7 +3,17 @@
 **This is the single resume entry point.** If the prompt is *"let's pick up where you left off,"* do the
 steps under **NEXT ACTION**. Everything needed to continue is here or linked from here.
 
-_Last updated: 2026-06-05 (session 15: **the last reachable z80-isms are gone** — `genMult`'s literal path
+_Last updated: 2026-06-05 (session 16: **#7a — the dead variant-branch sweep — is COMPLETE**: all 599
+sub-port variant-macro refs (468 in gen.c + 131 in peep.c/ralloc2.cc/main.c/ralloc.c) constant-folded
+or deleted; the `IS_Z80/IS_SM83/…` predicates, the `Z80_SUB_PORT` enum, the SM83 reg table, the
+GB/RGBDS/ISAS/r2k dialect tables, the gbz80 add/sub helpers and `genMultTwoChar` are GONE (~2,000
+lines). Collateral: **every `ex (sp),hl` and `ldir` emit site is now gone** (19 of #7b's 20 ex-sites
+lived in dead variant branches); `push de` is down to 4 latent sites. **And a fresh corpus blind spot
+found+fixed (the s14 lesson again): the four remaining z80 builtins** — `__builtin_memset/strcpy/
+strncpy/strchr` are registered and REACHABLE and emitted `ldi/ldir`/DE/`jp PO/PE` (19 sdas88 errors) —
+retargeted to native byte loops in the s5 memcpy style; `scripts/corpus/17_builtins.c` added.
+**Corpus: 17/17 byte-identical, 0 sdas88 errors; rom/link/branch smoke GREEN.** See "Session 16". —
+Earlier: session 15: **the last reachable z80-isms are gone** — `genMult`'s literal path
 (`a112acf`) now uses BA/B (`add hl,ba` 16-bit loop; multiplicand in B for the `add/sub a,b` byte loop;
 byte-granular `push a`/`push b` saves; native `SEP` for the in-genMult sign-extend path; peep.c sizes
 `sep`). `4fe9ed8`: block-scope `extern void f(void); f();` now gets its `.globl` (was a REAL
@@ -95,12 +105,14 @@ complete**. The remaining work is cleanup + ABI completeness (the register-model
    BA) (14), **`genMult` literal path + variable 8×8 `MLT` + block-scope extern `.globl` + the #10
    `jp <signed cc>` lowering** (15). See the per-session entries below.
 3. **Remaining work = the open tasks** (cleanup + ABI completeness, not functional gaps):
-   - **#7 — register-model dead-code sweep / symbol removal.** The big careful grind: delete the dead
-     pure-variant branches, retarget the live-but-allocator-avoided z80-isms (`ex (sp),hl` → `ex ba,iy`,
-     residual `push de` — need IY-allocation repros to verify), and finally delete the C/D/E/DE/BC symbols
-     (`PAIR_DE` 301 refs, the `*_IDX` ordinals keyed into `ralloc2.cc`'s Boost allocator). **Started**
-     (`cee1680`); see "Session 13" for the three-part scope/risk. Always-green, build + byte-identical
-     after each step.
+   - **#7 — register-model dead-code sweep / symbol removal.** **Tier (a) — the dead variant branches —
+     is DONE (session 16): zero variant-macro refs remain port-wide,** and it took 19 of the 20
+     `ex (sp),hl` sites and every `ldir` emit with it. What's left:
+     **(b)** the 4 latent `push de` sites (see "Session 16" — only the genIpush `d_free` byte-push
+     fallback ~5769 is even theoretically reachable; needs a register-pressure repro), and
+     **(c)** the structural symbol removal — PAIR_DE (182), PAIR_BC (74), ASMOP_DE (47), C/D/E_IDX
+     (149), IYL/IYH_IDX (107) refs in gen.c, plus the `*_IDX` ordinals keyed into `ralloc2.cc`'s Boost
+     allocator. Always-green, build + byte-identical after each step.
    - **#8 — ABI Phase 2: IX/IY argument passing** (int 3rd/4th + near-ptr 1st/2nd currently spill to stack).
    - **#9 — ABI Phase 3: 3-byte far pointers + `_near`/`_far` memory model** (large).
 4. **Validator workflow** (how to check a slice): compile with `sdcc -ms1c88 --c1mode -o /tmp/x.asm`, then
@@ -141,6 +153,52 @@ the broader operand-placement work so the allocator keeps 16-bit operands in BA/
 
 > A from-scratch big-bang reshape was tried and **reset** (unverifiable-red for the whole grind). The dead
 > WIP is in reflog `417bed5` — useful only as a reference for the *end-state* register defs.
+
+## Session 16 (2026-06-05) — #7a dead variant-branch sweep COMPLETE; builtins retargeted
+
+**Tier (a) of the register-model sweep is done — the port has ZERO sub-port variant-macro references —
+and the sweep exposed + fixed another reachable builtin cluster.** Commits `b824303`→`dba51c2`:
+
+- **The sweep (b824303, 44c68d2, 9301956, b42f2d6, f282e72):** all 599 refs to the compile-time-dead
+  predicates (`IS_SM83/IS_RAB/IS_TLCS90/…` ≡ 0, `IS_Z80` ≡ 1) folded away. Method, reusable for #7c:
+  (1) scripted whitespace/newline-aware boolean-term strips with the conjunct-tail shapes (`a && IS_X
+  || b`, `a || IS_X && b`) excluded as unsafe; (2) a string/comment-aware **statement-level constant
+  folder** (`/tmp`-only tooling, not in-repo) that brace-matches each `if/else if` whose condition
+  mentions a macro, evaluates it tri-state, and deletes/unwraps/rewrites — run to fixpoint, every
+  transform logged; dangling-`else` in else-if chains handled (a deleted `else if (F) B` tail must take
+  its `else` with it). Pitfall to remember: Python `'' in str` is True — an end-of-condition guard bug
+  made parenthesized macros at condition end look like unknown atoms until fixed. (3) manual leftovers
+  (wasserts, bool initializers, multi-line conditions, `IS_RAB * 120` arithmetic). Deleted whole: the
+  caller-less `_gbz80_emitAddSubLongLong`/`_gbz80_emitAddSubLong`/`genMultTwoChar`, the
+  `s1c88_sm83_regs` table + `SM83_MAX_REGS`, the GB/RGBDS/ISAS/r2k dialect tables in mappings.i (main.c
+  references only `asxxxx_z80`/`gas_z80`/`z80asm_z80`), the `Z80_SUB_PORT` enum + `Z80_OPTS.sub`, and
+  the predicate `#define`s themselves. The two `AOP_DIR wassert (IS_SM83)` guards became `wassert (0)`
+  traps (SM83-only direct space). gen.c 18,104 → ~16,100 lines. **Byte-identical at every step** (the
+  corpus exercises the cost paths heavily, so an allocation-affecting mistake would show as DIFF).
+- **`c66d76c`:** genAssign's force-disabled z80 ldir block-copy path (s14's `l_better = false`) deleted.
+- **#7b collateral:** 19 of the 20 `ex (sp),hl` sites and most `push de`/`ldi(r)` sites lived in the
+  dead variant branches — **gen.c now has ZERO `ex (sp),hl` and `ldir` emit sites**. `push de` remains
+  at exactly 4 latent sites: genIpush smallc C/E_IDX (~5544, needs `--smallc` + phantom regs), genIpush
+  byte-push `aopInReg D_IDX` (~5726, phantom), genIpush byte-push `else if (d_free)` fallback (~5769 —
+  **the only maybe-reachable one**: fires only if A, B, L(H?) are all unfree for a byte push; needs a
+  repro), and genFunction callee-saves `deInUse` (~6528, requires C/D/E allocation ⇒ never).
+- **`dba51c2` builtins retargeted (the s14 lesson, third time):** `__builtin_memset/strcpy/strncpy/
+  strchr` are registered in `_z80_builtins` and REACHABLE; they emitted `ldi/ldir`, DE loads and
+  `jp PO/PE` parity loops (19 sdas88 errors on a 5-shape test). All four now emit native byte loops in
+  the s5 style (HL=src/scan, IY=dst, B or borrowed-IX counter): memset straight-line ≤4 / B-loop ≤255 /
+  IX-loop above with `ld (hl),#imm|a|b` fill; strcpy with `or a,a` NUL re-test AFTER the 16-bit incs
+  (they clobber Z on the S1C88!) and the original dst pushed (IY) for the returned value; strncpy with
+  a remaining-store counter + zero-pad tail (A already holds the NUL); strchr with `cp a,#imm`/`cp a,b`
+  BEFORE `inc hl` so the found-pointer is exact, NULL via `ld hl,#0`. Byte-granular `push b` saves when
+  the counter/comparand clobbers a live B. The z80 `setupForMemcpy` (DE-based regMove) is deleted; the
+  clobber-safe HL/IY load is the shared `setupHLSrcIYDst()` (memcpy deduped, byte-identical).
+  Hand-traced: ms_keep (live-B fill), sc_ret (saved-IY result via BA), sn_wide (300-count pad), sr_var
+  (`cp a,b`). **`scripts/corpus/17_builtins.c`** locks all shapes; baseline re-snapshotted (17 files).
+
+Remaining: **#7b** is now just the 4 `push de` sites (above) + any other allocator-avoided z80-isms a
+IY-pressure repro can surface; **#7c** the structural symbol removal (PAIR_DE 182, PAIR_BC 74,
+ASMOP_DE 47, C/D/E_IDX 149, IYL/IYH_IDX 107 refs in gen.c after the sweep); **#8** IX/IY args; **#9**
+far pointers.
 
 ## Session 14 (2026-06-02) — verification corpus + reachable z80-isms it exposed
 

@@ -14974,8 +14974,8 @@ genBuiltInMemcpy (const iCode *ic, int nparams, operand **pparams)
      which matches memcpy()'s no-overlap (forward) semantics, exactly like
      ldir.  The counter is B for count <= 255 (djr nz) or the borrowed frame
      pointer IX for larger counts (dec ix; jrs nz — IX isn't referenced inside
-     the loop, so it is saved/restored around it).  Only a variable (non-
-     literal) count falls back to the z80 ldir machinery below. */
+     the loop, so it is saved/restored around it).  A variable (non-literal)
+     count uses the IX-counter loop below with a `cp ix,#0` zero guard. */
   if (n != UINT_MAX)
     {
       bool wide = (n > 255);

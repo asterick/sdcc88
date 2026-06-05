@@ -5,13 +5,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 > **▶ Resuming / "pick up where you left off"?** Go to **[`docs/s1c88/HANDOFF.md`](docs/s1c88/HANDOFF.md)** —
 > it has the current state and the exact next action. TL;DR: `./scripts/dev.sh` (confirms the build is
 > green + runs a codegen smoke test). The codegen retarget is **functionally complete for the
-> verification corpus** (session 15: the last reachable z80-ism — `genMult`'s literal path — retargeted
-> to BA/B; variable `char*char` → native `MLT`; block-scope extern `.globl` fixed; #10 `jp <signed cc>`
-> lowered in sdas88 — **plus a critical toolchain-wide branch-displacement off-by-one found and fixed,
-> see HANDOFF "THE BRANCH DISPLACEMENT CONVENTION"**): **16/16 corpus files assemble with 0 sdas88
-> errors**. Remaining work: the register-model
-> dead-code/symbol sweep (#7, cleanup), IX/IY arg passing (#8), far pointers (#9). Validate each change
-> with `./scripts/corpus-check.sh` (byte-identical +
+> verification corpus** (session 16: **#7a done — zero sub-port variant-macro refs remain port-wide**
+> (~2,000 dead lines gone; every `ex (sp),hl`/`ldir` emit went with them), and the four remaining z80
+> builtins (`__builtin_memset/strcpy/strncpy/strchr` — a reachable blind spot) retargeted to native
+> byte loops; session 15: `genMult`→BA/B, `MLT`, block-scope `.globl`, #10 `jp <signed cc>`, **plus the
+> critical branch-displacement off-by-one — see HANDOFF "THE BRANCH DISPLACEMENT CONVENTION"**):
+> **17/17 corpus files assemble with 0 sdas88 errors**. Remaining work: #7b (4 latent `push de` sites)
+> + #7c (the C/D/E/DE/BC symbol removal), IX/IY arg passing (#8), far pointers (#9). Validate each
+> change with `./scripts/corpus-check.sh` (byte-identical +
 > sdas88) — **always rebuild via the overlay (`dev.sh`/`corpus-check.sh`), never raw `make -C
 > build/.../src` (it compiles a stale copy).** (All work is on **`main`**.)
 
@@ -57,9 +58,12 @@ and builds the compiler.
 > `ldir` block copy, STL-address BA; s15: the `genMult` literal path → BA/B + block-scope extern
 > `.globl`, genMultOneChar → native `MLT`, the #10 `jp <signed cc>` invert-and-skip lowering in sdas88,
 > and the **critical relative-branch off-by-one fix** — every branch was one byte short vs the real
-> S1C88 base; `scripts/branch-smoke.sh` now byte-locks the convention). **16/16 corpus files assemble
-> with 0 sdas88 errors.** **Remaining work:** the register-model dead-code sweep / C-D-E-DE-BC symbol
-> removal (task #7, cleanup — started s13), IX/IY argument passing (#8), 3-byte far pointers (#9).
+> S1C88 base; `scripts/branch-smoke.sh` now byte-locks the convention); s16: **#7a done — zero variant-
+> macro refs port-wide** (~2,000 dead lines, every `ex (sp),hl`/`ldir` emit gone) + the reachable
+> builtin cluster (`__builtin_memset/strcpy/strncpy/strchr`) retargeted to native byte loops with
+> corpus file `17_builtins.c`. **17/17 corpus files assemble
+> with 0 sdas88 errors.** **Remaining work:** #7b (4 latent `push de` sites) + #7c (the C-D-E-DE-BC
+> symbol removal), IX/IY argument passing (#8), 3-byte far pointers (#9).
 > All work is on **`main`**.
 > The design, ABI, and plan live in **`docs/s1c88/abi-decision.md`**; current state + next action in
 > **`docs/s1c88/HANDOFF.md`**; the toolchain in `docs/s1c88/{sdas88-retarget,banked-branch}.md`.
@@ -77,16 +81,17 @@ Decided design:
   to verify; the dead WIP is in reflog at `417bed5` as a reference for the end-state register defs.)
 
 **Progress:** the retarget is functionally complete for the verification corpus (assemble→link→ROM
-GREEN; 16/16 corpus files at 0 sdas88 errors — the session-14/15 fixes closed every reachable z80-ism
-the corpus exposes, the last being `genMult`'s literal path → BA/B in s15). See `HANDOFF.md` for the
-per-session commit list.
-**The remaining grind (task #7)** is eliminating the z80 `C/D/E` byte regs + `DE`/`BC` scratch — the
-`gen.c` scratch-asmop machinery (`asmop_bc/de`, the combined long asmops `DEHL/HLDE/HLBC/DEBC`, `_pairs[]`,
-the `[IYH_IDX+1]` parm-mask arrays), the `countreg` `C`/`D` picks, the live-but-allocator-avoided
-`ex (sp),hl` IY-byte-access sites (→ `ex ba,iy`), and finally the `PAIR_DE`/`*_IDX` symbols keyed into
-`ralloc2.cc`'s Boost allocator. This is *cleanup/latent-risk reduction* — the binary is already correct —
-so do it carefully (always-green, byte-identical after each step), not as a big-bang. See `abi-decision.md`
-Step 2 + `HANDOFF.md` "Session 13" for the three-part scope/risk.
+GREEN; 17/17 corpus files at 0 sdas88 errors — sessions 14/15/16 closed every reachable z80-ism the
+corpus exposes, most recently the builtin memset/strcpy/strncpy/strchr cluster in s16). **#7a (the
+dead variant-branch sweep) is COMPLETE** — zero sub-port variant-macro refs remain anywhere in the
+port, and every `ex (sp),hl`/`ldir` emit site went with them. See `HANDOFF.md` for per-session commits.
+**The remaining grind (#7b/#7c)** is eliminating the z80 `C/D/E` byte regs + `DE`/`BC` scratch — the 4
+latent `push de` sites (#7b, see HANDOFF "Session 16"), then the symbols themselves (#7c): the
+scratch-asmop machinery (`asmop_bc/de`, the combined long asmops `DEHL/HLDE/HLBC/DEBC`, `_pairs[]`,
+the `[IYH_IDX+1]` parm-mask arrays) and the `PAIR_DE`/`*_IDX` ordinals keyed into `ralloc2.cc`'s Boost
+allocator. This is *cleanup/latent-risk reduction* — the binary is already correct — so do it carefully
+(always-green, byte-identical after each step), not as a big-bang. See `abi-decision.md` Step 2 +
+`HANDOFF.md` "Sessions 13/16" for scope/risk.
 
 ## Build
 
