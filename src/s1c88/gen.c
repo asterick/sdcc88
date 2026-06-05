@@ -9376,229 +9376,62 @@ release:
 static void
 genMultOneChar (const iCode * ic)
 {
-  symbol *tlbl1, *tlbl2;
-  bool savedB = false;
-
   asmop *result = ic->result->aop;
-  int resultsize = result->size;
 
   if (ic->left->aop->size > 1 || ic->right->aop->size > 2)
     wassertl (0, "Large multiplication is handled through support function calls.");
 
-  if (IS_SM83)
+  /* S1C88: native MLT computes HL <- L * A (unsigned 8x8->16, CE D8,
+     2 bytes / 12 cycles; a MODEL1/3 instruction — present on the Pokémon
+     Mini core). Replaces the z80 shift-add loop, which needed the
+     nonexistent DE pair and a B counter. Only A, L, H are touched. */
+
+  /* A live with a non-operand value? Save it byte-granular — by rSurv the
+     result is never in the saved set, so restoring after the result is
+     written can't overwrite it. */
+  const bool save_a = !isRegDead (A_IDX, ic) &&
+    !aopInReg (ic->left->aop, 0, A_IDX) && !aopInReg (ic->right->aop, 0, A_IDX);
+  if (save_a)
     {
-      wassertl (0, "Multiplication is handled through support function calls on sm83");
-      return;
+      emit2 ("push a");
+      cost2 (2, 11, 11, 7, 12, 10, 3, 3);
+      _G.stack.pushed += 1;
     }
 
-  if ((IS_Z180 || IS_EZ80_Z80 || IS_Z80N) && IC_RESULT (ic)->aop->type == AOP_REG)
-    {
-      if (!IS_Z80N && (resultsize > 1 ? result->aopu.aop_reg[1]->rIdx == B_IDX : isRegDead (B_IDX, ic))
-          && result->aopu.aop_reg[0]->rIdx == C_IDX)
-        {
-          if (IC_LEFT (ic)->aop->type == AOP_REG && IC_LEFT (ic)->aop->aopu.aop_reg[0]->rIdx == C_IDX ||
-              IC_RIGHT (ic)->aop->type == AOP_REG && IC_RIGHT (ic)->aop->aopu.aop_reg[0]->rIdx == B_IDX)
-            {
-              cheapMove (ASMOP_C, 0, IC_LEFT (ic)->aop, LSB, true);
-              cheapMove (ASMOP_B, 0, IC_RIGHT (ic)->aop, LSB, true);
-            }
-          else
-            {
-              cheapMove (ASMOP_B, 0, IC_LEFT (ic)->aop, LSB, true);
-              cheapMove (ASMOP_C, 0, IC_RIGHT (ic)->aop, LSB, true);
-            }
-          emit2 ("mlt bc");
-          cost2 (2, 8, 17, 0, 0, 0, 6, 0);
-          return;
-        }
-      if ((resultsize > 1 ? result->aopu.aop_reg[1]->rIdx == D_IDX : isRegDead (D_IDX, ic))
-          && result->aopu.aop_reg[0]->rIdx == E_IDX)
-        {
-          if (IC_LEFT (ic)->aop->type == AOP_REG && IC_LEFT (ic)->aop->aopu.aop_reg[0]->rIdx == E_IDX ||
-              IC_RIGHT (ic)->aop->type == AOP_REG && IC_RIGHT (ic)->aop->aopu.aop_reg[0]->rIdx == D_IDX)
-            {
-              cheapMove (ASMOP_E, 0, IC_LEFT (ic)->aop, LSB, true);
-              cheapMove (ASMOP_D, 0, IC_RIGHT (ic)->aop, LSB, true);
-            }
-          else
-            {
-              cheapMove (ASMOP_D, 0, IC_LEFT (ic)->aop, LSB, true);
-              cheapMove (ASMOP_E, 0, IC_RIGHT (ic)->aop, LSB, true);
-            }
-          emit2 ("mlt de");
-          cost2 (2, 8, 17, 0, 0, 0, 6, 0);
-          return;
-        }
-      if (!IS_Z80N && IC_LEFT (ic)->aop->type == AOP_REG && IC_RIGHT (ic)->aop->type == AOP_REG &&
-          ((IC_LEFT (ic)->aop->aopu.aop_reg[0]->rIdx == H_IDX && IC_RIGHT (ic)->aop->aopu.aop_reg[0]->rIdx == L_IDX ||
-            IC_LEFT (ic)->aop->aopu.aop_reg[0]->rIdx == L_IDX && IC_RIGHT (ic)->aop->aopu.aop_reg[0]->rIdx == H_IDX) &&
-           (resultsize > 1 ? result->aopu.aop_reg[1]->rIdx == H_IDX : isRegDead (H_IDX, ic))
-           && result->aopu.aop_reg[0]->rIdx == L_IDX))
-        {
-          emit2 ("mlt hl");
-          spillPair (PAIR_HL);
-          cost2 (2, 8, 17, 0, 0, 0, 6, 0);
-          return;
-        }
-    }
+  /* Operands -> A and L (mlt is commutative): prefer the assignment that is
+     already in place, and when one operand needs HL to be read (EXSTK and
+     friends), make the register-resident one go to A so the HL-using load
+     happens into L afterwards. A is loaded first; the L load must not
+     scratch A. */
+  {
+    asmop *aop_a = ic->left->aop, *aop_l = ic->right->aop;
+    if (aopInReg (aop_l, 0, A_IDX) || aopInReg (aop_a, 0, L_IDX) ||
+        requiresHL (aop_a) && (aopInReg (aop_l, 0, L_IDX) || aopInReg (aop_l, 0, H_IDX)))
+      {
+        asmop *t = aop_a;
+        aop_a = aop_l;
+        aop_l = t;
+      }
+    cheapMove (ASMOP_A, 0, aop_a, 0, true);
+    cheapMove (ASMOP_L, 0, aop_l, 0, false);
+  }
 
-  if (IS_RAB && !IS_R2K && isPairDead (PAIR_HL, ic) && isPairDead (PAIR_BC, ic)) // A wait state bug makes mul unuseable in most scenarios on the original Rabbit 2000.
-    {
-      const bool save_de = (resultsize > 1 && !isRegDead (D_IDX, ic) ||
-        !isRegDead (E_IDX, ic) && !(IC_LEFT (ic)->aop->type == AOP_REG && IC_LEFT (ic)->aop->aopu.aop_reg[0]->rIdx == E_IDX) && !(IC_RIGHT (ic)->aop->type == AOP_REG && IC_RIGHT (ic)->aop->aopu.aop_reg[0]->rIdx == E_IDX));
-      if (save_de)
-        _push (PAIR_DE);
-
-      if (aopInReg (ic->right->aop, 0, E_IDX))
-        cheapMove (ASMOP_C, 0, ic->left->aop, 0, true);
-      else if (aopInReg (ic->left->aop, 0, E_IDX))
-        cheapMove (ASMOP_C, 0, ic->right->aop, 0, true);
-      else if (aopInReg (ic->right->aop, 0, C_IDX))
-        cheapMove (ASMOP_E, 0, ic->left->aop, 0, true);
-      else if (aopInReg (ic->left->aop, 0, C_IDX))
-        cheapMove (ASMOP_E, 0, ic->right->aop, 0, true);
-      else
-        {
-          cheapMove (ASMOP_C, 0, IC_LEFT (ic)->aop, 0, true);
-          cheapMove (ASMOP_E, 0, IC_RIGHT (ic)->aop, 0, true);
-        }
-
-      if (resultsize > 1)
-        {
-          cheapMove (ASMOP_D, 0, ASMOP_ZERO, 0, true);
-          cheapMove (ASMOP_B, 0, ASMOP_D, 0, true);
-        }
-
-      emit2 ("mul");
-      cost (1, 12);
-      spillPair (PAIR_HL);
-
-      genMove (result, resultsize > 1 ? ASMOP_BC : ASMOP_C, !isRegDead (A_IDX, ic), true, false, true);
-
-      if (save_de)
-        _pop (PAIR_DE);
-      return;
-    }
-
-  if (IS_R800 && isRegDead (HL_IDX, ic) && isRegDead (A_IDX, ic))
-    {
-      if (aopInReg (ic->right->aop, 0, C_IDX) || aopInReg (ic->right->aop, 0, B_IDX) || aopInReg (ic->right->aop, 0, E_IDX) || aopInReg (ic->right->aop, 0, D_IDX))
-        {
-          cheapMove (ASMOP_A, 0, ic->left->aop, 0, true);
-          if (!regalloc_dry_run)
-            emit2 ("multu a, %s", aopGet (ic->right->aop, 0, false));
-          cost (2, 14);
-          goto store_hl;
-        }
-      else if (aopInReg (ic->left->aop, 0, C_IDX) || aopInReg (ic->left->aop, 0, B_IDX) || aopInReg (ic->left->aop, 0, E_IDX) || aopInReg (ic->left->aop, 0, D_IDX))
-        {
-          cheapMove (ASMOP_A, 0, ic->right->aop, 0, true);
-          if (!regalloc_dry_run)
-            emit2 ("multu a, %s", aopGet (ic->left->aop, 0, false));
-          cost (2, 14);
-          goto store_hl;
-        }
-      else if (isRegDead (B_IDX, ic))
-        {
-          if (aopInReg (ic->right->aop, 0, A_IDX))
-            cheapMove (ASMOP_B, 0, ic->left->aop, 0, false);
-          else
-            {
-              cheapMove (ASMOP_A, 0, ic->left->aop, 0, true);
-              cheapMove (ASMOP_B, 0, ic->right->aop, 0, false);
-            }
-          emit2 ("multu a, b");
-          cost (2, 14);
-          goto store_hl;
-        }
-      else
-        UNIMPLEMENTED;
-      return;
-    }
-
-  if (!isPairDead (PAIR_DE, ic))
-    {
-      _push (PAIR_DE);
-      _G.stack.pushedDE = TRUE;
-    }
-  if (IS_RAB && !isPairDead (PAIR_BC, ic) ||
-  !(IS_Z180 || IS_EZ80_Z80) && !isRegDead (B_IDX, ic))
-    {
-      _push (PAIR_BC);
-      savedB = TRUE;
-    }
-
-  // genMult() already swapped operands if necessary.
-  if (IC_LEFT (ic)->aop->type == AOP_REG && IC_LEFT (ic)->aop->aopu.aop_reg[0]->rIdx == E_IDX ||
-      IC_RIGHT (ic)->aop->type == AOP_REG && IC_RIGHT (ic)->aop->aopu.aop_reg[0]->rIdx == H_IDX
-      && !requiresHL (IC_LEFT (ic)->aop))
-    {
-      cheapMove (ASMOP_E, 0, IC_LEFT (ic)->aop, 0, true);
-      cheapMove (ASMOP_H, 0, IC_RIGHT (ic)->aop, 0, true);
-    }
-  else
-    {
-      cheapMove (ASMOP_E, 0, IC_RIGHT (ic)->aop, 0, true);
-      cheapMove (ASMOP_H, 0, IC_LEFT (ic)->aop, 0, true);
-    }
-
-  if (IS_Z180 || IS_EZ80_Z80)
-    {
-      emit3 (A_LD, ASMOP_L, ASMOP_E);
-      emit2 ("mlt hl");
-      cost2 (2, 8, 17, 0, 0, 0, 6, 0);
-    }
-  else if (IS_RAB && !IS_R2K) // A wait state bug makes mul unuseable in most scenarios on the original Rabbit 2000.
-    {
-      emit3 (A_LD, ASMOP_C, ASMOP_H);
-      emit2 ("ld d, !immedbyte", 0x00u);
-      cost2 (2, 7, 6, 4, 8, 4, 2, 2);
-      emit3 (A_LD, ASMOP_B, ASMOP_D);
-      emit2 ("mul");
-      cost (1, 12);
-      emit3 (A_LD, ASMOP_L, ASMOP_C);
-      emit3 (A_LD, ASMOP_H, ASMOP_B);
-    }
-  else
-    {
-      tlbl1 = regalloc_dry_run ? 0 : newiTempLabel (0);
-      tlbl2 = regalloc_dry_run ? 0 : newiTempLabel (0);
-      emit2 ("ld l, !immedbyte", 0x00u);
-      cost2 (2, 7, 6, 4, 8, 4, 2, 2);
-      emit3 (A_LD, ASMOP_D, ASMOP_L);
-      emit2 ("ld b, !immedbyte", 0x08u);
-      cost2 (2, 7, 6, 4, 8, 4, 2, 2);
-      regalloc_dry_run_state_scale = 8.0f;
-      if (!regalloc_dry_run)
-        emitLabel (tlbl1);
-      emit3w (A_ADD, ASMOP_HL, ASMOP_HL);
-      if (!regalloc_dry_run)
-        emit2 ("jp NC, !tlabel", labelKey2num (tlbl2->key));
-      cost2 (2 + IS_SM83, 9.5f,	7.0f, 5.0f, 10.0f, 11.0f, 2.5f, 2.5f);
-      regalloc_dry_run_state_scale = 4.0f;
-      emit3w (A_ADD, ASMOP_HL, ASMOP_DE);
-      emitLabel (tlbl2);
-      if (!regalloc_dry_run)
-        emit2 ("djr nz, !tlabel", labelKey2num (tlbl1->key));   // S1C88: djnz -> djr nz (dec B; jr nz)
-      cost2 (2, 12.375f, 8.75f, 5.0f, 0, 10.0f, 3.75f, 2.0f);
-      regalloc_dry_run_state_scale = 1.0f;
-    }
-
-store_hl:
+  emit2 ("mlt");
+  cost (2, 12);
   spillPair (PAIR_HL);
+  spillPair (PAIR_BA);          /* A holds an operand byte now */
 
-  if (savedB)
-    {
-      _pop (PAIR_BC);
-    }
-  if (_G.stack.pushedDE)
-    {
-      _pop (PAIR_DE);
-      _G.stack.pushedDE = FALSE;
-    }
+  genMove (result, ASMOP_HL, true, true, isPairDead (PAIR_DE, ic), true);
 
-  genMove (result, ASMOP_HL, isRegDead (A_IDX, ic), true, isPairDead (PAIR_DE, ic), true);
+  if (save_a)
+    {
+      emit2 ("pop a");
+      cost2 (2, 10, 9, 7, 12, 10, 3, 3);
+      _G.stack.pushed -= 1;
+      spillPair (PAIR_BA);
+    }
 }
+
 
 /*----------------------------------------------------------------------*/
 /* genMultTwoChar - generates code for 16x16->(16 to 32) multiplication */

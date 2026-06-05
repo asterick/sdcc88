@@ -1725,7 +1725,7 @@ int s1c88instructionSize(lineNode *pl)
   if((IS_Z180 || IS_EZ80_Z80) && (ISINST(pl->line, "in0") || ISINST(pl->line, "out0")))
     return(3);
 
-  if((IS_Z180 || IS_EZ80_Z80 || IS_Z80N) && ISINST(pl->line, "mlt"))
+  if(ISINST(pl->line, "mlt")) /* S1C88 HL <- L*A: CE D8 (z180-family mlt rr was also 2) */
     return(2);
 
   if (IS_R800 && (ISINST(pl->line, "multu") || ISINST(pl->line, "multuw")))
