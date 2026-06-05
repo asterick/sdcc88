@@ -1700,6 +1700,9 @@ int s1c88instructionSize(lineNode *pl)
   if(ISINST(pl->line, "neg"))
     return(2);
 
+  if(ISINST(pl->line, "sep")) /* S1C88 sign-extend A into B: CE A8 */
+    return(2);
+
   if(ISINST(pl->line, "daa") || ISINST(pl->line, "cpl")  || ISINST(pl->line, "ccf") || ISINST(pl->line, "scf") ||
      ISINST(pl->line, "nop") || ISINST(pl->line, "halt") || ISINST(pl->line,  "ei") || ISINST(pl->line, "di"))
     return(1);

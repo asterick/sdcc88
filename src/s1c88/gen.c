@@ -9818,18 +9818,12 @@ no_mlt:
         }
     }
 
-  pair = PAIR_DE;
-  if (getPairId (IC_LEFT (ic)->aop) == PAIR_BC ||
-    (byteResult || isRegDead (B_IDX, ic)) && IC_LEFT (ic)->aop->type == AOP_REG && IC_LEFT (ic)->aop->aopu.aop_reg[0]->rIdx == C_IDX)
-    pair = PAIR_BC;
-  if (isPairDead (PAIR_BC, ic) && !(IC_LEFT (ic)->aop->type == AOP_REG && IC_LEFT (ic)->aop->aopu.aop_reg[0]->rIdx == E_IDX))
-    pair = PAIR_BC;
-
-  if (pair == PAIR_DE && (byteResult ? !isRegDead (E_IDX, ic) : !isPairDead (PAIR_DE, ic)))
-    {
-      _push (PAIR_DE);
-      _G.stack.pushedDE = TRUE;
-    }
+  /* S1C88: BA is the only 2nd 16-bit ALU pair (add hl, ba) — the z80 DE/BC
+     scratch pairs don't exist. For the 8-bit accumulator loop the multiplicand
+     lives in B (add/sub a, b): A is both the accumulator and BA's low byte, so
+     it can't also hold the addend. The save/restore is decided after add_in_hl
+     is known (below). */
+  pair = PAIR_BA;
 
   /* Use 16-bit additions even for 8-bit result when the operands are in the right places. */
   if (byteResult)
@@ -9845,35 +9839,68 @@ no_mlt:
     }
   add_in_hl = (!byteResult || isPairDead (PAIR_HL, ic) && l_cost < a_cost);
 
+  /* Save the live bytes this clobbers — byte-granular, because A and BA's low
+     half are the same register: a pair-granular `push ba` could restore over a
+     result byte landing in A (or save_a-restore could be skipped when only B is
+     live). Every path clobbers A; B survives only the byte-loop-in-HL path
+     (there the addend is A, and B's garbage high half feeds only H, which a
+     byte result never reads). isRegDead() is false for bytes of the result, so
+     the saved set is disjoint from the result and is restored after the result
+     is written. */
+  const bool save_a = !isRegDead (A_IDX, ic);
+  const bool save_b = !(byteResult && add_in_hl) && !isRegDead (B_IDX, ic);
+  if (save_a)
+    {
+      emit2 ("push a");
+      cost2 (2, 11, 11, 7, 12, 10, 3, 3);
+      _G.stack.pushed += 1;
+    }
+  if (save_b)
+    {
+      emit2 ("push b");
+      cost2 (2, 11, 11, 7, 12, 10, 3, 3);
+      _G.stack.pushed += 1;
+    }
+
   if (byteResult)
     {
-      cheapMove (add_in_hl ? ASMOP_L : ASMOP_A, 0, IC_LEFT (ic)->aop, 0, true);
-      if (IC_LEFT (ic)->aop->type != AOP_REG || IC_LEFT (ic)->aop->aopu.aop_reg[0]->rIdx != (pair == PAIR_BC ? C_IDX : E_IDX))
-        cheapMove (pair == PAIR_BC ? ASMOP_C : ASMOP_E, 0, add_in_hl ? ASMOP_L : ASMOP_A, 0, true);
+      if (add_in_hl)
+        {
+          /* Accumulate in L (HL is dead by the add_in_hl condition); the
+             addend byte is A — BA's low half. */
+          if (aopInReg (IC_LEFT (ic)->aop, 0, A_IDX))
+            emit3 (A_LD, ASMOP_L, ASMOP_A);
+          else
+            {
+              cheapMove (ASMOP_L, 0, IC_LEFT (ic)->aop, 0, true);
+              emit3 (A_LD, ASMOP_A, ASMOP_L);
+            }
+        }
+      else
+        {
+          /* Accumulate in A; the multiplicand is B. */
+          cheapMove (ASMOP_A, 0, IC_LEFT (ic)->aop, 0, true);
+          if (!aopInReg (IC_LEFT (ic)->aop, 0, B_IDX))
+            emit3 (A_LD, ASMOP_B, ASMOP_A);
+        }
     }
   else if (IC_LEFT (ic)->aop->size == 1 && !SPEC_USIGN (getSpec (operandType (IC_LEFT (ic)))))
     {
-      cheapMove (pair == PAIR_BC ? ASMOP_C : ASMOP_E, 0, IC_LEFT (ic)->aop, 0, true);
-      emit2 ("ld a, %s", _pairs[pair].l);
-      ld_cost (ASMOP_A, 0, ASMOP_L, 0, true);
-      emit3 (A_RLC, ASMOP_A, 0);
-      emit3 (A_SBC, ASMOP_A, ASMOP_A);
-      emit2 ("ld %s, a", _pairs[pair].h);
-      ld_cost (ASMOP_L, 0, ASMOP_A, 0, true);
-      emit2 ("ld l, %s", _pairs[pair].l);
-      ld_cost (ASMOP_L, 0, pair == PAIR_HL ? ASMOP_L : pair == PAIR_DE ? ASMOP_E : ASMOP_C, 0, true);
-      emit2 ("ld h, %s", _pairs[pair].h);
-      ld_cost (ASMOP_L, 0, pair == PAIR_HL ? ASMOP_H : pair == PAIR_DE ? ASMOP_D : ASMOP_B, 0, true);
+      /* Sign-extend the byte into both BA and HL. SEP is the native S1C88
+         code-extension instruction: B <- sign of A. */
+      cheapMove (ASMOP_A, 0, IC_LEFT (ic)->aop, 0, true);
+      emit2 ("sep");
+      cost (2, 3);
+      emit3 (A_LD, ASMOP_L, ASMOP_A);
+      emit3 (A_LD, ASMOP_H, ASMOP_B);
     }
   else
     {
-      fetchPair (pair, IC_LEFT (ic)->aop);
+      genMove (ASMOP_BA, IC_LEFT (ic)->aop, true, getPairId (IC_LEFT (ic)->aop) == PAIR_HL || isPairDead (PAIR_HL, ic), true, false);
       if (getPairId (IC_LEFT (ic)->aop) != PAIR_HL)
         {
-          emit2 ("ld l, %s", _pairs[pair].l);
-          ld_cost (ASMOP_L, 0, pair == PAIR_HL ? ASMOP_L : pair == PAIR_DE ? ASMOP_E : ASMOP_C, 0, true);
-          emit2 ("ld h, %s", _pairs[pair].h);
-          ld_cost (ASMOP_H, 0, pair == PAIR_HL ? ASMOP_H : pair == PAIR_DE ? ASMOP_D : ASMOP_B, 0, true);
+          emit3 (A_LD, ASMOP_L, ASMOP_A);
+          emit3 (A_LD, ASMOP_H, ASMOP_B);
         }
     }
 
@@ -9896,10 +9923,7 @@ no_mlt:
         {
           emit3 (A_ADD, ASMOP_A, ASMOP_A);
           if ((add | sub) & (1ull << bit))
-            {
-              emit2 (add & (1ull << bit) ? "add a, %s" : "sub a, %s", _pairs[pair].l);
-              cost2 (1, 4, 4, 2, 4, 4, 1, 1);
-            }
+            emit3 (add & (1ull << bit) ? A_ADD : A_SUB, ASMOP_A, ASMOP_B);
         }
     }
   else // Don't try to use CSD for hl, since subtraction there is more expensive than addition.
@@ -9923,13 +9947,27 @@ no_mlt:
       spillPair (PAIR_HL);
     }
 
-  if (_G.stack.pushedDE)
-    {
-      _pop (PAIR_DE);
-      _G.stack.pushedDE = false;
-    }
+  spillPair (PAIR_BA);  /* A (and possibly B) no longer hold what the cache thinks */
 
   genMove (IC_RESULT (ic)->aop, add_in_hl ? ASMOP_HL : ASMOP_A, true, add_in_hl || isPairDead (PAIR_HL, ic), isPairDead (PAIR_DE, ic), true);
+
+  /* Restore after the result is written: the saved bytes are live-past-the-ic
+     non-result bytes, so they can't be overwritten by the result move (and the
+     move may itself scratch A, which the pop then restores). */
+  if (save_b)
+    {
+      emit2 ("pop b");
+      cost2 (2, 10, 9, 7, 12, 10, 3, 3);
+      _G.stack.pushed -= 1;
+    }
+  if (save_a)
+    {
+      emit2 ("pop a");
+      cost2 (2, 10, 9, 7, 12, 10, 3, 3);
+      _G.stack.pushed -= 1;
+    }
+  if (save_a || save_b)
+    spillPair (PAIR_BA);
 
 release:
   freeAsmop (IC_LEFT (ic), NULL);
