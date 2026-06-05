@@ -4,15 +4,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 > **▶ Resuming / "pick up where you left off"?** Go to **[`docs/s1c88/HANDOFF.md`](docs/s1c88/HANDOFF.md)** —
 > it has the current state and the exact next action. TL;DR: `./scripts/dev.sh` (confirms the build is
-> green + runs a codegen smoke test). The codegen retarget is **mostly complete but NOT fully** — the
-> broad verification corpus (`scripts/corpus-check.sh`, session 14) exposed **reachable** z80-isms the
-> earlier narrower corpus missed. Several were fixed (session 14); **still open and reachable** are the
-> deep register-model items: `ldir` long global↔global copy + DE/BC 16-bit address arithmetic (`add
-> hl,ba`) — part of #7. Remaining work: the register-model dead-code/symbol sweep + the reachable z80-isms
-> (#7), IX/IY arg passing (#8), far pointers (#9), the assembler signed-branch gap (#10). Validate each
-> change with `./scripts/corpus-check.sh` (byte-identical + sdas88) — **always rebuild via the overlay
-> (`dev.sh`/`corpus-check.sh`), never raw `make -C build/.../src` (it compiles a stale copy).** (All work
-> is on **`main`**.)
+> green + runs a codegen smoke test). The codegen retarget is **functionally complete for the
+> verification corpus** (session 15: the last reachable z80-ism — `genMult`'s literal path — retargeted
+> to BA/B; block-scope extern `.globl` fixed): **14/15 corpus files assemble with 0 sdas88 errors**, the
+> 15th being the deferred #10 assembler gap, not codegen. Remaining work: the register-model
+> dead-code/symbol sweep (#7, cleanup), IX/IY arg passing (#8), far pointers (#9), the assembler
+> signed-branch gap (#10). Validate each change with `./scripts/corpus-check.sh` (byte-identical +
+> sdas88) — **always rebuild via the overlay (`dev.sh`/`corpus-check.sh`), never raw `make -C
+> build/.../src` (it compiles a stale copy).** (All work is on **`main`**.)
 
 ## Project Overview
 
@@ -44,19 +43,19 @@ and builds the compiler.
 > `docs/s1c88/HANDOFF.md` "Peephole audit". **`ldir` eliminated from the memcpy/pointer/struct-return
 > paths** (session 5): genBuiltInMemcpy (incl. runtime-count via a borrowed-IX counter + `cp ix,#0` guard) /
 > genPointerSet / genPointerGet / genRet emit the native byte loop (HL=source, IY=dest) — see HANDOFF
-> "Session 5". **(But session 14 found `ldir` STILL emitted for a long global↔global copy (`long g1=g2`) —
-> a 4-byte mem→mem path s5 missed; reachable, open.)**
+> "Session 5". (Session 14 found `ldir` still emitted for a long global↔global copy — fixed in `8596ef3`.)
 > **Inter-function calls emit `bcall`/`bjump`** (linker picks form + bank switch) + **`.globl` for support
 > routines** (s6); **independent port** linking alongside z80 et al. (s8); **function-pointer calls** via
 > `jp hl`/manufactured-return (s9); **ISR prologue/epilogue** (RETE model, `push ba/hl/iy` save — s10);
 > **struct return-by-value** (copy to the caller's hidden buffer — s11); **`__critical`** via SC
-> interrupt-level masking (`push sc; or sc,#0xc0` / `pop sc` — s12). **The codegen is mostly complete and
-> the assemble→link→banked-ROM pipeline is GREEN, but NOT fully:** the session-14 verification corpus
-> (`scripts/corpus-check.sh`) exposed **reachable** z80-isms the earlier narrower corpus missed. Fixed in
-> s14: `or a,l/h` in `&&`/`||`, bitfield `set/res`+`rld/rrd`, `ld (iy+d),#imm`. **Still open + reachable
-> (part of #7):** `ldir` long global↔global copy and DE/BC 16-bit address arithmetic (genPlus should use
-> `add hl,ba`). **Remaining work:** the register-model dead-code sweep / C-D-E-DE-BC symbol removal + the
-> reachable z80-isms above (task #7, started s13/s14), IX/IY argument passing (#8), 3-byte far pointers
+> interrupt-level masking (`push sc; or sc,#0xc0` / `pop sc` — s12). **The codegen is functionally
+> complete for the verification corpus and the assemble→link→banked-ROM pipeline is GREEN:** the
+> session-14 corpus (`scripts/corpus-check.sh`) exposed reachable z80-isms the earlier narrower corpus
+> missed — all now fixed (s14: `or a,l/h` in `&&`/`||`, bitfield `set/res`+`rld/rrd`, `ld (iy+d),#imm`,
+> `ldir` block copy, STL-address BA; s15: the `genMult` literal path → BA/B + block-scope extern
+> `.globl`). **14/15 corpus files assemble with 0 sdas88 errors** (the 15th = the deferred #10 assembler
+> gap, not codegen). **Remaining work:** the register-model dead-code sweep / C-D-E-DE-BC symbol removal
+> (task #7, cleanup — started s13), IX/IY argument passing (#8), 3-byte far pointers
 > (#9), and the out-of-range signed-branch assembler gap (#10). All work is on **`main`**.
 > The design, ABI, and plan live in **`docs/s1c88/abi-decision.md`**; current state + next action in
 > **`docs/s1c88/HANDOFF.md`**; the toolchain in `docs/s1c88/{sdas88-retarget,banked-branch}.md`.
@@ -73,10 +72,10 @@ Decided design:
   (A from-scratch big-bang reshape was tried and reset — it breaks ~1144 `gen.c` sites at once with no way
   to verify; the dead WIP is in reflog at `417bed5` as a reference for the end-state register defs.)
 
-**Progress:** the retarget is mostly complete (assemble→link→ROM GREEN), but the session-14 verification
-corpus (`scripts/corpus-check.sh`) found **reachable** z80-isms the narrower earlier corpus missed — some
-fixed in s14, the deep register-model ones (`ldir` long-copy, DE/BC address arithmetic) still open. See
-`HANDOFF.md` for the per-session commit list.
+**Progress:** the retarget is functionally complete for the verification corpus (assemble→link→ROM
+GREEN; 14/15 corpus files at 0 sdas88 errors — the session-14/15 fixes closed every reachable z80-ism
+the corpus exposes, the last being `genMult`'s literal path → BA/B in s15). See `HANDOFF.md` for the
+per-session commit list.
 **The remaining grind (task #7)** is eliminating the z80 `C/D/E` byte regs + `DE`/`BC` scratch — the
 `gen.c` scratch-asmop machinery (`asmop_bc/de`, the combined long asmops `DEHL/HLDE/HLBC/DEBC`, `_pairs[]`,
 the `[IYH_IDX+1]` parm-mask arrays), the `countreg` `C`/`D` picks, the live-but-allocator-avoided

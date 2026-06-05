@@ -3,11 +3,17 @@
 **This is the single resume entry point.** If the prompt is *"let's pick up where you left off,"* do the
 steps under **NEXT ACTION**. Everything needed to continue is here or linked from here.
 
-_Last updated: 2026-06-02 (session 14: **built a byte-identical corpus harness** (`scripts/corpus/` +
+_Last updated: 2026-06-05 (session 15: **the last reachable z80-ism is gone** — `genMult`'s literal path
+(`a112acf`) now uses BA/B (`add hl,ba` 16-bit loop; multiplicand in B for the `add/sub a,b` byte loop;
+byte-granular `push a`/`push b` saves; native `SEP` for the in-genMult sign-extend path; peep.c sizes
+`sep`). Plus `4fe9ed8`: block-scope `extern void f(void); f();` now gets its `.globl` (was a REAL
+assemble failure, not a validator false positive). **Corpus: 14/15 files at 0 sdas88 errors** — only
+12_arrays (the deferred #10 out-of-range `jp GE` assembler gap) remains. See "Session 15". —
+Session 14: **built a byte-identical corpus harness** (`scripts/corpus/` +
 `corpus-check.sh`) which **disproved "functionally complete"** — a broader corpus exposed REACHABLE z80-isms
 the narrower prior corpus missed. Fixed 3 (`a6bf7e4` `or a,l/h` in `&&`/`||`; `20b9d72` bitfield
-`set/res`+`rld/rrd`; `5f890f1` `ld (iy+d),#imm`). STILL OPEN (reachable, = the deep register-model grind
-#7b): `ldir` long global↔global copy + DE/BC 16-bit address arithmetic. **Also: there is NO codegen
+`set/res`+`rld/rrd`; `5f890f1` `ld (iy+d),#imm`), then `8596ef3`/`718263a` (ldir block copy, STL-address
+BA). **Also: there is NO codegen
 heisenbug** — a long false hunt was edited-vs-stale builds; always rebuild via the overlay
 (`dev.sh`/`corpus-check.sh`), never raw `make -C build/.../src`. See "Session 14". —
 Earlier state: the codegen retarget was believed **functionally complete**: assemble→link→banked-ROM GREEN,
@@ -67,15 +73,19 @@ complete**. The remaining work is cleanup + ABI completeness (the register-model
 ## NEXT ACTION (do this)
 
 1. Confirm green: `./scripts/dev.sh` → builds the compiler + smoke test → `GREEN`.
-2. The codegen retarget is **functionally complete** — every z80-ism in *reachable* code is gone. A broad
-   `--c1mode` corpus (arithmetic, pointers, structs, bitfields, varargs, float, swaps, calls, function
-   pointers, ISRs, `__critical`, struct return) assembles with **0 `sdas88` errors**, and the full
-   assemble→link→banked-ROM pipeline is GREEN. All the feature gaps are closed: compares / 8- and 16-bit
+2. The codegen retarget is **functionally complete for the verification corpus** — every *reachable*
+   z80-ism it exposes is gone: **14/15 corpus files assemble with 0 `sdas88` errors** (the 15th is
+   12_arrays = the deferred #10 assembler gap, not a codegen z80-ism), and the full
+   assemble→link→banked-ROM pipeline is GREEN. (Session 14 proved "functionally complete" claims are
+   only as strong as the corpus — keep extending `scripts/corpus/` when touching new codegen territory.)
+   All the feature gaps are closed: compares / 8- and 16-bit
    ALU / shifts (sessions 1–4), the **`ldir` struct-copy cluster** (session 5), **`bcall`/`bjump` for
    inter-function calls + `.globl` for support routines** (6), the **active C/D/E+DE/BC z80-isms** (7),
    **independent port** linking alongside z80 et al. (8), **function-pointer calls** (9), **ISR
-   prologue/epilogue** (10), **struct return-by-value** (11), **`__critical`** (12). See the per-session
-   entries below.
+   prologue/epilogue** (10), **struct return-by-value** (11), **`__critical`** (12), the s14 corpus
+   findings (`or a,l/h`, bitfield `set/res`/`rld/rrd`, `ld (iy+d),#imm`, `ldir` block copy, STL-address
+   BA) (14), **`genMult` literal path + block-scope extern `.globl`** (15). See the per-session entries
+   below.
 3. **Remaining work = the open tasks** (cleanup + ABI completeness, not functional gaps):
    - **#7 — register-model dead-code sweep / symbol removal.** The big careful grind: delete the dead
      pure-variant branches, retarget the live-but-allocator-avoided z80-isms (`ex (sp),hl` → `ex ba,iy`,
@@ -159,15 +169,44 @@ heisenbug**. There is NO such heisenbug — codegen is deterministic per binary 
   inner loop restructured by cost perturbation but every address is verified correct (one harmless redundant
   `add hl,#0`).
 
-**STILL OPEN — one reachable z80-ism left = `genMultLit` (multiply-by-constant), the deep A/BA grind.**
-`int b = a*3` emits `ld c,l; ld b,h; add hl,hl; add hl,bc` (09_isr `isr_heavy`, ~line 9911). genMultLit
-defaults `pair=PAIR_BC` (BC is phantom-"dead" so always picked) and is DE/BC/E/C-based across several paths.
-The **int** path (`else` at ~9868: `fetchPair(pair,left); ld l,a; ld h,b; add hl,hl; add hl,ba`) is tractable
-via BA, but the **byteResult/char** path (~9848-9866) uses A as the accumulator — conflicts with BA's low
-byte — so it needs the multiplicand in B (not a BA pair) and careful A/BA handling. Do as a focused effort,
-hand-verifying each path. Plus the deferred `jp GE` out-of-range (#10) and the `bcall _ext` undefined-symbol
-*false positive* (link-resolved). **Corpus now: 13/15 files 0 errors; only 09_isr (this multiply) + 12_arrays
-(the #10 `jp GE`) remain.**
+~~**STILL OPEN — one reachable z80-ism left = `genMultLit` (multiply-by-constant)**~~ **DONE (session 15,
+`a112acf`)** — see "Session 15". The `bcall _ext` undefined-symbol flag turned out to be a REAL bug
+(block-scope externs missing `.globl`), fixed in `4fe9ed8`. **Corpus now: 14/15 files 0 errors; only
+12_arrays (the deferred #10 `jp GE`) remains.**
+
+## Session 15 (2026-06-05) — genMult literal path retargeted to BA/B; block-scope extern .globl
+
+**The last reachable z80-ism is gone — every corpus file except 12_arrays (#10, assembler-level) now
+assembles with 0 sdas88 errors.**
+
+- **`a112acf` genMult literal path (genMultLit) → BA/B.** `int b = a*3` emitted `ld c,l; ld b,h;
+  add hl,hl; add hl,bc` (pair defaulted to phantom-dead PAIR_BC/PAIR_DE). Retargeted all four sub-paths:
+  - **16-bit loop:** addend in **BA** (the only 2nd ALU pair), `add hl,ba`; HL set up by `ld l,a; ld h,b`
+    after `genMove(ASMOP_BA, left)` (genMove, not fetchPair — it handles operand/pair overlap).
+  - **byte loop in A** (`!add_in_hl`): multiplicand in **B**, CSD chain `add a,a` + `add/sub a,b` —
+    A is both the accumulator and BA's low byte, so it can't also hold the addend.
+  - **byte loop in L** (`add_in_hl`, HL dead): addend byte is **A**; **B is untouched** (its garbage high
+    half only feeds H, which a byte result never reads) — so a live B needs no save here.
+  - **signed-byte operand:** native **`SEP`** (sign-extend A into B, `CE A8` byte-verified) replaces the
+    z80 `rlc/sbc/ld` shuffle. (In practice the middle-end widens via CAST first — which emits its own
+    legal `rlc a; sbc a,a` — so this path is defensive; peep.c's `s1c88instructionSize` was taught `sep`.)
+  - **Saves are byte-granular** (`push a`/`push b` + `_G.stack.pushed += 1`), decided per byte from
+    `isRegDead`, and **restored after the result genMove**: a pair `push ba` could restore over a result
+    byte landing in A. `spillPair(PAIR_BA)` after the loops (A/B no longer match the literal cache).
+  - **Hand-traced** (no execution test): `mi3/mi10/mi100/mc7` CSD chains; `mc3` (live B → `push b/pop b`
+    around the byte loop); `m_keep_a` (allocator parks a live char in B; the L-path leaves B untouched);
+    `m_keep_a16` (`push b` around an int multiply); `deep` (7c=(2c+c)·2+c, 9d=8d+d). 09_isr 5→1 errors;
+    the only corpus diff is the multiply site (`ld c,l`→`ld a,l`, `add hl,bc`→`add hl,ba`).
+- **`4fe9ed8` block-scope extern calls get `.globl`.** `void g(void){ extern void f(void); f(); }` never
+  emitted `.globl _f` — SDCCglue's publics walk only adds used **level-0** functions; inner scope tables
+  aren't walked — so sdas88 rejected the `bcall` as undefined. This was a REAL assemble failure
+  (stock `sdasz80` rejects identically), not the "link-resolved false positive" it was logged as.
+  Extended the s6 cdef hook in genCall: register `level > 0` called symbols in `publics` too (level>0
+  can't duplicate the glue's level-0-only entries; file-scope extern verified still exactly one `.globl`).
+  09_isr 1→0 errors.
+
+Remaining: **#10** out-of-range signed `jp GE` (12_arrays, assembler-level, deferred), **#7** the
+register-model dead-code/symbol sweep (cleanup, not functional), **#8** IX/IY args, **#9** far pointers.
 
 ## Session 13 (2026-06-02) — register-model dead-code sweep (task #7) STARTED
 
