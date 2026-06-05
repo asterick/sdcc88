@@ -1668,10 +1668,17 @@ int s1c88instructionSize(lineNode *pl)
 
   if(ISINST(pl->line, "jp"))
     {
-      if(!STRNCASECMP(op1start, "(hl)", 4))
+      if(!STRNCASECMP(op1start, "(hl)", 4) || !STRNCASECMP(op1start, "hl", 2))
         return(1);
       if(!STRNCASECMP(op1start, "(ix)", 4) || !STRNCASECMP(op1start, "(iy)", 4))
         return(2);
+      /* S1C88: a signed/flag-conditional jp is the assembler's fixed
+         invert-and-skip lowering (jrs <inv>,+4 ; jrl e) = 6 bytes; a basic
+         c/nc/z/nz jp assembles as jrl cc = 3 bytes. */
+      if(op2start &&
+         STRNCASECMP(op1start, "c,", 2) && STRNCASECMP(op1start, "nc,", 3) &&
+         STRNCASECMP(op1start, "z,", 2) && STRNCASECMP(op1start, "nz,", 3))
+        return(6);
       return(3);
     }
 

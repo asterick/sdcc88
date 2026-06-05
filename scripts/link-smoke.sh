@@ -32,7 +32,10 @@ EOF
 
 # _CODE@0x2100, _CODE2@0x2300, _DATA@0x1000 :
 #   ld ba,#_data  -> C4 00 10                       (_data = 0x1000)
-#   carl _far     -> F2 (0x2300-(0x2103+3)=0x01FA)  -> F2 FA 01
+#   carl _far     -> F2 (disp field at 0x2104; the S1C88 16-bit branch base is
+#                    field+1 — PC←PC+qqrr+2 from the instruction head, one less
+#                    than the z80 next-instruction base (Epson §4.3.3 / PokeMini
+#                    JMPS): 0x2300-(0x2104+1)=0x01FB) -> F2 FB 01
 "$SDAS" -o "$tmp/sm.rel" "$tmp/sm.asm" >/dev/null 2>&1 || { echo "FAIL: assemble"; exit 1; }
 err="$("$SDLD" -nwxi -b _CODE=0x2100 -b _CODE2=0x2300 -b _DATA=0x1000 "$tmp/sm.ihx" "$tmp/sm.rel" 2>&1)"
 [ $? -eq 0 ] || { echo "FAIL: link: $err"; exit 1; }
@@ -45,8 +48,8 @@ case "$code" in
   *)        echo "  FAIL ld ba,#_data not resolved (expected C4 00 10)"; fail=1;;
 esac
 case "$code" in
-  *F2FA01*) echo "  ok  carl _far resolved to disp 0x01FA (F2 FA 01)";;
-  *)        echo "  FAIL carl _far disp wrong (expected F2 FA 01)"; fail=1;;
+  *F2FB01*) echo "  ok  carl _far resolved to disp 0x01FB (F2 FB 01)";;
+  *)        echo "  FAIL carl _far disp wrong (expected F2 FB 01)"; fail=1;;
 esac
 [ "$fail" -eq 0 ] && echo "== assemble->link pipeline GREEN ==" || echo "== pipeline BROKEN =="
 exit "$fail"

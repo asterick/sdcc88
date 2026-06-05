@@ -351,7 +351,63 @@ struct mne *mp;
 		}
 		break;
 
-	case S_JP:				/* jp hl / jp (kk) */
+	case S_JP:				/* jp hl / jp (kk) / jp cc,e (lowered) */
+		if ((v1 = admode(CND)) != 0) {
+			/*
+			 * jp c/nc/z/nz, e — the codegen's long conditional
+			 * branch form.  Identical encoding to jrl cc, e.
+			 */
+			outab(0xEC + (v1 & 0xFF));
+			comma(1);
+			expr(&e2, 0);
+			if (mchpcr(&e2)) {
+				/* qqrr relative to (first disp byte + 1) — see S_JRL. */
+				v2 = (int) (e2.e_addr - dot.s_addr - 1);
+				outab(v2 & 0xFF);
+				outab((v2 >> 8) & 0xFF);
+			} else {
+				e2.e_addr += 1;	/* S1C88-vs-z80 PCR base bias (see S_JRS) */
+				outrw(&e2, R_PCR);
+			}
+			break;
+		}
+		if ((v1 = admode(CNDE)) != 0) {
+			/*
+			 * jp <signed/flag cc>, e — the CE-page conditions are
+			 * short-only (there is no jrl LT).  Lower to the
+			 * fixed-size invert-and-skip sequence
+			 *     jrs <inverted cc>, +3
+			 *     jrl e
+			 * (3 + 3 = 6 bytes; the jrs hops over the jrl when the
+			 * condition is false).  The compiler's peephole emits
+			 * jp cc only when the target is beyond jrs range.
+			 * Inversion pairs: lt/ge le/gt v/nv p/m fN/nfN.
+			 */
+			static const int invcce[16] = {
+				3, 2, 1, 0,		/* lt le gt ge */
+				5, 4, 7, 6,		/* v nv p m    */
+				12, 13, 14, 15,		/* f0..f3      */
+				8, 9, 10, 11		/* nf0..nf3    */
+			};
+			outab(0xCE);
+			outab(0xE0 + invcce[v1 & 0x0F]);
+			outab(4);		/* skip the 3-byte jrl below: rr is
+						   relative to this rr byte itself,
+						   and the jrl's end is rr+1+3 */
+			comma(1);
+			outab(0xF3);		/* jrl e */
+			expr(&e2, 0);
+			if (mchpcr(&e2)) {
+				/* qqrr relative to (first disp byte + 1) — see S_JRL. */
+				v2 = (int) (e2.e_addr - dot.s_addr - 1);
+				outab(v2 & 0xFF);
+				outab((v2 >> 8) & 0xFF);
+			} else {
+				e2.e_addr += 1;	/* S1C88-vs-z80 PCR base bias (see S_JRS) */
+				outrw(&e2, R_PCR);
+			}
+			break;
+		}
 		t1 = addr(&e1);
 		v1 = (int) (e1.e_addr & 0xFF);
 		if (t1 == S_R16 && v1 == HL)
@@ -359,7 +415,7 @@ struct mne *mp;
 		else if (t1 == S_INDM)
 			{ outab(0xFD); outrb(&e1, 0); }	/* jp (kk) — 8-bit vector */
 		else
-			xerr('a', "jp takes hl or a (kk) vector (use jrl for a label).");
+			xerr('a', "jp takes hl, a (kk) vector, or cc, label.");
 		break;
 
 	case S_INT:				/* int (kk) — FC,kk */
@@ -395,11 +451,19 @@ struct mne *mp;
 		}
 		expr(&e2, 0);
 		if (mchpcr(&e2)) {
-			v2 = (int) (e2.e_addr - dot.s_addr - 1);
+			/* S1C88 branch base: PC <- PC(after full fetch) + rr - 1
+			   (Epson §4.3.3 / PokeMini JMPS), i.e. an 8-bit rr is
+			   relative to the ADDRESS OF THE rr BYTE ITSELF — one
+			   byte earlier than the z80 next-instruction base.
+			   dot here is exactly the rr byte's address. */
+			v2 = (int) (e2.e_addr - dot.s_addr);
 			if (pass == 2 && ((v2 < -128) || (v2 > 127)))
 				xerr('a', "Branching Range Exceeded.");
 			outab(v2);
 		} else {
+			e2.e_addr += 1;		/* bias the addend: the linker's z80-style
+						   R_PCR subtracts (field+1); S1C88 needs
+						   (field+0) — see the base note above */
 			outrb(&e2, R_PCR);
 		}
 		break;
@@ -415,10 +479,14 @@ struct mne *mp;
 		}
 		expr(&e2, 0);
 		if (mchpcr(&e2)) {
-			v2 = (int) (e2.e_addr - dot.s_addr - 2);
+			/* 16-bit qqrr: PC <- PC(after full fetch) + qqrr - 1, so
+			   qqrr is relative to (first disp byte + 1).  dot is the
+			   first disp byte's address. */
+			v2 = (int) (e2.e_addr - dot.s_addr - 1);
 			outab(v2 & 0xFF);
 			outab((v2 >> 8) & 0xFF);
 		} else {
+			e2.e_addr += 1;		/* S1C88-vs-z80 PCR base bias (see S_JRS) */
 			outrw(&e2, R_PCR);
 		}
 		break;
@@ -432,11 +500,13 @@ struct mne *mp;
 		}
 		expr(&e2, 0);
 		if (mchpcr(&e2)) {
-			v2 = (int) (e2.e_addr - dot.s_addr - 1);
+			/* rr relative to the rr byte itself (see S_JRS). */
+			v2 = (int) (e2.e_addr - dot.s_addr);
 			if (pass == 2 && ((v2 < -128) || (v2 > 127)))
 				xerr('a', "Branching Range Exceeded.");
 			outab(v2);
 		} else {
+			e2.e_addr += 1;		/* S1C88-vs-z80 PCR base bias (see S_JRS) */
 			outrb(&e2, R_PCR);
 		}
 		break;
@@ -529,8 +599,11 @@ struct mne *mp;
 		   (bank<<16)|logic) into [bank] and a NOP (FF) into [pad] — giving
 		   `ld nb,#bank ; nop ; carl/jrl`.  When that bank is 0 (common) or the
 		   current area's, it NOPs the whole `ld nb`+pad instead. */
-		outrw(&e1, R_S1C88_BANK);		/* [bank][pad] */
+		outrw(&e1, R_S1C88_BANK);		/* [bank][pad] — unbiased target */
 		outab(op);				/* carl/jrl opcode */
+		e1.e_addr += 1;				/* S1C88-vs-z80 PCR base bias (see S_JRS);
+						           applied after the bank reloc so the
+						           bank byte uses the true address */
 		outrw(&e1, R_PCR);			/* disp16 (+ R_PCR reloc -> target) — logic-relative */
 		break;
 
