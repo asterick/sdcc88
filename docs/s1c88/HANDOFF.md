@@ -3,11 +3,14 @@
 **This is the single resume entry point.** If the prompt is *"let's pick up where you left off,"* do the
 steps under **NEXT ACTION**. Everything needed to continue is here or linked from here.
 
-_Last updated: 2026-06-05 (session 15: **the last reachable z80-ism is gone** — `genMult`'s literal path
+_Last updated: 2026-06-05 (session 15: **the last reachable z80-isms are gone** — `genMult`'s literal path
 (`a112acf`) now uses BA/B (`add hl,ba` 16-bit loop; multiplicand in B for the `add/sub a,b` byte loop;
 byte-granular `push a`/`push b` saves; native `SEP` for the in-genMult sign-extend path; peep.c sizes
-`sep`). Plus `4fe9ed8`: block-scope `extern void f(void); f();` now gets its `.globl` (was a REAL
-assemble failure, not a validator false positive). **Corpus: 14/15 files at 0 sdas88 errors** — only
+`sep`). `4fe9ed8`: block-scope `extern void f(void); f();` now gets its `.globl` (was a REAL
+assemble failure, not a validator false positive). `0913cf9`: **a fresh corpus blind spot found and
+fixed** — variable `char*char` (genMultOneChar, the z80 shift-add loop with DE) was corpus-invisible;
+now emits the native **`MLT`** (`HL←L*A`, CE D8; best case `mlt; ld a,l; ret`), and the corpus gained
+`16_mult.c` covering the whole multiply cluster. **Corpus: 15/16 files at 0 sdas88 errors** — only
 12_arrays (the deferred #10 out-of-range `jp GE` assembler gap) remains. See "Session 15". —
 Session 14: **built a byte-identical corpus harness** (`scripts/corpus/` +
 `corpus-check.sh`) which **disproved "functionally complete"** — a broader corpus exposed REACHABLE z80-isms
@@ -74,7 +77,7 @@ complete**. The remaining work is cleanup + ABI completeness (the register-model
 
 1. Confirm green: `./scripts/dev.sh` → builds the compiler + smoke test → `GREEN`.
 2. The codegen retarget is **functionally complete for the verification corpus** — every *reachable*
-   z80-ism it exposes is gone: **14/15 corpus files assemble with 0 `sdas88` errors** (the 15th is
+   z80-ism it exposes is gone: **15/16 corpus files assemble with 0 `sdas88` errors** (the 16th is
    12_arrays = the deferred #10 assembler gap, not a codegen z80-ism), and the full
    assemble→link→banked-ROM pipeline is GREEN. (Session 14 proved "functionally complete" claims are
    only as strong as the corpus — keep extending `scripts/corpus/` when touching new codegen territory.)
@@ -171,7 +174,8 @@ heisenbug**. There is NO such heisenbug — codegen is deterministic per binary 
 
 ~~**STILL OPEN — one reachable z80-ism left = `genMultLit` (multiply-by-constant)**~~ **DONE (session 15,
 `a112acf`)** — see "Session 15". The `bcall _ext` undefined-symbol flag turned out to be a REAL bug
-(block-scope externs missing `.globl`), fixed in `4fe9ed8`. **Corpus now: 14/15 files 0 errors; only
+(block-scope externs missing `.globl`), fixed in `4fe9ed8`; a fresh blind spot (variable `char*char`)
+fixed via native `MLT` in `0913cf9` + corpus file `16_mult.c`. **Corpus now: 15/16 files 0 errors; only
 12_arrays (the deferred #10 `jp GE`) remains.**
 
 ## Session 15 (2026-06-05) — genMult literal path retargeted to BA/B; block-scope extern .globl
@@ -204,9 +208,24 @@ assembles with 0 sdas88 errors.**
   Extended the s6 cdef hook in genCall: register `level > 0` called symbols in `publics` too (level>0
   can't duplicate the glue's level-0-only entries; file-scope extern verified still exactly one `.globl`).
   09_isr 1→0 errors.
+- **`0913cf9` genMultOneChar → native `MLT` (a fresh corpus blind spot).** The corpus had **no variable
+  8×8 multiply**, so `char a*b`'s z80 shift-add loop (`ld e,l; ld d,l; add hl,de; djr nz` — DE doesn't
+  exist) survived "functionally complete" — exactly the s14 lesson. Replaced with the native **`MLT`**
+  (`HL ← L*A`, `CE D8`, 2 B/12 cyc, MODEL1/3 — the Pokémon Mini core has it): operands → A and L
+  (commutative swap prefers in-place regs and keeps HL-reading operand loads in the L slot, after A),
+  byte-granular `push a` when A is live non-operand; **MLT preserves B**, so a live B needs no save
+  (verified: an allocator-parked char in B survives). Best case `char a*b` = `mlt; ld a,l; ret`. The
+  z80 loop + the dead SM83/Z180/Z80N/RAB/R800 variant blocks (~220 lines) deleted. peep.c: `mlt` size
+  rule ungated; the use/def predicates audited for bare `mlt` (conservative fallbacks; SurelyWritesFlag
+  matches Minx MUL flags Z,N set / C,V cleared). **`scripts/corpus/16_mult.c` added** — the whole
+  multiply cluster (literal CSD int/byte, live-A/live-B saves, widened chars, global stores, variable
+  8×8 MLT, `__mulint`/`__mullong` support calls). (genDiv/genMod stay support-call-only, as on z80;
+  native `DIV` (`L←HL/A, H←rem`, CE D9) is a future optimization, not a gap.)
 
 Remaining: **#10** out-of-range signed `jp GE` (12_arrays, assembler-level, deferred), **#7** the
 register-model dead-code/symbol sweep (cleanup, not functional), **#8** IX/IY args, **#9** far pointers.
+**Keep extending the corpus** when touching codegen territory it doesn't cover — two sessions in a row
+proved "complete" claims are only as strong as the corpus.
 
 ## Session 13 (2026-06-02) — register-model dead-code sweep (task #7) STARTED
 

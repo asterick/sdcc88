@@ -6,8 +6,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 > it has the current state and the exact next action. TL;DR: `./scripts/dev.sh` (confirms the build is
 > green + runs a codegen smoke test). The codegen retarget is **functionally complete for the
 > verification corpus** (session 15: the last reachable z80-ism — `genMult`'s literal path — retargeted
-> to BA/B; block-scope extern `.globl` fixed): **14/15 corpus files assemble with 0 sdas88 errors**, the
-> 15th being the deferred #10 assembler gap, not codegen. Remaining work: the register-model
+> to BA/B; variable `char*char` → native `MLT`; block-scope extern `.globl` fixed): **15/16 corpus
+> files assemble with 0 sdas88 errors**, the
+> 16th being the deferred #10 assembler gap, not codegen. Remaining work: the register-model
 > dead-code/symbol sweep (#7, cleanup), IX/IY arg passing (#8), far pointers (#9), the assembler
 > signed-branch gap (#10). Validate each change with `./scripts/corpus-check.sh` (byte-identical +
 > sdas88) — **always rebuild via the overlay (`dev.sh`/`corpus-check.sh`), never raw `make -C
@@ -53,7 +54,7 @@ and builds the compiler.
 > session-14 corpus (`scripts/corpus-check.sh`) exposed reachable z80-isms the earlier narrower corpus
 > missed — all now fixed (s14: `or a,l/h` in `&&`/`||`, bitfield `set/res`+`rld/rrd`, `ld (iy+d),#imm`,
 > `ldir` block copy, STL-address BA; s15: the `genMult` literal path → BA/B + block-scope extern
-> `.globl`). **14/15 corpus files assemble with 0 sdas88 errors** (the 15th = the deferred #10 assembler
+> `.globl`, genMultOneChar → native `MLT`). **15/16 corpus files assemble with 0 sdas88 errors** (the 16th = the deferred #10 assembler
 > gap, not codegen). **Remaining work:** the register-model dead-code sweep / C-D-E-DE-BC symbol removal
 > (task #7, cleanup — started s13), IX/IY argument passing (#8), 3-byte far pointers
 > (#9), and the out-of-range signed-branch assembler gap (#10). All work is on **`main`**.
@@ -73,7 +74,7 @@ Decided design:
   to verify; the dead WIP is in reflog at `417bed5` as a reference for the end-state register defs.)
 
 **Progress:** the retarget is functionally complete for the verification corpus (assemble→link→ROM
-GREEN; 14/15 corpus files at 0 sdas88 errors — the session-14/15 fixes closed every reachable z80-ism
+GREEN; 15/16 corpus files at 0 sdas88 errors — the session-14/15 fixes closed every reachable z80-ism
 the corpus exposes, the last being `genMult`'s literal path → BA/B in s15). See `HANDOFF.md` for the
 per-session commit list.
 **The remaining grind (task #7)** is eliminating the z80 `C/D/E` byte regs + `DE`/`BC` scratch — the
