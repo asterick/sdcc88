@@ -135,7 +135,6 @@ static builtins _z80_builtins[] = {
   {NULL, NULL, 0, {NULL}}
 };
 
-extern reg_info s1c88_sm83_regs[];
 extern reg_info s1c88_regs[];
 extern void s1c88_init_asmops (void);
 extern reg_info *regsS1C88;
@@ -386,8 +385,7 @@ _parseOptions (int *pargc, char **argv, int *i)
 {
   if (argv[*i][0] == '-')
     {
-      if (IS_SM83 || IS_Z80)
-        {
+      {
           if (!strncmp (argv[*i], OPTION_BO, sizeof (OPTION_BO) - 1))
             {
               /* ROM bank */
@@ -540,16 +538,8 @@ _setValues (void)
   setMainValue ("z80extralibpaths", (s = joinStrSet (libPathsSet)));
   Safe_free ((void *) s);
 
-  if (IS_SM83)
-    {
-      setMainValue ("z80outputtypeflag", "-Z");
-      setMainValue ("z80outext", ".gb");
-    }
-  else
-    {
-      setMainValue ("z80outputtypeflag", "-i");
-      setMainValue ("z80outext", ".ihx");
-    }
+  setMainValue ("z80outputtypeflag", "-i");
+  setMainValue ("z80outext", ".ihx");
 
   setMainValue ("stdobjdstfilename", "{dstfilename}{objext}");
   setMainValue ("stdlinkdstfilename", "{dstfilename}{z80outext}");
@@ -568,21 +558,6 @@ _finaliseOptions (void)
 {
   port->mem.default_local_map = data;
   port->mem.default_globl_map = data;
-  if (IS_SM83)
-    switch (_G.asmType)
-      {
-      case ASM_TYPE_ASXXXX:
-        asm_addTree (&_s1c88_asxxxx_gb);
-        break;
-      case ASM_TYPE_GAS:
-        asm_addTree (&_s1c88_gas_gb);
-        break;
-      case ASM_TYPE_ISAS:
-      case ASM_TYPE_RGBDS:
-      case ASM_TYPE_Z80ASM:
-        break;
-      }
-
   /* S1C88: IX/IY are index-only (never byte-allocated), so num_regs stays at
      A,B,L,H regardless of the z80 --reserve-iy option. */
 
@@ -602,12 +577,7 @@ _setDefaultOptions (void)
   options.code_loc = 0x200;
   options.allow_undoc_inst = false;
 
-  if (IS_SM83)
-    options.data_loc = 0xc000;
-  else if (IS_RAB) // Match default crt0
-    options.data_loc = 0xa000;
-  else
-    options.data_loc = 0x8000;
+  options.data_loc = 0x8000;
 
   options.out_fmt = 'i';        /* Default output format is ihx */
 }
@@ -713,14 +683,10 @@ _hasNativeMulFor (iCode *ic, sym_link *left, sym_link *right)
     test = right;
   /* 8x8 unsigned multiplication code is shorter than
      call overhead for the multiplication routine. */
-  else if (IS_CHAR (right) && IS_UNSIGNED (right) && IS_CHAR (left) && IS_UNSIGNED (left) && !IS_SM83)
+  else if (IS_CHAR (right) && IS_UNSIGNED (right) && IS_CHAR (left) && IS_UNSIGNED (left))
     return(true);
   /* Same for any multiplication with 8 bit result. */
-  else if (result_size == 1 && !IS_SM83)
-    return(true);
-  // Rabbits have signed 16x16->32 multiplication, which is broken on original Rabbit 2000.
-  else if (IS_RAB && !IS_R2K && getSize (left) == 2 && getSize(right) == 2 &&
-    (result_size == 2 || result_size <= 4 && !IS_UNSIGNED (left) && !IS_UNSIGNED (right)))
+  else if (result_size == 1)
     return(true);
   else
     return(false);

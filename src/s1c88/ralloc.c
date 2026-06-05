@@ -88,17 +88,6 @@ static struct
   int nRegs;
 } _G;
 
-reg_info s1c88_sm83_regs[] = {
-  {REG_GPR, A_IDX, "a", 1},
-  {REG_GPR, C_IDX, "c", 1},
-  {REG_GPR, B_IDX, "b", 1},
-  {REG_GPR, E_IDX, "e", 1},
-  {REG_GPR, D_IDX, "d", 1},
-  {REG_GPR, L_IDX, "l", 1},
-  {REG_GPR, H_IDX, "h", 1},
-  {REG_CND, CND_IDX, "c", 1}
-};
-
 reg_info s1c88_regs[] = {
   /* Array position MUST equal the *_IDX ordinal: regsS1C88[idx] and the Boost
      allocator both index by it.  Order matches ralloc.h — A,B,L,H, then the
@@ -119,7 +108,6 @@ reg_info *regsS1C88;
 
 /** Number of usable registers (all but C) */
 #define Z80_MAX_REGS ((sizeof (s1c88_regs) / sizeof (s1c88_regs[0]))-1)
-#define SM83_MAX_REGS ((sizeof (s1c88_sm83_regs) / sizeof (s1c88_sm83_regs[0]))-1)
 
 void s1c88SpillThis (symbol *);
 static void freeAllRegs ();
@@ -433,7 +421,7 @@ s1c88_rUmaskForOp_internal (const operand * op)
   if (sym->isspilt || !sym->nRegs)
     return NULL;
 
-  rumask = newBitVect (IS_SM83 ? SM83_MAX_REGS : Z80_MAX_REGS);
+  rumask = newBitVect (Z80_MAX_REGS);
 
   for (j = 0; j < sym->nRegs; j++)
     {
@@ -459,7 +447,7 @@ s1c88_rUmaskForOp (const operand * op)
 bitVect *
 s1c88_regsUsedIniCode (iCode * ic)
 {
-  bitVect *rmask = newBitVect (IS_SM83 ? SM83_MAX_REGS : Z80_MAX_REGS);
+  bitVect *rmask = newBitVect (Z80_MAX_REGS);
 
   /* of all other cases */
   if (IC_LEFT (ic))
@@ -1261,7 +1249,7 @@ s1c88_ralloc (ebbIndex *ebbi)
   setToNull ((void *) &_G.totRegAssigned);
   _G.stackExtend = _G.dataExtend = 0;
 
-  _G.nRegs = IS_SM83 ? SM83_MAX_REGS : Z80_MAX_REGS;
+  _G.nRegs = Z80_MAX_REGS;
 
   /* change assignments this will remove some
      live ranges reducing some register pressure */
