@@ -2714,27 +2714,12 @@ makeFreePairId (const iCode * ic, bool * pisUsed)
 {
   *pisUsed = FALSE;
 
-  if (ic != NULL)
-    {
-      if (!bitVectBitValue (ic->rMask, B_IDX) && !bitVectBitValue (ic->rMask, C_IDX))
-        {
-          return PAIR_BC;
-        }
-      else if (!bitVectBitValue (ic->rMask, D_IDX) && !bitVectBitValue (ic->rMask, E_IDX))
-        {
-          return PAIR_DE;
-        }
-      else
-        {
-          *pisUsed = TRUE;
-          return PAIR_HL;
-        }
-    }
-  else
-    {
-      *pisUsed = TRUE;
-      return PAIR_HL;
-    }
+  /* S1C88: BA is the only scratch pair besides HL (no z80 BC/DE). */
+  if (ic != NULL && !bitVectBitValue (ic->rMask, A_IDX) && !bitVectBitValue (ic->rMask, B_IDX))
+    return PAIR_BA;
+
+  *pisUsed = TRUE;
+  return PAIR_HL;
 }
 
 static void
@@ -2913,7 +2898,7 @@ fetchPairLong (PAIR_ID pairId, asmop *aop, const iCode *ic, int offset)
               if (isUsed)
                 _push (id);
               /* Can't load into parts, so load into HL then exchange. */
-              genMove_o (id == PAIR_HL ? ASMOP_HL : id == PAIR_DE ? ASMOP_DE : id == PAIR_BC ? ASMOP_BC : ASMOP_IY, 0, aop, offset, 2, false, false, false, false, false);
+              genMove_o (id == PAIR_HL ? ASMOP_HL : ASMOP_BA, 0, aop, offset, 2, false, false, false, false, false);
 
               {
                   _push (id);
@@ -2989,13 +2974,12 @@ setupPairFromSP (PAIR_ID id, int offset)
       offset += 2;
     }
 
-  if (id == PAIR_DE)
-    emit3w (A_EX, ASMOP_DE, ASMOP_HL);
+  wassert (id == PAIR_HL || id == PAIR_IY);
 
   if (offset < INT8MIN || offset > INT8MAX || id == PAIR_IY)
     {
       struct dbuf_s dbuf;
-      PAIR_ID lid = (id == PAIR_DE) ? PAIR_HL : id;
+      PAIR_ID lid = id;
       dbuf_init (&dbuf, sizeof(int) * 3 + 1);
       dbuf_printf (&dbuf, "%d", offset);
       emit2 ("ld %s, !hashedstr", _pairs[lid].name, dbuf_c_str (&dbuf));
@@ -3012,7 +2996,6 @@ setupPairFromSP (PAIR_ID id, int offset)
     }
   else
     {
-      wassert (id == PAIR_DE || id == PAIR_HL);
       emit2 ("!ldahlsp", offset);
       {
           cost2 (3, 10, 9, 6, 12, 6, 3, 3);
@@ -3020,13 +3003,6 @@ setupPairFromSP (PAIR_ID id, int offset)
         }
     }
 
-  if (id == PAIR_DE)
-    emit3w (A_EX, ASMOP_DE, ASMOP_HL);
-  else if (id == PAIR_DE)
-    {
-      genMovePairPair (PAIR_HL, PAIR_DE);
-      spillPair (PAIR_HL);
-    }
 
   if (_G.preserveCarry)
     {
@@ -3761,65 +3737,67 @@ cheapMove (asmop *to, int to_offset, asmop *from, int from_offset, bool a_dead)
       return;
     }
 
-  if (from_index && !to_index && !aopInReg (to, to_offset, L_IDX) && !aopInReg (to, to_offset, H_IDX))
+  /* S1C88 access to an IY half (IX/IY are not byte-addressable).  Two legal
+     idioms replace the z80 `push iy / ex (sp), hl` machinery:
+       - the BA pivot `ex ba, iy; <ld between A/B and L/H>; ex ba, iy` — fully
+         self-restoring (BA, the other IY half, everything) but only usable
+         when the partner byte is L or H (A/B are overwritten between swaps);
+       - HL staging `push hl; ld hl, iy; ...; [ld iy, hl;] pop hl` for any
+         other partner (memory operands keep IY free for their addressing). */
+  if (from_index && !to_index)          /* read an IY half */
     {
-      _push (PAIR_IY);
-      emit2 ("ex (sp), hl");
-      cost2 (1, 19, 16, 15, 0, 14, 5, 5);
-      cheapMove (to, to_offset, aopInReg (from, from_offset, IYL_IDX) ? ASMOP_L : ASMOP_H, 0, a_dead);
-      emit2 ("ex (sp), hl");
-      cost2 (1, 19, 16, 15, 0, 14, 5, 5);
-      _pop (PAIR_IY);
+      if (aopInReg (to, to_offset, L_IDX) || aopInReg (to, to_offset, H_IDX))
+        {
+          emit2 ("ex ba, iy");
+          cost2 (1, 0, 0, 0, 0, 0, 0, 0);
+          emit3 (A_LD, aopInReg (to, to_offset, L_IDX) ? ASMOP_L : ASMOP_H,
+                 aopInReg (from, from_offset, IYL_IDX) ? ASMOP_A : ASMOP_B);
+          emit2 ("ex ba, iy");
+          cost2 (1, 0, 0, 0, 0, 0, 0, 0);
+        }
+      else
+        {
+          _push (PAIR_HL);
+          emit2 ("ld hl, iy");
+          cost2 (2, 0, 0, 0, 0, 0, 0, 0);
+          cheapMove (to, to_offset, aopInReg (from, from_offset, IYL_IDX) ? ASMOP_L : ASMOP_H, 0, a_dead);
+          emit2 ("ld iy, hl");   /* a memory `to` may have re-pointed IY for its addressing */
+          cost2 (2, 0, 0, 0, 0, 0, 0, 0);
+          _pop (PAIR_HL);
+        }
       return;
     }
-  else if (to_index && !from_index && !aopInReg (from, from_offset, L_IDX) && !aopInReg (from, from_offset, H_IDX))
+  else if (to_index && !from_index)     /* write an IY half */
     {
-      _push (PAIR_IY);
-      emit2 ("ex (sp), hl");
-      cost2 (1, 19, 16, 15, 0, 14, 5, 5);
-      cheapMove (aopInReg (to, to_offset, IYL_IDX) ? ASMOP_L : ASMOP_H, 0, from, from_offset, a_dead);
-      emit2 ("ex (sp), hl");
-      cost2 (1, 19, 16, 15, 0, 14, 5, 5);
-      _pop (PAIR_IY);
+      if (aopInReg (from, from_offset, L_IDX) || aopInReg (from, from_offset, H_IDX))
+        {
+          emit2 ("ex ba, iy");
+          cost2 (1, 0, 0, 0, 0, 0, 0, 0);
+          emit3 (A_LD, aopInReg (to, to_offset, IYL_IDX) ? ASMOP_A : ASMOP_B,
+                 aopInReg (from, from_offset, L_IDX) ? ASMOP_L : ASMOP_H);
+          emit2 ("ex ba, iy");
+          cost2 (1, 0, 0, 0, 0, 0, 0, 0);
+        }
+      else
+        {
+          _push (PAIR_HL);
+          emit2 ("ld hl, iy");
+          cost2 (2, 0, 0, 0, 0, 0, 0, 0);
+          cheapMove (aopInReg (to, to_offset, IYL_IDX) ? ASMOP_L : ASMOP_H, 0, from, from_offset, a_dead);
+          emit2 ("ld iy, hl");
+          cost2 (2, 0, 0, 0, 0, 0, 0, 0);
+          _pop (PAIR_HL);
+        }
       return;
     }
-  else if (from_index && !to_index)
+  else if (to_index && from_index)      /* IY half to IY half */
     {
-      wassert (aopInReg (to, to_offset, L_IDX) || aopInReg (to, to_offset, H_IDX));
-      _push (PAIR_IY);
-      emit3w (A_EX, ASMOP_DE, ASMOP_HL);
-      emit2 ("ex (sp), hl");
-      cost2 (1, 19, 16, 15, 0, 14, 5, 5);
-      cheapMove (aopInReg (to, to_offset, L_IDX) ? ASMOP_E : ASMOP_D, 0, aopInReg (from, from_offset, IYL_IDX) ? ASMOP_L : ASMOP_H, 0, a_dead);
-      emit2 ("ex (sp), hl");
-      cost2 (1, 19, 16, 15, 0, 14, 5, 5);
-      emit3w (A_EX, ASMOP_DE, ASMOP_HL);
-      _pop (PAIR_IY);
-      return;
-    }
-  else if (to_index && !from_index)
-    {
-      wassert (aopInReg (from, from_offset, L_IDX) || aopInReg (from, from_offset, H_IDX));
-      _push (PAIR_IY);
-      emit3w (A_EX, ASMOP_DE, ASMOP_HL);
-      emit2 ("ex (sp), hl");
-      cost2 (1, 19, 16, 15, 0, 14, 5, 5);
-      cheapMove (aopInReg (to, to_offset, IYL_IDX) ? ASMOP_L : ASMOP_H, 0, aopInReg (from, from_offset, L_IDX) ? ASMOP_E : ASMOP_D, 0, a_dead);
-      emit2 ("ex (sp), hl");
-      cost2 (1, 19, 16, 15, 0, 14, 5, 5);
-      emit3w (A_EX, ASMOP_DE, ASMOP_HL);
-      _pop (PAIR_IY);
-      return;
-    }
-  else if (to_index && from_index)
-    {
-      _push (PAIR_IY);
-      emit2 ("ex (sp), hl");
-      cost2 (1, 19, 16, 15, 0, 14, 5, 5);
-      cheapMove (aopInReg (to, to_offset, IYL_IDX) ? ASMOP_L : ASMOP_H, 0, aopInReg (to, to_offset, IYL_IDX) ? ASMOP_L : ASMOP_H, 0, a_dead);
-      emit2 ("ex (sp), hl");
-      cost2 (1, 19, 16, 15, 0, 14, 5, 5);
-      _pop (PAIR_IY);
+      emit2 ("ex ba, iy");
+      cost2 (1, 0, 0, 0, 0, 0, 0, 0);
+      emit3 (A_LD, aopInReg (to, to_offset, IYL_IDX) ? ASMOP_A : ASMOP_B,
+             aopInReg (from, from_offset, IYL_IDX) ? ASMOP_A : ASMOP_B);
+      emit2 ("ex ba, iy");
+      cost2 (1, 0, 0, 0, 0, 0, 0, 0);
       return;
     }
 
