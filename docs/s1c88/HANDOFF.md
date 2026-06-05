@@ -10,8 +10,14 @@ byte-granular `push a`/`push b` saves; native `SEP` for the in-genMult sign-exte
 assemble failure, not a validator false positive). `0913cf9`: **a fresh corpus blind spot found and
 fixed** — variable `char*char` (genMultOneChar, the z80 shift-add loop with DE) was corpus-invisible;
 now emits the native **`MLT`** (`HL←L*A`, CE D8; best case `mlt; ld a,l; ret`), and the corpus gained
-`16_mult.c` covering the whole multiply cluster. **Corpus: 15/16 files at 0 sdas88 errors** — only
-12_arrays (the deferred #10 out-of-range `jp GE` assembler gap) remains. See "Session 15". —
+`16_mult.c` covering the whole multiply cluster. `47eb41c`: **task #10 closed** (`jp <signed cc>` lowers
+in sdas88 to the fixed `jrs <inv>,+4; jrl e` invert-and-skip) — **and, found while implementing it, a
+CRITICAL toolchain-wide bug: every relative branch was ONE BYTE SHORT** (sdas88 inherited the z80
+next-instruction disp base; the S1C88 base is one byte earlier — `PC←PC+rr+1`, confirmed vs both the
+Epson §4.3.3 semantics and PokeMini's `JMPS: PC = PC + OFFSET - 1`). Fixed assembler-side everywhere
+(local resolution + a +1 R_PCR addend bias so the stock z80 linker math lands on the S1C88 base — no
+linker change); `scripts/branch-smoke.sh` locks the convention byte-for-byte. **Corpus: 16/16 files at
+0 sdas88 errors — the first fully-GREEN corpus.** See "Session 15". —
 Session 14: **built a byte-identical corpus harness** (`scripts/corpus/` +
 `corpus-check.sh`) which **disproved "functionally complete"** — a broader corpus exposed REACHABLE z80-isms
 the narrower prior corpus missed. Fixed 3 (`a6bf7e4` `or a,l/h` in `&&`/`||`; `20b9d72` bitfield
@@ -77,8 +83,7 @@ complete**. The remaining work is cleanup + ABI completeness (the register-model
 
 1. Confirm green: `./scripts/dev.sh` → builds the compiler + smoke test → `GREEN`.
 2. The codegen retarget is **functionally complete for the verification corpus** — every *reachable*
-   z80-ism it exposes is gone: **15/16 corpus files assemble with 0 `sdas88` errors** (the 16th is
-   12_arrays = the deferred #10 assembler gap, not a codegen z80-ism), and the full
+   z80-ism it exposes is gone: **16/16 corpus files assemble with 0 `sdas88` errors**, and the full
    assemble→link→banked-ROM pipeline is GREEN. (Session 14 proved "functionally complete" claims are
    only as strong as the corpus — keep extending `scripts/corpus/` when touching new codegen territory.)
    All the feature gaps are closed: compares / 8- and 16-bit
@@ -87,8 +92,8 @@ complete**. The remaining work is cleanup + ABI completeness (the register-model
    **independent port** linking alongside z80 et al. (8), **function-pointer calls** (9), **ISR
    prologue/epilogue** (10), **struct return-by-value** (11), **`__critical`** (12), the s14 corpus
    findings (`or a,l/h`, bitfield `set/res`/`rld/rrd`, `ld (iy+d),#imm`, `ldir` block copy, STL-address
-   BA) (14), **`genMult` literal path + block-scope extern `.globl`** (15). See the per-session entries
-   below.
+   BA) (14), **`genMult` literal path + variable 8×8 `MLT` + block-scope extern `.globl` + the #10
+   `jp <signed cc>` lowering** (15). See the per-session entries below.
 3. **Remaining work = the open tasks** (cleanup + ABI completeness, not functional gaps):
    - **#7 — register-model dead-code sweep / symbol removal.** The big careful grind: delete the dead
      pure-variant branches, retarget the live-but-allocator-avoided z80-isms (`ex (sp),hl` → `ex ba,iy`,
@@ -98,19 +103,28 @@ complete**. The remaining work is cleanup + ABI completeness (the register-model
      after each step.
    - **#8 — ABI Phase 2: IX/IY argument passing** (int 3rd/4th + near-ptr 1st/2nd currently spill to stack).
    - **#9 — ABI Phase 3: 3-byte far pointers + `_near`/`_far` memory model** (large).
-   - **#10 — assembler: out-of-range signed conditional branch + a `bcall LT` diagnostic** (rare edge).
 4. **Validator workflow** (how to check a slice): compile with `sdcc -ms1c88 --c1mode -o /tmp/x.asm`, then
    `scripts/validate-s1c88.sh /tmp/x.asm` (assembles with `sdas88`; any reject = a z80-ism to fix). For a
    refactor, also confirm **byte-identical** codegen across the corpus (the strongest safety check).
 5. **Per user direction (applied):** inter-function calls/tail-jumps emit **`bcall`/`bjump`** so the linker
    is the single place that picks branch form + bank switch (memory `codegen-prefer-bcall-bjump`).
 
-### KNOWN GAP — out-of-range local signed conditional branch (task #10, deferred)
-The CE-page signed conditions (`LT/LE/GT/GE/V/NV/P/M`) are **short-only** — no `jrl LT`/`carl LT`. The
-peephole shortens `jp LT → jrs LT` only `if labelInRange`; out of ±127 B it leaves `jp LT`, which sdas88
-rejects. Correct lowering = invert-and-skip (`jrs GE,$skip ; jrl target ; $skip:`), best done in the
-assembler. **`bcall`/`bjump` are unaffected** (they take only C/NC/Z/NZ, always long, and reject signed
-conditions with a clean error). Rare in practice.
+### ~~KNOWN GAP — out-of-range local signed conditional branch (task #10)~~ DONE (session 15, `47eb41c`)
+sdas88 now lowers `jp <signed cc>,e` to the fixed 6-byte invert-and-skip (`jrs <inv>,+4 ; jrl e`;
+pairs lt/ge le/gt v/nv p/m fN/nfN) and `jp c/nc/z/nz,e` to `jrl cc`. peep.c sizes them 6/3.
+**`bcall`/`bjump` were already unaffected** (C/NC/Z/NZ-only, always long, clean error on signed cc).
+
+### ⚠ THE BRANCH DISPLACEMENT CONVENTION (fixed s15 — read before touching branch emission)
+The S1C88 computes a taken relative branch as **PC ← PC(after full fetch) + disp − 1** (Epson §4.3.3
+`JRS rr → PC←PC+rr+1`; PokeMini `JMPS: PC = PC + OFFSET - 1`). So an **8-bit rr is relative to the rr
+byte's own address**, and a **16-bit qqrr is relative to (first disp byte + 1)** — both one byte EARLIER
+than the z80 next-instruction base the ASxxxx code inherits. sdas88 was off by one on EVERY relative
+branch until `47eb41c`; nothing caught it because no ROM is ever executed here and the smoke expectations
+had been derived under the same wrong convention. The fix is assembler-side only: local resolution uses
+the S1C88 base, and cross-area R_PCR relocs get a **+1 addend bias** so the stock z80-convention linker
+(`sdldz80` — it cannot be target-gated) lands on the right base. `scripts/branch-smoke.sh` byte-locks
+every form (jrs/cars/jrl/carl/djr/jp-lowering, forward + backward); run it whenever branch emission or
+the linker patch changes.
 
 ## The gen.c worklist (the central register-model grind)
 
@@ -222,10 +236,29 @@ assembles with 0 sdas88 errors.**
   8×8 MLT, `__mulint`/`__mullong` support calls). (genDiv/genMod stay support-call-only, as on z80;
   native `DIV` (`L←HL/A, H←rem`, CE D9) is a future optimization, not a gap.)
 
-Remaining: **#10** out-of-range signed `jp GE` (12_arrays, assembler-level, deferred), **#7** the
-register-model dead-code/symbol sweep (cleanup, not functional), **#8** IX/IY args, **#9** far pointers.
+- **`47eb41c` task #10 closed + a CRITICAL toolchain-wide off-by-one found and fixed.** Implementing the
+  #10 lowering surfaced it: **every relative branch sdas88/sdldz80 emitted was one byte short.** The
+  S1C88 branch base is `PC ← PC(after full fetch) + disp − 1` (Epson §4.3.3; confirmed independently
+  against PokeMini's `JMPS`/`CALLS` macros: `PC.W.L = PC.W.L + OFFSET - 1`) — an 8-bit rr is relative to
+  the rr byte's own address, a 16-bit qqrr to (first disp byte + 1) — one byte earlier than the inherited
+  z80 next-instruction base. The App-A byte verification covered opcodes (not disp arithmetic), the smoke
+  expectations were hand-derived under the same wrong convention, and no ROM is ever executed in-repo, so
+  nothing caught it. Fix (assembler-side only, `sdas/as88/s1c88mch.c`): local-resolution formulas for
+  jrs/cars/jrl/carl/djr use the S1C88 base; every cross-area `R_PCR` emission **biases the addend by +1**
+  so the stock z80-convention linker math lands on the S1C88 base (the linker runs as `sdldz80`, so it
+  can't be target-gated — and now needs no change at all, incl. the bcall/bjump slot, whose
+  `R_S1C88_BANK` reloc is emitted before the bias so the bank byte stays true). link-smoke expectation
+  corrected 0x01FA→0x01FB; **new `scripts/branch-smoke.sh`** byte-locks every form fwd+back.
+  And **#10 itself**: sdas88 lowers `jp <signed cc>,e` → fixed 6-byte `jrs <inv>,+4 ; jrl e`
+  (pairs lt/ge le/gt v/nv p/m fN/nfN; all 10 forms byte-verified), `jp c/nc/z/nz,e` → `jrl cc`;
+  peep.c sizes jp hl/(kk)/basic-cc/signed-cc = 1/2/3/6. 12_arrays 3→0 errors → **corpus 16/16 GREEN**.
+
+Remaining: **#7** the register-model dead-code/symbol sweep (cleanup, not functional), **#8** IX/IY
+args, **#9** far pointers.
 **Keep extending the corpus** when touching codegen territory it doesn't cover — two sessions in a row
-proved "complete" claims are only as strong as the corpus.
+proved "complete" claims are only as strong as the corpus. (And note the off-by-one lesson: **the corpus
+validates legality, not encodings** — `branch-smoke.sh` exists because displacement arithmetic is
+invisible to both the corpus and the App-A opcode verification.)
 
 ## Session 13 (2026-06-02) — register-model dead-code sweep (task #7) STARTED
 
