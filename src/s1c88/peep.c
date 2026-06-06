@@ -759,14 +759,8 @@ callSurelyWrites (const lineNode *pl, const char *what)
 
   if (!strcmp (what, "a"))
     return !preserved_regs[A_IDX];
-  if (!strcmp (what, "c"))
-    return !preserved_regs[C_IDX];
   if (!strcmp (what, "b"))
     return !preserved_regs[B_IDX];
-  if (!strcmp (what, "e"))
-    return !preserved_regs[E_IDX];
-  if (!strcmp (what, "d"))
-    return !preserved_regs[D_IDX];
   if (!strcmp (what, "l"))
     return !preserved_regs[L_IDX];
   if (!strcmp (what, "h"))

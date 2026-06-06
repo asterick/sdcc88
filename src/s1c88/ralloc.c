@@ -90,15 +90,13 @@ static struct
 
 reg_info s1c88_regs[] = {
   /* Array position MUST equal the *_IDX ordinal: regsS1C88[idx] and the Boost
-     allocator both index by it.  Order matches ralloc.h — A,B,L,H, then the
-     soon-to-be-removed z80 scratch regs C,D,E,IYL,IYH, then the carry. */
+     allocator both index by it.  Order matches ralloc.h — the four allocatable
+     byte GPRs A,B,L,H, then IYL/IYH (never allocated; ASMOP_IY's byte-wise
+     representation), then the carry. */
   {REG_GPR, A_IDX, "a", 1},
   {REG_GPR, B_IDX, "b", 1},
   {REG_GPR, L_IDX, "l", 1},
   {REG_GPR, H_IDX, "h", 1},
-  {REG_GPR, C_IDX, "c", 1},
-  {REG_GPR, D_IDX, "d", 1},
-  {REG_GPR, E_IDX, "e", 1},
   {REG_GPR, IYL_IDX, "iyl", 1},
   {REG_GPR, IYH_IDX, "iyh", 1},
   {REG_CND, CND_IDX, "c", 1}

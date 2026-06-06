@@ -33,17 +33,14 @@ extern "C"
 }
 
 /* Must match the ralloc.h *_IDX ordinals: A,B,L,H are the allocatable S1C88
-   byte GPRs (indices 0-3); C,D,E,IYL,IYH (4-8) are z80 scratch, never assigned
-   by the allocator (they are >= port->num_regs == 4). */
+   byte GPRs (indices 0-3); IYL,IYH (4-5) are never assigned by the allocator
+   (they are >= port->num_regs == 4) but are ASMOP_IY's byte representation. */
 #define REG_A 0
 #define REG_B 1
 #define REG_L 2
 #define REG_H 3
-#define REG_C 4
-#define REG_D 5
-#define REG_E 6
-#define REG_IYL 7
-#define REG_IYH 8
+#define REG_IYL 4
+#define REG_IYH 5
 
 template <class G_t, class I_t>
 float default_operand_cost(const operand *o, const assignment &a, unsigned short int i, const G_t &G, const I_t &I)
@@ -80,10 +77,10 @@ float default_operand_cost(const operand *o, const assignment &a, unsigned short
               // Penalty for not placing 2- and 4-byte variables in register pairs
               // Todo: Extend this once the register allocator can use registers other than bc, de:
               if ((size == 2 || size == 4) &&
-                  (byteregs[1] != byteregs[0] + 1 || (byteregs[0] != REG_C && byteregs[0] != REG_E && byteregs[0] != REG_L)))
+                  (byteregs[1] != byteregs[0] + 1 || byteregs[0] != REG_L)) // Todo: also treat BA (low byte A) as a pair here?
                 c += 2.0f;
               if (size == 4 &&
-                  (byteregs[3] != byteregs[2] + 1 || (byteregs[2] != REG_C && byteregs[2] != REG_E && byteregs[0] != REG_L)))
+                  (byteregs[3] != byteregs[2] + 1 || byteregs[0] != REG_L))
                 c += 2.0f;
 
               // Code generator cannot handle variables only partially in A.
@@ -305,10 +302,6 @@ return_cost(const assignment &a, unsigned short int i, const G_t &G, const I_t &
         c -= 1.0f;
       if(byteregs[1] == REG_H)
         c -= 1.0f;
-      if(byteregs[2] == REG_E)
-        c -= 1.0f;
-      if(byteregs[3] == REG_D)
-        c -= 1.0f;
     }
     
   return(c);
@@ -364,10 +357,6 @@ call_cost(const assignment &a, unsigned short int i, const G_t &G, const I_t &I)
       if(byteregs[0] == REG_L)
         c -= 1.0f;
       if(byteregs[1] == REG_H)
-        c -= 1.0f;
-      if(byteregs[2] == REG_E)
-        c -= 1.0f;
-      if(byteregs[3] == REG_D)
         c -= 1.0f;
     }
     
@@ -514,7 +503,7 @@ static bool operand_is_pair(const operand *o, const assignment &a, unsigned shor
   if(oi3 != oi_end)
     return(false);
 
-  if(a.global[oi->second] != REG_C && a.global[oi->second] != REG_E && a.global[oi->second] != REG_L && a.global[oi->second] != REG_IYL)
+  if(a.global[oi->second] != REG_L)
     return(false);
   if(a.global[oi->second] + 1 != a.global[oi2->second])
     return(false);
@@ -571,7 +560,7 @@ static bool Ainst_ok(const assignment &a, unsigned short int i, const G_t &G, co
   // Can use non-destructive cp on == and < (> might swap operands).
   if((ic->op == EQ_OP || (ic->op == '<' || ic->op == '>') && SPEC_USIGN(getSpec(operandType(left))) && SPEC_USIGN(getSpec(operandType(right)))) &&
     getSize(operandType(IC_LEFT(ic))) == 1 && ifxForOp (IC_RESULT(ic), ic) && operand_in_reg(left, REG_A, ia, i, G) &&
-    (IS_OP_LITERAL (right) || operand_in_reg(right, REG_C, ia, i, G) || operand_in_reg(right, REG_B, ia, i, G) || operand_in_reg(right, REG_E, ia, i, G) || operand_in_reg(right, REG_D, ia, i, G) || operand_in_reg(right, REG_H, ia, i, G) || operand_in_reg(right, REG_L, ia, i, G)))
+    (IS_OP_LITERAL (right) || operand_in_reg(right, REG_B, ia, i, G) || operand_in_reg(right, REG_H, ia, i, G) || operand_in_reg(right, REG_L, ia, i, G)))
     return(true);
 
   const cfg_dying_t &dying = G[i].dying;
@@ -604,7 +593,7 @@ static bool Ainst_ok(const assignment &a, unsigned short int i, const G_t &G, co
 
   // Can test register via inc / dec.
   if(ic->op == IFX && getSize(operandType(left)) == 1 &&
-    (operand_byte_in_reg(left, 0, REG_B, a, i, G) || operand_byte_in_reg(left, 0, REG_C, a, i, G) || operand_byte_in_reg(left, 0, REG_D, a, i, G) || operand_byte_in_reg(left, 0, REG_E, a, i, G) || operand_byte_in_reg(left, 0, REG_H, a, i, G) || operand_byte_in_reg(left, 0, REG_L, a, i, G)))
+    (operand_byte_in_reg(left, 0, REG_B, a, i, G) || operand_byte_in_reg(left, 0, REG_H, a, i, G) || operand_byte_in_reg(left, 0, REG_L, a, i, G)))
     return(true);
 
   // Last byte of output may be in A.
@@ -807,13 +796,7 @@ static bool HLinst_ok(const assignment &a, unsigned short int i, const G_t &G, c
     return(true); // Uses inc hl.
 
   if(ic->op == '+' && getSize(operandType(result)) == 2 && !IS_TRUE_SYMOP (result) &&
-    (result_only_HL || operand_in_reg(result, REG_IYL, ia, i, G) && operand_in_reg(result, REG_IYH, ia, i, G)) &&
-    (ia.registers[REG_C][1] < 0 && ia.registers[REG_B][1] < 0 || ia.registers[REG_E][1] < 0 && ia.registers[REG_D][1] < 0)) // Can use ld rr, (nn) instead of (hl).
-    return(true);
-
-  if(ic->op == '+' && getSize(operandType(result)) == 2 && IS_TRUE_SYMOP (left) &&
-    (IS_OP_LITERAL (right) && ulFromVal (OP_VALUE (IC_RIGHT(ic))) <= 3 || IS_OP_LITERAL (left) && ulFromVal (OP_VALUE (IC_LEFT(ic))) <= 3) &&
-    (operand_in_reg(result, REG_C, ia, i, G) && I[ia.registers[REG_C][1]].byte == 0 && operand_in_reg(result, REG_B, ia, i, G) || operand_in_reg(result, REG_E, ia, i, G) && I[ia.registers[REG_E][1]].byte == 0 && operand_in_reg(result, REG_D, ia, i, G))) // Can use ld rr, (nn) followed by inc rr
+    (result_only_HL || operand_in_reg(result, REG_IYL, ia, i, G) && operand_in_reg(result, REG_IYH, ia, i, G))) // Can use ld rr, (nn) instead of (hl). (The z80 BC/DE-free clause was always true here.)
     return(true);
 
   if(ic->op == '+' && getSize(operandType(result)) <= 2 && result_only_HL && !isOperandInDirSpace(ic->result))
@@ -870,9 +853,7 @@ static bool HLinst_ok(const assignment &a, unsigned short int i, const G_t &G, c
   if(POINTER_GET(ic) && input_in_L && input_in_H && (getSize(operandType(IC_RESULT(ic))) == 1 || !result_in_HL))
     return(true);
   if(ic->op == ADDRESS_OF &&
-    (operand_in_reg(result, REG_IYL, ia, i, G) && ia.registers[REG_IYL][1] > 0 && I[ia.registers[REG_IYL][1]].byte == 0 && operand_in_reg(result, REG_IYH, ia, i, G) ||
-    !OP_SYMBOL_CONST (left)->onStack && operand_in_reg(result, REG_C, ia, i, G) && ia.registers[REG_C][1] > 0 && I[ia.registers[REG_C][1]].byte == 0 && operand_in_reg(result, REG_B, ia, i, G) ||
-    !OP_SYMBOL_CONST (left)->onStack && operand_in_reg(result, REG_E, ia, i, G) && ia.registers[REG_E][1] > 0 && I[ia.registers[REG_E][1]].byte == 0 && operand_in_reg(result, REG_D, ia, i, G)))
+    (operand_in_reg(result, REG_IYL, ia, i, G) && ia.registers[REG_IYL][1] > 0 && I[ia.registers[REG_IYL][1]].byte == 0 && operand_in_reg(result, REG_IYH, ia, i, G)))
     return(true);
 
   if(ic->op == LEFT_OP && isOperandLiteral(IC_RIGHT(ic)))
@@ -1065,49 +1046,7 @@ static bool IYinst_ok(const assignment &a, unsigned short int i, const G_t &G, c
 template <class G_t, class I_t>
 bool DEinst_ok(const assignment &a, unsigned short int i, const G_t &G, const I_t &I)
 {
-  return(true);
-
-  const i_assignment_t &ia = a.i_assignment;
-
-  bool unused_E = (ia.registers[REG_E][1] < 0);
-  bool unused_D = (ia.registers[REG_D][1] < 0);
-
-  if(unused_E && unused_D)
-    return(true); // Register DE not in use.
-
-  const iCode *ic = G[i].ic;
-  const operand *left = IC_LEFT(ic);
-  const operand *right = IC_RIGHT(ic);
-  const operand *result = IC_RESULT(ic);
-
-  if(ic->op == PCALL)
-    return(false);
-
-  if(ic->op == GET_VALUE_AT_ADDRESS && (getSize(operandType(result)) >= 2 || !operand_is_pair(left, a, i, G)))
-    return(false);
-
-  if (ic->op == '=' && POINTER_SET(ic) && !operand_is_pair(result, a, i, G))
-    return(false);
-
-  if((ic->op == '=' || ic->op == CAST) && getSize(operandType(result)) > 2 &&
-     (operand_on_stack(right, a, i, G) || operand_in_reg(right, REG_L, ia, i, G) || operand_in_reg(right, REG_H, ia, i, G)) &&
-     (operand_on_stack(result, a, i, G) || operand_in_reg(result, REG_L, ia, i, G) || operand_in_reg(result, REG_H, ia, i, G)))
-    return(false);
-
-  if((ic->op == '+' || ic->op == '-' || ic->op == UNARYMINUS) && getSize(operandType(result)) >= 4)
-    return(false);
-
-  if((ic->op == '-' || ic->op == UNARYMINUS) && getSize(operandType(result)) >= 2 && // Stack access requires arithmetic that trashes carry.
-    (operand_on_stack(result, a, i, G) || operand_on_stack(left, a, i, G) || operand_on_stack(right, a, i, G)))
-    return(false);
-
-  if(ic->op == '*')
-    return(false);
-
-  if((ic->op == '>' || ic->op == '<') && !SPEC_USIGN(getSpec(operandType(left))) && !SPEC_USIGN(getSpec(operandType(right))))
-    return(false);
-
-  return(true);
+  return(true); // The z80 DE pair does not exist on the S1C88; nothing to constrain.
 }
 
 template <class G_t, class I_t>
@@ -1384,11 +1323,11 @@ static float rough_cost_estimate(const assignment &a, unsigned short int i, cons
           c += 2.0f;
     }
 
-  // An artificial ordering of assignments.
-  if(ia.registers[REG_E][1] < 0)
-    c += 0.001f;
-  if(ia.registers[REG_D][1] < 0)
-    c += 0.0001f;
+  // An artificial ordering of assignments (the z80 version keyed this on DE
+  // being unused, which was always true here; keep the constant terms so the
+  // cost values stay bit-identical).
+  c += 0.001f;
+  c += 0.0001f;
 
   if(a.marked)
     c -= 0.5f;
@@ -1399,26 +1338,20 @@ static float rough_cost_estimate(const assignment &a, unsigned short int i, cons
       const symbol *const sym = (symbol *)(hTabItemWithKey(liveRanges, I[*v].v));
       if(a.global[*v] < 0 && IS_REGISTER(sym->type)) // When in doubt, try to honour register keyword.
         c += 32.0f;
-      if((I[*v].byte % 2) && (a.global[*v] == REG_L || a.global[*v] == REG_E || a.global[*v] == REG_C || a.global[*v] == REG_IYL)) // Try not to reverse bytes.
+      if((I[*v].byte % 2) && a.global[*v] == REG_L) // Try not to reverse bytes.
         c += 8.0f;
-      if(!(I[*v].byte % 2) && I[*v].size > 1 && (a.global[*v] == REG_H || a.global[*v] == REG_D || a.global[*v] == REG_B || a.global[*v] == REG_IYH)) // Try not to reverse bytes.
+      if(!(I[*v].byte % 2) && I[*v].size > 1 && (a.global[*v] == REG_H || a.global[*v] == REG_B)) // Try not to reverse bytes.
         c += 8.0f;
       if(I[*v].byte == 0 && I[*v].size > 1 || I[*v].byte == 2 && I[*v].size > 3)
         {
           if (a.global[*v] == REG_L && a.global[*v + 1] >= 0 && a.global[*v + 1] != REG_H)
-            c += 16.0f;
-          if (a.global[*v] == REG_E && a.global[*v + 1] >= 0 && a.global[*v + 1] != REG_D)
-            c += 16.0f;
-          if (a.global[*v] == REG_C && a.global[*v + 1] >= 0 && a.global[*v + 1] != REG_B)
             c += 16.0f;
         }
       else if(I[*v].byte == 1 || I[*v].byte == 3)
         {
           if (a.global[*v] == REG_H && a.global[*v - 1] >= 0 && a.global[*v - 1] != REG_L)
             c += 16.0f;
-          if (a.global[*v] == REG_D && a.global[*v - 1] >= 0 && a.global[*v - 1] != REG_E)
-            c += 16.0f;
-          if (a.global[*v] == REG_B && a.global[*v - 1] >= 0 && a.global[*v - 1] != REG_C)
+          if (a.global[*v] == REG_B && a.global[*v - 1] >= 0) // (was != REG_C, which never matched; Todo: != REG_A would reward BA pairing)
             c += 16.0f;
         }
     }

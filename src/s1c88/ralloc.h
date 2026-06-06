@@ -35,16 +35,13 @@ enum
 {
   /* S1C88 byte GPRs first — the ralloc2.cc tree-decomposition allocator only
      assigns these four (num_regs == 4).  Pairs are adjacent, low byte first:
-     BA = A:B, HL = L:H.  The z80 scratch regs C,D,E,IYL,IYH stay *defined*
-     (gen.c still emits them as scratch) but are never allocated; they get
-     removed as gen.c stops referencing them. */
+     BA = A:B, HL = L:H.  IYL/IYH are never allocated (IY is not byte-
+     addressable) but are load-bearing as ASMOP_IY's byte-wise
+     representation; the z80 phantom C/D/E are gone. */
   A_IDX = 0,
   B_IDX,
   L_IDX,
   H_IDX,
-  C_IDX,
-  D_IDX,
-  E_IDX,
   IYL_IDX,
   IYH_IDX,
 #if DEBUG_FAKE_EXTRA_REGS
