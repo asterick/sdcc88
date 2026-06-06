@@ -3682,11 +3682,10 @@ commitPair (asmop *aop, PAIR_ID id, const iCode *ic, bool dont_destroy) // Obsol
   if (!regalloc_dry_run && (aop->type == AOP_STK || aop->type == AOP_EXSTK) && !sp_offset
       && ((id == PAIR_HL) || id == PAIR_IY) && !dont_destroy)
     {
-      emit2 ("ex (sp), %s", _pairs[id].name);
-      if (id == PAIR_IY)
-        cost2 (2, 23, 19, 15, 0, 14, 6, 6);
-      else
-        cost2 (1, 19, 16, 15, 0, 14, 5, 5);
+      /* S1C88: direct SP-relative pair store (the z80 ex (sp),%s side effect
+         of loading the old stack word was unused — the pair is spilled). */
+      emit2 ("ld 0 (sp), %s", _pairs[id].name);
+      cost2 (3, 0, 0, 0, 0, 0, 0, 0);
       spillPair (id);
     }
   else if (!regalloc_dry_run && (aop->type == AOP_STK || aop->type == AOP_EXSTK) && !sp_offset)
@@ -3905,17 +3904,6 @@ genCopy (asmop *result, int roffset, asmop *source, int soffset, int sizex, bool
         {
           emit2 ("ld %d (sp), %s", sp_offset, _pairs[aluPairId (source, soffset + i)].name);
           cost (3, 6);
-          assigned[i] = true;
-          assigned[i + 1] = true;
-          regsize -= 2;
-          size -= 2;
-          i += 2;
-        }
-      else if (i + 1 < n && aopOnStack (result, roffset + i, 2) && !sp_offset && aopInReg (source, soffset + i, HL_IDX) && hl_dead && !regalloc_dry_run) // Stack positions will change, so do not assume this is possible in the cost function.
-        {
-          emit2 ("ex (sp), hl");
-          cost2 (1, 19, 16, 15, 0, 14, 5, 5);
-          spillPair (PAIR_HL);
           assigned[i] = true;
           assigned[i + 1] = true;
           regsize -= 2;
@@ -5053,20 +5041,23 @@ genIpush (const iCode *ic)
         }
       else if (isRegDead (A_IDX, ic))
         {
-          emit2 ("dec sp");
-          cost2 (1, 6, 4, 2, 8, 4, 1, 1);
           cheapMove (ASMOP_A, 0, IC_LEFT (ic)->aop, 0, true);
-          emit2 ("push af");
-          cost2 (1, 11, 11, 10, 16, 8, 3, 4);
-          emit2 ("inc sp");
-          cost2 (1, 6, 4, 2, 8, 4, 1, 1);
+          emit2 ("push a");      /* native 1-byte push */
+          cost2 (2, 11, 11, 10, 16, 8, 3, 4);
         }
       else {
-          emit2 ("push hl");
+          /* all live: stage in L inside a reserved slot (z80: ex (sp), hl) */
+          emit2 ("push hl");                /* the slot */
           cost2 (1, 11, 11, 10, 16, 8, 3, 4);
+          emit2 ("push hl");                /* save the live HL */
+          cost2 (1, 11, 11, 10, 16, 8, 3, 4);
+          _G.stack.pushed += 4;
           cheapMove (ASMOP_L, 0, IC_LEFT (ic)->aop, 0, false);
-          emit2 ("ex (sp), hl");
-          cost2 (1, 19, 16, 15, 0, 14, 5, 5);
+          emit2 ("ld %d (sp), hl", 2);
+          cost2 (3, 0, 0, 0, 0, 0, 0, 0);
+          emit2 ("pop hl");
+          cost2 (1, 10, 9, 7, 12, 10, 3, 3);
+          _G.stack.pushed -= 4;
           spillPair (PAIR_HL);
         }
 
@@ -10805,14 +10796,13 @@ genSwap (iCode * ic)
           genMove (&swapped_result_aop, left->aop, isRegDead (A_IDX, ic), isPairDead (PAIR_HL, ic), true, true);
           break;
         }
-      if (operandsEqu (result, left) && left->aop->type == AOP_STK && spOffset (left->aop->aopu.aop_stk) == 0 && isPairDead (PAIR_HL, ic))
-        { /* result & left are top of stack and there are free register pairs */
-          {
-              _pop (PAIR_HL);
-              emit2 ("ex (sp), hl");
-              cost2 (1, 19, 16, 15, 0, 14, 5, 5);
-              _push (PAIR_HL);
-            }
+      if (operandsEqu (result, left) && left->aop->type == AOP_STK && spOffset (left->aop->aopu.aop_stk) == 0 && isPairDead (PAIR_HL, ic) && isPairDead (PAIR_BA, ic))
+        { /* result & left are top of stack and both scratch pairs are free
+             (the z80 used pop hl; ex (sp), hl; push hl) */
+          _pop (PAIR_HL);
+          _pop (PAIR_BA);
+          _push (PAIR_HL);
+          _push (PAIR_BA);
           break;
         }
 
@@ -13158,71 +13148,7 @@ genAssign (const iCode *ic)
     }
   else if (size == 2 && getPairId (right->aop) != PAIR_INVALID)
     genMove (result->aop, right->aop, isRegDead (A_IDX, ic), isPairDead (PAIR_HL, ic), true, isPairDead (PAIR_IY, ic));
-  else if (getPairId (right->aop) == PAIR_IY && result->aop->type != AOP_REG)
-    {
-      while (size--)
-        {
-          if (size == 0)
-            {
-              {
-                  emit2 ("push iy");
-                  emit2 ("dec sp");
-                  emit2 ("pop af");
-                  emit2 ("inc sp");
-                  regalloc_dry_run_cost += 5;
-                }
-              if (result->aop->type == AOP_IY) /* Take care not to overwrite iy */
-                {
-                  emit2 ("ld (%s+%d), a", result->aop->aopu.aop_dir, size);
-                  cost2 (3, 13, 13, 10, 16, 10, 4, 4);
-                }
-              else
-                cheapMove (result->aop, size, ASMOP_A, 0, true);
-            }
-          else if (size == 1)
-            {
-              if (result->aop->type == AOP_IY) /* Take care not to overwrite iy */
-                {
-                  emit2 ("ld !mems, iy", result->aop->aopu.aop_dir);
-                  cost2 (4, 20, 19, 15, 0, 12, 6, 6);
-                  size--;
-                }
-              else if (result->aop->type == AOP_EXSTK) /* Take care not to overwrite iy or f */
-                {
-                  bool pushed_pair = FALSE;
-                  PAIR_ID pair = getDeadPairId (ic);
-                  if (pair == PAIR_INVALID)
-                  {
-                    pair = PAIR_HL;
-                    _push(pair);
-                    pushed_pair= TRUE;
-                  }
-                  fetchPair (pair, right->aop);
-                  commitPair (result->aop, pair, ic, FALSE);
-                  if (pushed_pair)
-                    _pop (pair);
-                  size--;
-                }
-              else
-                {
-                  _push (PAIR_IY);
-                  _pop (PAIR_AF);
-                  cheapMove (result->aop, size, ASMOP_A, 0, true);
-                }
-            }
-          else
-            {
-              if (result->aop->type == AOP_IY) /* Take care not to overwrite iy */
-                {
-                  cheapMove (ASMOP_A, 0, ASMOP_ZERO, 0, true);
-                  emit2 ("ld (%s+%d), a", result->aop->aopu.aop_dir, size);
-                  cost2 (3, 13, 13, 10, 16, 10, 4, 4);
-                }
-              else
-                cheapMove (result->aop, size, ASMOP_ZERO, 0, true);
-            }
-        }
-    }
+
   else if (size == 4 && (requiresHL (right->aop) && right->aop->type != AOP_REG) && (requiresHL (result->aop) && result->aop->type != AOP_REG) && (IY_RESERVED))
     {
       /* Special case - simple memcpy */
