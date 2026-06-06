@@ -2066,6 +2066,7 @@ aopRet (sym_link *ftype)
     case 2:
       return ASMOP_BA;  // S1C88: int/short returned in BA (was z80 DE)
     case 3:
+      return (ASMOP_HLA);   // S1C88: __far pointer returned offset-in-HL, page-in-A (Epson HLP)
     case 4:
       return (ASMOP_HLBA);  // S1C88: long returned in HL:BA (was z80 HL:DE)
     default:
@@ -13553,6 +13554,32 @@ genAddrOf (const iCode * ic)
       spillPair (pair);
       setupPairFromSP (pair, sp_offset);
     }
+  else if (IC_RESULT (ic)->aop->size == 3)
+    {
+      /* the address of a __far object: a full 24-bit value — bytes 0-1 the
+         16-bit offset, byte 2 the page (#((sym) >> 16)).  Route through a
+         3-byte IMMD asmop so genMove places all three bytes into any result
+         shape (the 2-byte commitPair path below would drop the page). */
+      struct dbuf_s dbuf;
+      struct asmop taop;
+
+      dbuf_init (&dbuf, 128);
+      if ((long)(operandLitValue (right)))
+        dbuf_printf (&dbuf, "%s + %ld", sym->rname, (long)(operandLitValue (right)));
+      else
+        dbuf_printf (&dbuf, "%s", sym->rname);
+      taop.type = AOP_IMMD;
+      taop.size = 3;
+      taop.aopu.aop_immd = dbuf_c_str (&dbuf);
+      memset (taop.regs, -1, sizeof(taop.regs));
+      taop.valinfo.anything = true;
+
+      genMove (IC_RESULT (ic)->aop, &taop, isRegDead (A_IDX, ic), isPairDead (PAIR_HL, ic), true, isPairDead (PAIR_IY, ic));
+
+      dbuf_destroy (&dbuf);
+      freeAsmop (IC_RESULT (ic), NULL);
+      return;
+    }
   else
     {
       pair = getPairId (IC_RESULT (ic)->aop);
@@ -13569,6 +13596,10 @@ genAddrOf (const iCode * ic)
     }
 
   commitPair (IC_RESULT (ic)->aop, pair, ic, FALSE);
+
+  /* the address of a stack object is near: page 0 in byte 2 */
+  if (IC_RESULT (ic)->aop->size == 3)
+    genMove_o (IC_RESULT (ic)->aop, 2, ASMOP_ZERO, 0, 1, isRegDead (A_IDX, ic) && IC_RESULT (ic)->aop->regs[A_IDX] < 0, false, true, false, true);
 
   freeAsmop (IC_RESULT (ic), NULL);
 }

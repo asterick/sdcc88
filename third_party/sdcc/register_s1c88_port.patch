@@ -164,3 +164,48 @@ index da3258a..302b0cd 100644
        else
          v.max = (1ll << (GPTRSIZE * 8)) - 1;
        v.knownbitsmask = ~((unsigned long long)v.max);
+--- a/src/SDCCopt.c
++++ b/src/SDCCopt.c
+@@ -2469,7 +2469,11 @@
+               else
+                 {
+                   nextresulttype = operandType (IC_RESULT (uic));
+-                  if (!IS_INTEGRAL (nextresulttype) && !(IS_PTR (nextresulttype) && NEARPTRSIZE == 2))
++                  /* For a pointer-result use the addend may be narrowed to 16
++                     bits only if the pointer itself is 16-bit — on a port with
++                     wider pointers (s1c88 3-byte __far) the narrowing would
++                     truncate away the sign-extension into the page byte. */
++                  if (!IS_INTEGRAL (nextresulttype) && !(IS_PTR (nextresulttype) && NEARPTRSIZE == 2 && getSize (nextresulttype) == 2))
+                      continue;
+ 
+                   if (IS_PTR (nextresulttype))
+--- a/src/SDCCicode.c
++++ b/src/SDCCicode.c
+@@ -2416,6 +2416,27 @@
+       right = geniCodeMultiply (right,
+                                 operandFromLit (getSize (ltype->next)),
+                                 (getArraySizePtr (left) >= INTSIZE) ? RESULT_TYPE_INT : RESULT_TYPE_CHAR);
++      /* s1c88: a 3-byte __far pointer minus a narrower signed index needs the
++         index widened (mirroring geniCodeAdd), or the sign byte is lost and
++         the page byte only sees the borrow */
++      if (TARGET_IS_S1C88 && getArraySizePtr (left) > getSize (operandType (right))
++          && !IS_UNSIGNED (getSpec (operandType (right))))
++        {
++          sym_link *type = 0;
++          switch (getArraySizePtr (left))
++            {
++            case 2:
++              type = newIntLink ();
++              break;
++            case 3:
++            case 4:
++              type = newLongLink ();
++              break;
++            default:
++              wassert (0);
++            }
++          right = geniCodeCast (type, right, TRUE);
++        }
+       resType = copyLinkChain (IS_ARRAY (ltype) ? ltype->next : ltype);
+     }
+   else

@@ -7,6 +7,7 @@
 /* coexisting (still 2 bytes, no tag bytes).  Pre-cpp'd, no includes. */
 
 char __far *p;
+char __far *q;
 int __far *ip;
 const char __far ftbl[8] = {1, 2, 3, 4, 5, 6, 7, 8};
 char __far fbuf[4];
@@ -55,3 +56,31 @@ void chain(char __far *q) { p = q; *p = 1; }
 
 /* near pointer still works untouched alongside */
 char nrd(void) { return *np; }
+
+/* casts: near->far widens with page 0; far->near truncates */
+void cast_n2f(void) { p = (char __far *)np; }
+void cast_f2n(void) { np = (char *)p; }
+
+/* far-pointer returns: offset in HL, page in A (Epson HLP) */
+char __far *ret_p(void) { return p; }
+char __far *ret_tbl(void) { return (char __far *)ftbl; }
+char __far *ret_arr(void) { return (char __far *)buf; }
+char __far *ret_off(void) { return p + 2; }
+char use_ret(void) { return *ret_tbl(); }
+
+/* 24-bit pointer arithmetic: signed offsets must reach the page byte */
+void inc_p(void) { p++; }
+void dec_p(void) { p--; }
+void add_si(int n) { p += n; }
+void sub_si(int n) { p -= n; }
+void add_ui(unsigned int n) { p += n; }
+
+/* 3-byte compares */
+unsigned char eq(void) { return p == q; }
+unsigned char ne0(void) { return p != 0; }
+unsigned char lt(void) { return p < q; }
+int pdiff(void) { return (int)(q - p); }
+
+/* far pointer <-> long */
+unsigned long f2l(void) { return (unsigned long)p; }
+void l2f(unsigned long v) { p = (char __far *)v; }
