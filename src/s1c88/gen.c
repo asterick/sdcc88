@@ -2871,7 +2871,7 @@ fetchPairLong (PAIR_ID pairId, asmop *aop, const iCode *ic, int offset)
               _moveA3 (aop, offset);
               if (!regalloc_dry_run)
                 emit2 ("ld %s, %s", _pairs[pairId].h, aopGet (aop, offset + 1, FALSE));
-              ld_cost (pairId == PAIR_HL ? ASMOP_H : pairId == PAIR_DE ? ASMOP_D : ASMOP_B, 0, aop, offset + 1, true);
+              ld_cost (pairId == PAIR_HL ? ASMOP_H : ASMOP_B, 0, aop, offset + 1, true);
               emit2 ("ld %s, a", _pairs[pairId].l);
               ld_cost (ASMOP_L, 0, ASMOP_A, 0, true);
             }
@@ -2885,7 +2885,7 @@ fetchPairLong (PAIR_ID pairId, asmop *aop, const iCode *ic, int offset)
                     UNIMPLEMENTED;
                   if (!regalloc_dry_run)
                     emit2 ("ld %s, %s", _pairs[pairId].l, aopGet (aop, offset, false));
-                  ld_cost (pairId == PAIR_HL ? ASMOP_L : pairId == PAIR_DE ? ASMOP_E : ASMOP_C, 0, aop, offset, true);
+                  ld_cost (pairId == PAIR_HL ? ASMOP_L : ASMOP_A, 0, aop, offset, true);
                 }
               if (pairId == PAIR_HL && (aopInReg (aop, offset + 1, IYL_IDX) || aopInReg (aop, offset + 1, IYH_IDX)))
                 UNIMPLEMENTED;
@@ -2895,7 +2895,7 @@ fetchPairLong (PAIR_ID pairId, asmop *aop, const iCode *ic, int offset)
                     UNIMPLEMENTED;
                   if (!regalloc_dry_run)
                     emit2 ("ld %s, %s", _pairs[pairId].h, aopGet (aop, offset + 1, false));
-                  ld_cost (pairId == PAIR_HL ? ASMOP_H : pairId == PAIR_DE ? ASMOP_D : ASMOP_B, 0, aop, offset + 1, true);
+                  ld_cost (pairId == PAIR_HL ? ASMOP_H : ASMOP_B, 0, aop, offset + 1, true);
                 }
             }
         }
@@ -3772,20 +3772,31 @@ commitPair (asmop *aop, PAIR_ID id, const iCode *ic, bool dont_destroy) // Obsol
         cost2 (1, 11, 11, 10, 16, 8, 3, 4);
     }
 
-  /* PENDING: Verify this. */
   else if (id == PAIR_HL && requiresHL (aop) && (IY_RESERVED && aop->type != AOP_HL && aop->type != AOP_IY))
     {
-      
+      /* S1C88: stage through A and B (the z80 used D); save a live B. */
+      bool save_b = ic && !isRegDead (B_IDX, ic);
+      if (save_b)
+        {
+          emit2 ("push b");
+          cost2 (1, 11, 11, 10, 16, 8, 3, 4);
+          _G.stack.pushed += 1;
+        }
       emit3 (A_LD, ASMOP_A, ASMOP_L);
-      emit3 (A_LD, ASMOP_D, ASMOP_H);
+      emit3 (A_LD, ASMOP_B, ASMOP_H);
       if (!regalloc_dry_run)
         {
           aopPut (aop, "a", 0);
-          aopPut (aop, "d", 1);
+          aopPut (aop, "b", 1);
         }
       ld_cost (aop, 0, ASMOP_A, 0, true);
-      ld_cost (aop, 0, ASMOP_D, 0, true);
-      
+      ld_cost (aop, 0, ASMOP_B, 0, true);
+      if (save_b)
+        {
+          emit2 ("pop b");
+          cost2 (1, 10, 9, 7, 12, 10, 3, 3);
+          _G.stack.pushed -= 1;
+        }
     }
   else
     {
@@ -3831,11 +3842,6 @@ commitPair (asmop *aop, PAIR_ID id, const iCode *ic, bool dont_destroy) // Obsol
                 {
                   cheapMove (aop, 1, ASMOP_H, 0, true);
                   cheapMove (aop, 0, ASMOP_L, 0, true);
-                }
-              else if (aop->type == AOP_REG && aop->aopu.aop_reg[0]->rIdx == E_IDX && aop->aopu.aop_reg[1]->rIdx == D_IDX && !dont_destroy)
-                {
-                  emit3w (A_EX, ASMOP_DE, ASMOP_HL);
-                  swapPairs (PAIR_DE, PAIR_HL);
                 }
               else
                 {
@@ -3999,22 +4005,6 @@ genCopy (asmop *result, int roffset, asmop *source, int soffset, int sizex, bool
           size -= 2;
           i += 2;  
         }
-      else if (i + 1 < n && aopOnStack (result, roffset + i, 2) && requiresHL (result) &&
-        aopInReg (source, soffset + i, HL_IDX) && hl_free)
-        {
-          if (!de_free)
-            _push (PAIR_DE);
-          emit3w (A_EX, ASMOP_DE, ASMOP_HL);
-          spillPair (PAIR_HL);
-          genCopy (result, roffset + i, ASMOP_DE, 0, 2, a_free, true, true);
-          if (!de_free)
-            _pop (PAIR_DE);
-          assigned[i] = true;
-          assigned[i + 1] = true;
-          regsize -= 2;
-          size -= 2;
-          i += 2;
-        }
       else if (aopOnStack (result, roffset + i, 1) && requiresHL (result) && !hl_free)
         {
           _push(PAIR_HL);
@@ -4101,50 +4091,6 @@ skip_byte_push_iy:
         ;
     }
 
-  {
-      int ex[4] = {-2, -2, -2, -2}; // Swapped bytes
-      bool no = false; // Still needed byte would be overwritten
-
-      // Find L and check that it is exchanged with E, find H and check that it is exchanged with D.
-      for (int i = 0; i < n; i++)
-        {
-          if (assigned[i] && (aopInReg (result, roffset + i, L_IDX) || aopInReg (result, roffset + i, H_IDX)))
-            no = true;
-       
-          if (!assigned[i] && aopInReg (source, soffset + i, E_IDX))
-            if (aopInReg (result, roffset + i, L_IDX))
-              ex[0] = i;
-            else
-              no = true;
-          if (!assigned[i] && aopInReg (source, soffset + i, L_IDX))
-            no = true;
-          if (!assigned[i] && aopInReg (source, soffset + i, D_IDX))
-            if (aopInReg (result, roffset + i, H_IDX))
-              ex[2] = i;
-            else
-              no = true;
-          if (!assigned[i] && aopInReg (source, soffset + i, H_IDX))
-            no = true; 
-        }
-
-      int exsum = (ex[0] >= 0) + (ex[1] >= 0) + (ex[2] >= 0) + (ex[3] >= 0);
-
-      if (!no && exsum >= 2 && hl_dead && de_dead)
-        {
-          emit3w (A_EX, ASMOP_DE, ASMOP_HL);
-          swapPairs (PAIR_DE, PAIR_HL);
-          if(ex[0] >= 0)
-            assigned[ex[0]] = TRUE;
-          if(ex[1] >= 0)
-            assigned[ex[1]] = TRUE;
-          if(ex[2] >= 0)
-            assigned[ex[2]] = TRUE;
-          if(ex[3] >= 0)
-            assigned[ex[3]] = TRUE;
-          regsize -= exsum;
-          size -= exsum;
-        }
-    }
 
   while (regsize && result->type == AOP_REG && source->type == AOP_REG)
     {
@@ -4286,16 +4232,15 @@ skip_byte:
         (aopInReg (result, roffset + i, HL_IDX) || aopInReg (result, roffset + i, H_IDX) && aopInReg (result, roffset + i + 1, L_IDX))) // Stack access might go through hl.
         {
           bool a_pushed = false;
-          if (!a_free && !e_free && !d_free)
+          if (!a_free)
             {
               _push (PAIR_AF);
               a_pushed = true;
               a_free = true;
             }
-          asmop *tmpaop = a_free ? ASMOP_A : e_free ? ASMOP_E : ASMOP_D;
-          cheapMove (tmpaop, 0, source, soffset + i, true);
+          cheapMove (ASMOP_A, 0, source, soffset + i, true);
           cheapMove (result, roffset + i + 1, source, soffset + i + 1, false);
-          cheapMove (result, roffset + i, tmpaop, 0, true);
+          cheapMove (result, roffset + i, ASMOP_A, 0, true);
           if (a_pushed)
             _pop (PAIR_AF);
           assigned[i] = true;
@@ -5391,83 +5336,42 @@ genIpush (const iCode *ic)
            spillPair (PAIR_HL);
            d = 2;
          }
-       else if (aopInReg (IC_LEFT (ic)->aop, size - 1, A_IDX))
+       else if (aopInReg (IC_LEFT (ic)->aop, size - 1, A_IDX) || aopInReg (IC_LEFT (ic)->aop, size - 1, B_IDX) ||
+         aopInReg (IC_LEFT (ic)->aop, size - 1, L_IDX) || aopInReg (IC_LEFT (ic)->aop, size - 1, H_IDX))
          {
-           emit2 ("push af");
-           cost2 (1, 11, 11, 10, 16, 8, 3, 4);
-           emit2 ("inc sp");
-           cost2 (1, 6, 4, 2, 8, 4, 1, 1);
+           /* S1C88: native 1-byte register push (the z80 needed the
+              push pair / inc sp dance). */
+           if (!regalloc_dry_run)
+             emit2 ("push %s", aopGet (IC_LEFT (ic)->aop, size - 1, FALSE));
+           cost2 (2, 11, 11, 10, 16, 8, 3, 4);
            d = 1;
          }
-       else if (aopInReg (IC_LEFT (ic)->aop, size - 1, B_IDX))
+       else if (a_free || b_free || h_free || l_free)
          {
-           emit2 ("push bc");
-           cost2 (1, 11, 11, 10, 16, 8, 3, 4);
-           emit2 ("inc sp");
-           cost2 (1, 6, 4, 2, 8, 4, 1, 1);
-           d = 1;
-         }
-       else if (aopInReg (IC_LEFT (ic)->aop, size - 1, H_IDX))
-         {
-           emit2 ("push hl");
-           cost2 (1, 11, 11, 10, 16, 8, 3, 4);
-           emit2 ("inc sp");
-           cost2 (1, 6, 4, 2, 8, 4, 1, 1);
-           d = 1;
-         }
-       else if (aopInReg (IC_LEFT (ic)->aop, size - 1, IYH_IDX))
-         {
-           emit2 ("push iy");
-           cost2 (2, 1, 13, 12, 0, 8, 4, 5);
-           emit2 ("inc sp");
-           cost2 (1, 6, 4, 2, 8, 4, 1, 1);
-           d = 1;
-         }
-       else if (a_free)
-         {
-           genMove_o (ASMOP_A, 0, IC_LEFT (ic)->aop, size - 1, 1, a_free, h_free && l_free, d_free && e_free, iyh_free && iyl_free, true);
-           emit2 ("push af");
-           cost2 (1, 11, 11, 10, 16, 8, 3, 4);
-           emit2 ("inc sp");
-           cost2 (1, 6, 4, 2, 8, 4, 1, 1);
-           d = 1;
-         }
-       else if (h_free)
-         {
-           genMove_o (ASMOP_H, 0, IC_LEFT (ic)->aop, size - 1, 1, a_free, h_free && l_free, d_free && e_free, iyh_free && iyl_free, true);
-           emit2 ("push hl");
-           cost2 (1, 11, 11, 10, 16, 8, 3, 4);
-           emit2 ("inc sp");
-           cost2 (1, 6, 4, 2, 8, 4, 1, 1);
-           d = 1;
-         }
-       else if (d_free)
-         {
-           genMove_o (ASMOP_D, 0, IC_LEFT (ic)->aop, size - 1, 1, a_free, h_free && l_free, d_free && e_free, iyh_free && iyl_free, true);
-           emit2 ("push de");
-           cost2 (1, 11, 11, 10, 16, 8, 3, 4);
-           emit2 ("inc sp");
-           cost2 (1, 6, 4, 2, 8, 4, 1, 1);
-           d = 1;
-         }
-       else if (b_free)
-         {
-           genMove_o (ASMOP_B, 0, IC_LEFT (ic)->aop, size - 1, 1, a_free, h_free && l_free, d_free && e_free, iyh_free && iyl_free, true);
-           emit2 ("push bc");
-           cost2 (1, 11, 11, 10, 16, 8, 3, 4);
-           emit2 ("inc sp");
-           cost2 (1, 6, 4, 2, 8, 4, 1, 1);
+           asmop *tmp = a_free ? ASMOP_A : b_free ? ASMOP_B : h_free ? ASMOP_H : ASMOP_L;
+           const char *tname = a_free ? "a" : b_free ? "b" : h_free ? "h" : "l";
+           genMove_o (tmp, 0, IC_LEFT (ic)->aop, size - 1, 1, a_free, h_free && l_free, true, iyh_free && iyl_free, true);
+           emit2 ("push %s", tname);
+           cost2 (2, 11, 11, 10, 16, 8, 3, 4);
            d = 1;
          }
       else {
-           emit2 ("push hl");
+           /* Every byte register is live: stage the byte in H inside a
+              reserved pair slot, then drop the slot's low garbage byte. */
+           emit2 ("push hl");                /* the (pair) argument slot */
            cost2 (1, 11, 11, 10, 16, 8, 3, 4);
-           genMove_o (ASMOP_H, 0, IC_LEFT (ic)->aop, size - 1, 1, a_free, h_free && l_free, d_free && e_free, iyh_free && iyl_free, true);
-           emit2 ("ex (sp), hl");
-           cost2 (1, 19, 16, 15, 0, 14, 5, 5);
-           spillPair (PAIR_HL);
-           emit2 ("inc sp");
+           emit2 ("push hl");                /* save the live HL */
+           cost2 (1, 11, 11, 10, 16, 8, 3, 4);
+           _G.stack.pushed += 4;
+           genMove_o (ASMOP_H, 0, IC_LEFT (ic)->aop, size - 1, 1, false, false, true, iyh_free && iyl_free, true);
+           emit2 ("ld %d (sp), hl", 2);
+           cost2 (3, 0, 0, 0, 0, 0, 0, 0);
+           emit2 ("pop hl");
+           cost2 (1, 10, 9, 7, 12, 10, 3, 3);
+           emit2 ("inc sp");                 /* drop the slot's low byte */
            cost2 (1, 6, 4, 2, 8, 4, 1, 1);
+           _G.stack.pushed -= 4;
+           spillPair (PAIR_HL);
            d = 1;
          }
 
@@ -5524,20 +5428,25 @@ genPointerPush (const iCode *ic)
   if (!isRegDead (A_IDX, ic))
     UNIMPLEMENTED;
 
-  bool swap_de = !isRegDead (HL_IDX, ic);
+  /* S1C88: HL is the only walk pointer; a live HL is stashed in a dead IY
+     (the z80 parked it in DE). */
+  bool stash_hl = !isRegDead (HL_IDX, ic);
+  if (stash_hl)
+    {
+      if (!isRegDead (IY_IDX, ic))
+        UNIMPLEMENTED;
+      emit2 ("ld iy, hl");
+      cost2 (2, 0, 0, 0, 0, 0, 0, 0);
+    }
 
-  if (swap_de)
-    emit3w (A_EX, ASMOP_DE, ASMOP_HL);
-
-  genMove (ASMOP_HL, IC_LEFT (ic)->aop, true, true, swap_de ? false : true, isRegDead (IY_IDX, ic));
+  genMove (ASMOP_HL, IC_LEFT (ic)->aop, true, true, true, stash_hl ? false : isRegDead (IY_IDX, ic));
 
   int size = getSize (operandType (ic->left)->next);
-  if (isRegDead (BC_IDX, ic) && size > 5)
+  bool b_free = isRegDead (B_IDX, ic);
+  if (size > 3)
     {
-      emit2 ("ld bc, !immed%d", size - 1);
-      cost2 (3, 10, 9, 6, 12, 6, 3, 3);
-      emit2 ("add hl, bc");
-      cost2 (1, 11, 7, 2, 8, 8, 1, 1);
+      emit2 ("add hl, !immed%d", size - 1);   /* native 16-bit immediate add */
+      cost2 (3, 0, 0, 0, 0, 0, 0, 0);
     }
   else
     for(int i = 1; i < size; i++)
@@ -5545,15 +5454,17 @@ genPointerPush (const iCode *ic)
 
   for(int i = 0; i < size;)
     {
-      if (i + 1 < size && isRegDead (BC_IDX, ic))
+      if (i + 1 < size && b_free)
         {
+          /* word: high byte -> B, low -> A, push ba (same stack layout as the
+             z80 push bc: high half at the higher address) */
           emit2 ("ld b, !*hl");
           cost2 (1, 7, 6, 6, 8, 6, 2, 2);
           emit2 ("dec hl");
           cost2 (1, 6, 4, 2, 8, 4, 1, 1);
-          emit2 ("ld c, !*hl");
+          emit2 ("ld a, !*hl");
           cost2 (1, 7, 6, 6, 8, 6, 2, 2);
-          emit2 ("push bc");
+          emit2 ("push ba");
           cost2 (1, 11, 11, 10, 16, 8, 3, 4);
           _G.stack.pushed += 2;
           i += 2;
@@ -5562,10 +5473,8 @@ genPointerPush (const iCode *ic)
         {
           emit2 ("ld a, !*hl");
           cost2 (1, 7, 6, 6, 8, 6, 2, 2);
-          emit2 ("push af");
-          cost2 (1, 11, 11, 10, 16, 8, 3, 4);
-          emit2 ("inc sp");
-          cost2 (1, 6, 4, 2, 8, 4, 1, 1);
+          emit2 ("push a");                    /* native 1-byte push */
+          cost2 (2, 11, 11, 10, 16, 8, 3, 4);
           if (!regalloc_dry_run)
             _G.stack.pushed++;
           i++;
@@ -5578,8 +5487,13 @@ genPointerPush (const iCode *ic)
         }
     }
 
-  if (swap_de)
-    emit3w (A_EX, ASMOP_DE, ASMOP_HL);
+  if (stash_hl)
+    {
+      emit2 ("ld hl, iy");
+      cost2 (2, 0, 0, 0, 0, 0, 0, 0);
+      spillPair (PAIR_IY);
+    }
+  spillPair (PAIR_HL);
 
   freeAsmop (IC_LEFT (ic), 0);
 }
@@ -5730,21 +5644,18 @@ genCall (const iCode *ic)
         }
       if (!hl_free)
         {
-          if (de_free)
+          if (pair == PAIR_HL)
             {
-              emit3 (A_LD, ASMOP_E, ASMOP_L);
-              emit3 (A_LD, ASMOP_D, ASMOP_H);
+              /* S1C88: stage the buffer address in BA while restoring HL
+                 (the z80 used DE/BC). */
+              wassert (isPairDead (PAIR_BA, ic));
+              emit2 ("ld ba, hl");
+              cost2 (2, 0, 0, 0, 0, 0, 0, 0);
               _pop (PAIR_HL);
-              pair = PAIR_DE;
+              pair = PAIR_BA;
             }
           else
-            {
-              wassert (bc_free);
-              emit3 (A_LD, ASMOP_C, ASMOP_L);
-              emit3 (A_LD, ASMOP_B, ASMOP_H);
-              _pop (PAIR_HL);
-              pair = PAIR_BC;           
-            }
+            _pop (PAIR_HL);    /* the IY path never touched HL */
         }
       emit2 ("push %s", _pairs[pair].name);
       if (pair == PAIR_IY)
