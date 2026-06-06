@@ -3,7 +3,11 @@
 **This is the single resume entry point.** If the prompt is *"let's pick up where you left off,"* do the
 steps under **NEXT ACTION**. Everything needed to continue is here or linked from here.
 
-_Last updated: 2026-06-05 (session 18: **task #7 CLOSED** — #7c finale done: the phantom asmops are
+_Last updated: 2026-06-05 (session 19: **#8 IY argument passing DONE** (int BA,HL,IY; nptr HL,BA,IY;
+IX excluded by the frame prologue) + a **pre-existing PCALL HL-argument miscompile fixed via
+RET-dispatch**; instruction sizing corrected (jrl→jrs improvements); reserve-regs-iy hardened (the
+old census flag was a no-op misspelling). Remaining: #9 far pointers. See "Session 19". Earlier:
+session 18: **task #7 CLOSED** — #7c finale done: the phantom asmops are
 deleted, zero phantom-register emissions remain, two more corpus blind spots (struct-by-value args,
 jump tables) found+fixed, native byte pushes throughout; corpus 18/18 + all option modes GREEN. See
 "Session 18". Earlier: session 17: **#7b COMPLETE + #7c nearly done** — every option mode
@@ -161,6 +165,37 @@ the broader operand-placement work so the allocator keeps 16-bit operands in BA/
 
 > A from-scratch big-bang reshape was tried and **reset** (unverifiable-red for the whole grind). The dead
 > WIP is in reflog `417bed5` — useful only as a reference for the *end-state* register defs.
+
+## Session 19 (2026-06-05) — peep sizing fixed; #8 (IY argument passing) DONE + a PCALL miscompile fixed
+
+- **`e943e38` instruction sizing:** `s1c88instructionSize` learned the real S1C88 16-bit ALU sizes
+  (reg,reg = 2; add/sub/cp #imm = 3; adc/sbc #imm = 4; `add sp,#imm` = 4) and `bcall`/`bjump` = 6 —
+  the stale z80 blocks said `add hl,x` = 1 and everything else fell to assume-999, forcing long
+  branches around every call. 4 corpus files improved (pure `jrl`→`jrs`, one `jp GE`→`jrs GE`).
+- **`fe6c202` #8 ABI Phase 2:** int args = **BA, HL, IY**; near-ptr = **HL, BA, IY** — IY is the
+  *overflow* register (divergence: Epson is IY-first for pointers, but our allocator can't hold
+  operands in IY, so that taxes every pointer call). **IX permanently excluded** (the prologue
+  `push ix; ld ix,sp` claims it before an argument could be read); IYIX longs deferred (no IX byte
+  ordinals); `--reserve-regs-iy` removes IY from the ABI. genSend/genReceive guard the IY transport
+  (iy_dead=false once loaded / while pending); genMovePairPair is now one orthogonal `ld dst, src`.
+- **A REACHABLE PRE-EXISTING MISCOMPILE found & fixed** (since s9): `jp hl` PCALL dispatch cannot
+  coexist with an HL argument — the fptr load destroyed it and the peephole then deleted the "dead"
+  arg load (`fp2 (1, 2)` silently dropped the 2!). Now **RET-dispatch** when the callee takes an HL
+  arg: `add sp,#-slots; push hl; ld hl,(fptr); ld 2(sp),hl; [ld hl,#ret; ld 4(sp),hl;] pop hl; ret`
+  — the ret pops the target, HL arrives intact; tagged `;pcall` so the peephole liveness scan
+  treats exactly these rets as calls. The jp-hl fast path remains for HL-argless callees, with a
+  parm-aware return-address pair (IY → BA → the stack-slot fallback).
+- **⚠ the earlier option census tested a MISSPELLED no-op flag** (`--reserve-iy`; the real option is
+  `--reserve-regs-iy`). The corrected census exposed two real reserve-mode gaps, both fixed:
+  genAssign's 4-byte `ld a,(de)` walk (deleted — genMove copies via absolute addressing) and the
+  callee-cleanup return-address hop (generalized to any poststackadjust via BA staging). KNOWN
+  LIMIT: reserve-regs-iy + >127-byte frame + multi-byte pointer reads = loud UNIMPLEMENTED (no
+  third pointer exists).
+- Corpus re-baselined twice (sizing: 4 files; ABI: 9 files — callers drop arg pushes, callees gain
+  IY receive-spills; hand-verified incl. callfp2/3 dispatch and 12_arrays' 3-arg callee).
+  **18/18 0 errors; rom/link/branch GREEN; 0 silent issues across 7 option combos × 29 files.**
+- **Remaining: #9 far pointers** (the last open task) + optional cosmetics (inert PAIR_BC/DE names,
+  IYIX longs, Epson YP/XP chars).
 
 ## Session 18 (2026-06-05) — #7c COMPLETE: zero phantom-register emissions; task #7 CLOSED
 

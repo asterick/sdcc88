@@ -11,9 +11,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 > byte loops; session 15: `genMult`→BA/B, `MLT`, block-scope `.globl`, #10 `jp <signed cc>`, **plus the
 > critical branch-displacement off-by-one — see HANDOFF "THE BRANCH DISPLACEMENT CONVENTION"**):
 > **17/17 corpus files assemble with 0 sdas88 errors**. Remaining work:
-> IX/IY arg passing (#8) and far pointers (#9) — **task #7 (the register-model sweep) is CLOSED**
-> (s18: phantom asmops deleted, zero phantom-register emissions, struct-arg + jump-table blind spots
-> fixed, native byte pushes; corpus 18/18). Validate each
+> far pointers (#9) — **#7 (register-model sweep) and #8 (IY argument passing) are CLOSED** (s19:
+> int/near-ptr args overflow into IY, the PCALL HL-argument miscompile fixed via RET-dispatch,
+> instruction sizing corrected; corpus 18/18). Validate each
 > change with `./scripts/corpus-check.sh` (byte-identical +
 > sdas88) — **always rebuild via the overlay (`dev.sh`/`corpus-check.sh`), never raw `make -C
 > build/.../src` (it compiles a stale copy).** (All work is on **`main`**.)
@@ -64,9 +64,10 @@ and builds the compiler.
 > macro refs port-wide** (~2,000 dead lines, every `ex (sp),hl`/`ldir` emit gone) + the reachable
 > builtin cluster (`__builtin_memset/strcpy/strncpy/strchr`) retargeted to native byte loops with
 > corpus file `17_builtins.c`. **17/17 corpus files assemble
-> with 0 sdas88 errors.** **Remaining work:** IX/IY argument
-> passing (#8) and 3-byte far pointers (#9) — task #7 is CLOSED (s18; the inert PAIR_BC/PAIR_DE and
-> C/D/E_IDX names that remain are documented optional cosmetics, not debt).
+> with 0 sdas88 errors.** **Remaining work:** 3-byte far
+> pointers (#9) — tasks #7 and #8 are CLOSED (s18/s19; IX is permanently excluded from the argument
+> ABI by the frame prologue; the inert PAIR_BC/PAIR_DE and C/D/E_IDX names are documented optional
+> cosmetics, not debt).
 > All work is on **`main`**.
 > The design, ABI, and plan live in **`docs/s1c88/abi-decision.md`**; current state + next action in
 > **`docs/s1c88/HANDOFF.md`**; the toolchain in `docs/s1c88/{sdas88-retarget,banked-branch}.md`.
