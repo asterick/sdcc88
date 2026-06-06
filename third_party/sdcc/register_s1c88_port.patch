@@ -150,3 +150,17 @@ index da3258a..302b0cd 100644
      {
        fprintf (asmFile, "%s", iComments2);
        fprintf (asmFile, "; uninitialized external ram data\n");
+--- a/src/SDCCgenconstprop.cc
++++ b/src/SDCCgenconstprop.cc
+@@ -120,6 +120,11 @@
+       v.min = 0;
+       if (IS_FUNCPTR (type))
+         v.max = (1ll << ((IFFUNC_ISBANKEDCALL (type->next) ? BFUNCPTRSIZE : FUNCPTRSIZE) * 8)) - 1;
++      else if (TARGET_IS_S1C88)
++        /* the s1c88 __far pointer (3 bytes) is WIDER than the generic pointer
++           (2 bytes, == near); clamping to GPTRSIZE would mark the page byte
++           "known zero" and constant-fold it away */
++        v.max = (1ll << (getSize (type) * 8)) - 1;
+       else
+         v.max = (1ll << (GPTRSIZE * 8)) - 1;
+       v.knownbitsmask = ~((unsigned long long)v.max);

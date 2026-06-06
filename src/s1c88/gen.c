@@ -241,7 +241,7 @@ bool s1c88_regs_preserved_in_calls_from_current_function[IYH_IDX + 1];
 
 static const char *aopGet (asmop *aop, int offset, bool bit16);
 
-static struct asmop asmop_a, asmop_b, asmop_h, asmop_l, asmop_iyh, asmop_iyl, asmop_hl, asmop_ba, asmop_iy, asmop_hlba, asmop_zero, asmop_one, asmop_mone;
+static struct asmop asmop_a, asmop_b, asmop_h, asmop_l, asmop_iyh, asmop_iyl, asmop_hl, asmop_ba, asmop_iy, asmop_hlba, asmop_hla, asmop_zero, asmop_one, asmop_mone;
 static struct asmop *const ASMOP_A = &asmop_a;
 static struct asmop *const ASMOP_B = &asmop_b;
 static struct asmop *const ASMOP_H = &asmop_h;
@@ -252,6 +252,7 @@ static struct asmop *const ASMOP_HL = &asmop_hl;
 static struct asmop *const ASMOP_BA = &asmop_ba;   /* S1C88 2nd ALU pair B:A (z80 DE's role) */
 static struct asmop *const ASMOP_IY = &asmop_iy;
 static struct asmop *const ASMOP_HLBA = &asmop_hlba;   /* S1C88 long layout HL(high):BA(low) */
+static struct asmop *const ASMOP_HLA = &asmop_hla;     /* 3-byte __far pointer: offset in HL, page in A (Epson HLP) */
 static struct asmop *const ASMOP_ZERO = &asmop_zero;
 static struct asmop *const ASMOP_ONE = &asmop_one;
 static struct asmop *const ASMOP_MONE = &asmop_mone;
@@ -292,6 +293,7 @@ s1c88_init_asmops (void)
   z80_init_reg_asmop(&asmop_hl, (const signed char[]){L_IDX, H_IDX, -1});
   z80_init_reg_asmop(&asmop_iy, (const signed char[]){IYL_IDX, IYH_IDX, -1});
   z80_init_reg_asmop(&asmop_hlba, (const signed char[]){A_IDX, B_IDX, L_IDX, H_IDX, -1});   // long = BA(low):HL(high)
+  z80_init_reg_asmop(&asmop_hla, (const signed char[]){L_IDX, H_IDX, A_IDX, -1});   // __far ptr = offset(HL):page(A)
   
   asmop_zero.type = AOP_LIT;
   asmop_zero.aopu.aop_lit = constVal ("0");
@@ -3100,8 +3102,9 @@ aopGet (asmop *aop, int offset, bool bit16)
               switch (offset)
                 {
                 case 2:
-                  // dbuf_tprintf (&dbuf, "!bankimmeds", aop->aopu.aop_immd); Bank support not fully implemented yet.
-                  dbuf_tprintf (&dbuf, "!zero");
+                  /* S1C88 __far: byte 2 of a symbolic 24-bit address is the
+                     real page, #((sym) >> 16) — never a bank tag or zero */
+                  dbuf_tprintf (&dbuf, "!bankimmeds", aop->aopu.aop_immd);
                   break;
 
                 case 1:
@@ -12040,6 +12043,391 @@ init_stackop (asmop *stackop, int size, long int stk_off)
 }
 
 /*-----------------------------------------------------------------*/
+/* genFarPointerGet - read through a 3-byte __far (EP:offset)      */
+/* pointer (abi-decision.md task #9).  Idiom: pointer staged into  */
+/* HLA (offset -> HL, page -> A; genMove is overlap-safe), then    */
+/* ld ep, a and an (hl) walk; every exit restores the EP=0         */
+/* invariant via ld ep, #0 (which does not touch A).  While        */
+/* EP != 0 only [hhll]/(hl) accesses are repaged; (ix+d), (iy+d)   */
+/* and [sp+dd] keep their own page registers (XP/YP/SP page), so   */
+/* frame and indexed result stores stay near-correct inside the    */
+/* sequence — absolute (direct) stores do not and toggle EP per    */
+/* byte.  A far object never straddles a 64K page boundary (the    */
+/* Epson _far model), so neither the constant displacement add nor */
+/* the inc hl walk ever carries into the page byte.                */
+/*-----------------------------------------------------------------*/
+static void
+genFarPointerGet (const iCode *ic, operand *left, operand *right, operand *result, int rightval)
+{
+  int size = result->aop->size;
+  bool a_dead = isRegDead (A_IDX, ic);
+  bool b_dead = isRegDead (B_IDX, ic);
+  bool hl_dead = isPairDead (PAIR_HL, ic);
+  bool result_in_a = result->aop->type == AOP_REG && result->aop->regs[A_IDX] >= 0;
+  bool result_in_b = result->aop->type == AOP_REG && result->aop->regs[B_IDX] >= 0;
+  bool result_in_hl = result->aop->type == AOP_REG && (result->aop->regs[L_IDX] >= 0 || result->aop->regs[H_IDX] >= 0);
+  bool pushed_hl = false, pushed_a = false, pushed_b = false;
+  int o;
+
+  wassertl (regalloc_dry_run || !IS_BITVAR (operandType (result)), "Unimplemented bit-field read through a __far pointer");
+
+  if (!size)
+    return;
+
+  /* No staging room for a wider register result: L/H hold the pointer and A
+     the page; the allocator is steered away from this shape by the dry-run
+     cost. */
+  if (result->aop->type == AOP_REG && size > 2)
+    {
+      UNIMPLEMENTED;
+      return;
+    }
+  /* Only register, frame (ix+d) and literal-addressable (absolute) results
+     are supported: anything else ((hl)-routed EXSTK shapes etc.) would fight
+     the far pointer for HL. */
+  if (result->aop->type != AOP_REG && result->aop->type != AOP_STK
+      && result->aop->type != AOP_HL && result->aop->type != AOP_IY)
+    {
+      UNIMPLEMENTED;
+      return;
+    }
+
+  if (!hl_dead && !result_in_hl)
+    _push (PAIR_HL), pushed_hl = true;
+  if (!a_dead && !result_in_a)
+    {
+      emit2 ("push a");
+      cost (1, 3);
+      _G.stack.pushed += 1;
+      pushed_a = true;
+    }
+
+  /* pointer -> HLA: offset -> HL, page -> A (overlap-safe for any source) */
+  genMove (ASMOP_HLA, left->aop, true, true, true, isPairDead (PAIR_IY, ic));
+  emit2 ("ld ep, a");
+  cost (2, 2);
+  if (rightval)
+    {
+      emit2 ("add hl, !immed%d", rightval);
+      cost (3, 3);
+    }
+
+  if (size == 2 && aopInReg (result->aop, 0, L_IDX) && aopInReg (result->aop, 1, H_IDX))
+    {
+      /* result is exactly HL: low through A (free once EP is loaded), high
+         straight into H — the final (hl) read uses the original L */
+      emit2 ("ld a, !mems", "hl");
+      cost (1, 2);
+      emit2 ("inc hl");
+      cost (1, 2);
+      emit2 ("ld h, !mems", "hl");
+      cost (1, 2);
+      emit2 ("ld ep, #0x00");
+      cost (3, 3);
+      emit3 (A_LD, ASMOP_L, ASMOP_A);
+    }
+  else if (result->aop->type == AOP_REG)
+    {
+      /* collect into A (+ B), then place — result regs may include L/H,
+         which genMove handles after the walk is done with the pointer */
+      if (size == 2 && !b_dead && !result_in_b)
+        {
+          emit2 ("push b");
+          cost (1, 3);
+          _G.stack.pushed += 1;
+          pushed_b = true;
+        }
+      emit2 ("ld a, !mems", "hl");
+      cost (1, 2);
+      if (size == 2)
+        {
+          emit2 ("inc hl");
+          cost (1, 2);
+          emit2 ("ld b, !mems", "hl");
+          cost (1, 2);
+        }
+      emit2 ("ld ep, #0x00");
+      cost (3, 3);
+      genMove_o (result->aop, 0, ASMOP_BA, 0, size, true, true, true, isPairDead (PAIR_IY, ic), true);
+      if (pushed_b)
+        {
+          emit2 ("pop b");
+          cost (1, 3);
+          _G.stack.pushed -= 1;
+          pushed_b = false;
+        }
+    }
+  else if (result->aop->type == AOP_HL || result->aop->type == AOP_IY)
+    {
+      /* absolute result: an EP-paged store (and aopPut for these types would
+         either claim HL or emit an iy-literal store the peephole folds into
+         an absolute) — keep the page in B, toggle EP around each store, and
+         emit the store as a direct absolute (no HL, nothing to fold) */
+      if (!b_dead)
+        {
+          emit2 ("push b");
+          cost (1, 3);
+          _G.stack.pushed += 1;
+          pushed_b = true;
+        }
+      emit3 (A_LD, ASMOP_B, ASMOP_A);
+      for (o = 0; o < size; o++)
+        {
+          if (o)
+            {
+              emit3 (A_LD, ASMOP_A, ASMOP_B);
+              emit2 ("ld ep, a");
+              cost (2, 2);
+            }
+          emit2 ("ld a, !mems", "hl");
+          cost (1, 2);
+          if (o != size - 1)
+            {
+              emit2 ("inc hl");
+              cost (1, 2);
+            }
+          emit2 ("ld ep, #0x00");
+          cost (3, 3);
+          if (!regalloc_dry_run)
+            emit2 ("ld !mems, a", aopGetLitWordLong (result->aop, o, FALSE));
+          cost (3, 4);
+        }
+      if (pushed_b)
+        {
+          emit2 ("pop b");
+          cost (1, 3);
+          _G.stack.pushed -= 1;
+          pushed_b = false;
+        }
+    }
+  else
+    {
+      /* frame result, (ix+d): XP-paged, near-safe while EP is set, and the
+         peephole never rewrites it as an absolute */
+      for (o = 0; o < size; o++)
+        {
+          emit2 ("ld a, !mems", "hl");
+          cost (1, 2);
+          if (o != size - 1)
+            {
+              emit2 ("inc hl");
+              cost (1, 2);
+            }
+          if (!regalloc_dry_run)
+            aopPut (result->aop, "a", o);
+          ld_cost (result->aop, o, ASMOP_A, 0, true);
+        }
+      emit2 ("ld ep, #0x00");
+      cost (3, 3);
+    }
+
+  spillPair (PAIR_HL);
+
+  if (pushed_a)
+    {
+      emit2 ("pop a");
+      cost (1, 3);
+      _G.stack.pushed -= 1;
+    }
+  if (pushed_hl)
+    _pop (PAIR_HL);
+}
+
+/*-----------------------------------------------------------------*/
+/* genFarPointerSet - write through a 3-byte __far (EP:offset)     */
+/* pointer.  Same HLA + EP idiom and EP=0 invariant as             */
+/* genFarPointerGet; the value is staged before the pointer claims */
+/* HL and A (saves first, value last, so the mid-store pop ba      */
+/* matches LIFO).                                                  */
+/*-----------------------------------------------------------------*/
+static void
+genFarPointerSet (iCode *ic, operand *right, operand *result)
+{
+  int size = right->aop->size;
+  bool a_dead = isRegDead (A_IDX, ic);
+  bool b_dead = isRegDead (B_IDX, ic);
+  bool hl_dead = isPairDead (PAIR_HL, ic);
+  bool val_in_a = right->aop->type == AOP_REG && right->aop->regs[A_IDX] >= 0;
+  bool val_in_b = right->aop->type == AOP_REG && right->aop->regs[B_IDX] >= 0;
+  bool val_in_hl = right->aop->type == AOP_REG && (right->aop->regs[L_IDX] >= 0 || right->aop->regs[H_IDX] >= 0);
+  /* literal-addressable (absolute) value sources: EP-paged reads, handled
+     with the EP toggle below */
+  bool val_abs = right->aop->type == AOP_HL || right->aop->type == AOP_IY;
+  bool pushed_hl = false, pushed_a = false, pushed_b = false;
+  bool val_on_stack = false, val_staged_b = false;
+  int o;
+
+  wassertl (regalloc_dry_run || !IS_BITVAR (operandType (result)->next), "Unimplemented bit-field write through a __far pointer");
+
+  if (!size)
+    return;
+
+  /* Only register, literal, frame (ix+d) and literal-addressable (absolute)
+     values are supported: anything else ((hl)-routed EXSTK shapes etc.)
+     would fight the far pointer for HL. */
+  if (right->aop->type != AOP_REG && right->aop->type != AOP_LIT && right->aop->type != AOP_IMMD
+      && right->aop->type != AOP_STK && !val_abs)
+    {
+      UNIMPLEMENTED;
+      return;
+    }
+  /* register values wider than BA can't be staged (L/H/A go to the pointer) */
+  if (right->aop->type == AOP_REG && size > 2 && (val_in_a || val_in_hl))
+    {
+      UNIMPLEMENTED;
+      return;
+    }
+  /* a register-allocated far pointer using A/B would be corrupted by the
+     value staging below (which runs before the pointer claims HLA) */
+  if (result->aop->type == AOP_REG && (result->aop->regs[A_IDX] >= 0 || result->aop->regs[B_IDX] >= 0)
+      && (right->aop->type == AOP_REG && size == 2 || size == 1 && (val_in_a || val_in_hl) || val_abs))
+    {
+      UNIMPLEMENTED;
+      return;
+    }
+
+  /* saves first ... */
+  if (!b_dead && (size == 1 && (val_in_a || val_in_hl)   /* B = byte stage */
+                  || size == 2 && right->aop->type == AOP_REG /* BA stage */
+                  || val_abs))                           /* B = page keep */
+    {
+      emit2 ("push b");
+      cost (1, 3);
+      _G.stack.pushed += 1;
+      pushed_b = true;
+    }
+  if (!hl_dead)
+    _push (PAIR_HL), pushed_hl = true;
+  if (!a_dead)
+    {
+      emit2 ("push a");
+      cost (1, 3);
+      _G.stack.pushed += 1;
+      pushed_a = true;
+    }
+
+  /* ... then stage a register value clear of A/L/H (the pointer's home) */
+  if (right->aop->type == AOP_REG && size == 1 && (val_in_a || val_in_hl))
+    {
+      cheapMove (ASMOP_B, 0, right->aop, 0, false);
+      val_staged_b = true;
+    }
+  else if (right->aop->type == AOP_REG && size == 2)
+    {
+      genMove (ASMOP_BA, right->aop, true, false, true, false);
+      _push (PAIR_BA);
+      val_on_stack = true;
+    }
+
+  /* pointer -> HLA, page -> EP */
+  genMove (ASMOP_HLA, result->aop, true, true, true, isPairDead (PAIR_IY, ic));
+  emit2 ("ld ep, a");
+  cost (2, 2);
+
+  if (val_on_stack)
+    {
+      _pop (PAIR_BA);
+      emit2 ("ld !mems, a", "hl");
+      cost (1, 2);
+      emit2 ("inc hl");
+      cost (1, 2);
+      emit2 ("ld !mems, b", "hl");
+      cost (1, 2);
+      emit2 ("ld ep, #0x00");
+      cost (3, 3);
+    }
+  else if (val_staged_b || right->aop->type == AOP_REG && size == 1 && val_in_b)
+    {
+      emit2 ("ld !mems, b", "hl");
+      cost (1, 2);
+      emit2 ("ld ep, #0x00");
+      cost (3, 3);
+    }
+  else if (right->aop->type == AOP_LIT || right->aop->type == AOP_IMMD)
+    {
+      for (o = 0; o < size; o++)
+        {
+          if (!regalloc_dry_run)
+            emit2 ("ld !mems, %s", "hl", aopGet (right->aop, o, false));
+          cost (2, 3);
+          if (o != size - 1)
+            {
+              emit2 ("inc hl");
+              cost (1, 2);
+            }
+        }
+      emit2 ("ld ep, #0x00");
+      cost (3, 3);
+    }
+  else if (val_abs)
+    {
+      /* absolute (EP-paged!) value reads: keep the page in B, read each byte
+         at EP=0 as a direct absolute (no HL, nothing for the peephole to
+         fold), swap the page back in for the far store */
+      emit3 (A_LD, ASMOP_B, ASMOP_A);
+      emit2 ("ld ep, #0x00");
+      cost (3, 3);
+      for (o = 0; o < size; o++)
+        {
+          if (!regalloc_dry_run)
+            emit2 ("ld a, !mems", aopGetLitWordLong (right->aop, o, FALSE));
+          cost (3, 4);
+          emit2 ("ex a, b");
+          cost (1, 2);
+          emit2 ("ld ep, a");
+          cost (2, 2);
+          emit2 ("ld !mems, b", "hl");
+          cost (1, 2);
+          if (o != size - 1)
+            {
+              emit2 ("inc hl");
+              cost (1, 2);
+            }
+          emit2 ("ld ep, #0x00");
+          cost (3, 3);
+          if (o != size - 1)
+            {
+              emit3 (A_LD, ASMOP_B, ASMOP_A);
+            }
+        }
+    }
+  else
+    {
+      /* frame / indexed value (near-safe while EP is set): walk through A */
+      for (o = 0; o < size; o++)
+        {
+          cheapMove (ASMOP_A, 0, right->aop, o, true);
+          emit2 ("ld !mems, a", "hl");
+          cost (1, 2);
+          if (o != size - 1)
+            {
+              emit2 ("inc hl");
+              cost (1, 2);
+            }
+        }
+      emit2 ("ld ep, #0x00");
+      cost (3, 3);
+    }
+
+  spillPair (PAIR_HL);
+
+  if (pushed_a)
+    {
+      emit2 ("pop a");
+      cost (1, 3);
+      _G.stack.pushed -= 1;
+    }
+  if (pushed_hl)
+    _pop (PAIR_HL);
+  if (pushed_b)
+    {
+      emit2 ("pop b");
+      cost (1, 3);
+      _G.stack.pushed -= 1;
+    }
+}
+
+/*-----------------------------------------------------------------*/
 /* genPointerGet - generate code for pointer get                   */
 /*-----------------------------------------------------------------*/
 static void
@@ -12068,7 +12456,15 @@ genPointerGet (const iCode *ic)
   rightval = (int)operandLitValue (right);
   rightval_in_range = (rightval >= -128 && rightval + size - 1 < 127);
 
-  
+  /* 3-byte __far pointer read: EP-paged (hl) access — must run before the
+     literal-address fast paths below, which would truncate the page byte */
+  if (IS_FARPTR (operandType (left)) && left->aop->size == 3)
+    {
+      genFarPointerGet (ic, left, right, result, rightval);
+      goto release;
+    }
+
+
   if ((IY_RESERVED) && requiresHL (result->aop) && size > 1 && result->aop->type != AOP_REG)
     UNIMPLEMENTED; /* z80 used a DE walk pointer; no S1C88 spare under --reserve-iy */
 
@@ -12765,6 +13161,14 @@ genPointerSet (iCode *ic)
   aopOp (right, ic, FALSE, FALSE);
 
   size = right->aop->size;
+
+  /* 3-byte __far pointer write: EP-paged (hl) access — must run before the
+     near fast paths below */
+  if (IS_FARPTR (operandType (result)) && result->aop->size == 3)
+    {
+      genFarPointerSet (ic, right, result);
+      goto release;
+    }
 
   if (IY_RESERVED)
     pairId = (isRegOrLit (right->aop) || right->aop->type == AOP_STK) ? PAIR_HL : PAIR_DE;

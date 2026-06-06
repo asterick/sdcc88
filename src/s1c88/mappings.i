@@ -30,6 +30,8 @@ static const ASM_MAPPING _asxxxx_z80_mapping[] = {
       "add\tiy,sp\n"
       "ld\tsp,iy" },
     { "mems", "(%s)" },
+    /* S1C88 __far: the page byte (bits 16-23) of a 24-bit symbol address */
+    { "bankimmeds", "#((%s) >> 16)" },
     { "enter",
       "push\tix\n"
       "ld\tix,sp" },

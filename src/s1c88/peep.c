@@ -1348,6 +1348,15 @@ int s1c88instructionSize(lineNode *pl)
   /* All ld instructions */
   if(ISINST(pl->line, "ld"))
     {
+      /* S1C88 special-register loads (CE second page): ld ep/xp/yp/nb/br,A = 2,
+         ld ep/xp/yp/nb/br,#pp = 3; ld a,ep/xp/yp/nb/br = 2 */
+      if(!STRNCASECMP(op1start, "ep", 2) || !STRNCASECMP(op1start, "xp", 2) || !STRNCASECMP(op1start, "yp", 2) ||
+         !STRNCASECMP(op1start, "nb", 2) || !STRNCASECMP(op1start, "br", 2))
+        return(op2start && op2start[0] == '#' ? 3 : 2);
+      if(op2start && (!STRNCASECMP(op2start, "ep", 2) || !STRNCASECMP(op2start, "xp", 2) || !STRNCASECMP(op2start, "yp", 2) ||
+         !STRNCASECMP(op2start, "nb", 2) || !STRNCASECMP(op2start, "br", 2)))
+        return(2);
+
       /* These 4 are the only cases of 4 byte long ld instructions. */
       if(!STRNCASECMP(op1start, "ix", 2) || !STRNCASECMP(op1start, "iy", 2))
         return(4);
