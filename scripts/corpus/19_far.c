@@ -89,3 +89,30 @@ void l2f(unsigned long v) { p = (char __far *)v; }
    a far-access window), does its own far access, restores EP before rete */
 char isr_sink;
 void isr_far(void) __interrupt(1) { isr_sink = *p; }
+
+/* far bit-fields (the HL+EP read-modify-write idiom): sub-byte fields
+   mask/extend at EP=0 after the raw fetch; multi-byte fields walk lo->B,
+   hi->A with an ex a,b reorder (reads) / a BA-staged value carried across
+   the pointer staging on the stack (writes) */
+struct fflags { unsigned char b0 : 1; unsigned char mid : 3; signed char s : 4; };
+struct fwide { unsigned int w12 : 12; signed int s10 : 10; unsigned int full : 16; };
+__far const struct fflags gff = { 1, 5, -3 };
+__far const struct fwide gfw = { 0xABC, -200, 0x1234 };
+
+unsigned char fb_rd_b0(__far const struct fflags *fp) { return fp->b0; }
+unsigned char fb_rd_mid(__far const struct fflags *fp) { return fp->mid; }
+signed char fb_rd_s(__far const struct fflags *fp) { return fp->s; }
+int fb_rd_s_wide(__far const struct fflags *fp) { return fp->s; }
+unsigned int fb_rd_w12(__far const struct fwide *fp) { return fp->w12; }
+int fb_rd_s10(__far const struct fwide *fp) { return fp->s10; }
+unsigned int fb_rd_full(__far const struct fwide *fp) { return fp->full; }
+unsigned char fb_rd_obj(void) { return gff.mid; }
+
+void fb_wr_b0(__far struct fflags *fp) { fp->b0 = 1; }
+void fb_wr_mid_lit(__far struct fflags *fp) { fp->mid = 5; }
+void fb_wr_mid(__far struct fflags *fp, unsigned char v) { fp->mid = v; }
+void fb_wr_s(__far struct fflags *fp, signed char v) { fp->s = v; }
+void fb_wr_w12_lit(__far struct fwide *fp) { fp->w12 = 0x9AB; }
+void fb_wr_w12(__far struct fwide *fp, unsigned int v) { fp->w12 = v; }
+void fb_wr_full(__far struct fwide *fp, unsigned int v) { fp->full = v; }
+unsigned char fb_keep(__far const struct fflags *fp, unsigned char c) { return fp->mid + c; }

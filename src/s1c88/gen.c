@@ -12265,6 +12265,356 @@ init_stackop (asmop *stackop, int size, long int stk_off)
 }
 
 /*-----------------------------------------------------------------*/
+/* genFarUnpackBits - read a bit-field through a 3-byte __far      */
+/* pointer.  The raw byte(s) are fetched via the HL+EP idiom; all  */
+/* mask/shift/sign work happens at EP=0 in registers, and the      */
+/* result store is plain near codegen afterwards — so any near-    */
+/* writable result aop (registers, frame, absolutes) works.        */
+/* char/int fields only (blen <= 16): wider fields keep the loud   */
+/* UNIMPLEMENTED trap (dry-run cost steers the allocator away).    */
+/*-----------------------------------------------------------------*/
+static void
+genFarUnpackBits (const iCode *ic, operand *left, operand *result, int rightval)
+{
+  sym_link *etype = getSpec (operandType (result));
+  int rsize = getSize (operandType (result));
+  unsigned blen = SPEC_BLEN (etype);
+  unsigned bstr = SPEC_BSTR (etype);
+  bool a_dead = isRegDead (A_IDX, ic);
+  bool b_dead = isRegDead (B_IDX, ic);
+  bool hl_dead = isPairDead (PAIR_HL, ic);
+  bool result_in_a = result->aop->type == AOP_REG && result->aop->regs[A_IDX] >= 0;
+  bool result_in_b = result->aop->type == AOP_REG && result->aop->regs[B_IDX] >= 0;
+  bool result_in_hl = result->aop->type == AOP_REG && (result->aop->regs[L_IDX] >= 0 || result->aop->regs[H_IDX] >= 0);
+  bool pushed_hl = false, pushed_a = false, pushed_b = false;
+  /* B carries the second raw byte / the sign-or-zero high byte */
+  bool need_b = blen > 8 || rsize == 2;
+
+  if (rsize > 2 || blen > 16)
+    {
+      UNIMPLEMENTED;
+      return;
+    }
+  wassert (blen <= 8 || bstr == 0);  /* multi-byte fields are byte-aligned */
+  wassert (blen <= 8 || rsize == 2);
+
+  if (!hl_dead && !result_in_hl)
+    _push (PAIR_HL), pushed_hl = true;
+  if (!a_dead && !result_in_a)
+    {
+      emit2 ("push a");
+      cost (1, 3);
+      _G.stack.pushed += 1;
+      pushed_a = true;
+    }
+  if (need_b && !b_dead && !result_in_b)
+    {
+      emit2 ("push b");
+      cost (1, 3);
+      _G.stack.pushed += 1;
+      pushed_b = true;
+    }
+
+  /* pointer -> HLA (offset -> HL, page -> A), page -> EP, displacement */
+  genMove (ASMOP_HLA, left->aop, true, true, isPairDead (PAIR_IY, ic));
+  emit2 ("ld ep, a");
+  cost (2, 2);
+  if (rightval)
+    {
+      emit2 ("add hl, !immed%d", rightval);
+      cost (3, 3);
+    }
+
+  if (blen <= 8)
+    {
+      /* single byte: fetch raw, restore EP, then mask/extend in registers */
+      emit2 ("ld a, !mems", "hl");
+      cost (1, 2);
+      emit2 ("ld ep, #0x00");
+      cost (3, 3);
+      if (bstr)
+        AccRol (8 - bstr);
+      if (blen < 8)
+        unpackMaskA (etype, blen);
+      if (rsize == 2)
+        {
+          if (!SPEC_USIGN (etype))
+            {
+              emit2 ("sep");        /* B = sign-extension of A */
+              cost (2, 3);
+            }
+          else
+            {
+              emit2 ("ld b, #0x00");
+              cost (2, 2);
+            }
+          spillPair (PAIR_BA);
+          genMove_o (result->aop, 0, ASMOP_BA, 0, 2, true, true, isPairDead (PAIR_IY, ic), true);
+        }
+      else
+        cheapMove (result->aop, 0, ASMOP_A, 0, true);
+    }
+  else
+    {
+      /* 8 < blen <= 16, byte-aligned: low byte -> B, high byte -> A,
+         mask/extend the high byte, swap into BA order */
+      emit2 ("ld b, !mems", "hl");
+      cost (1, 2);
+      emit2 ("inc hl");
+      cost (1, 2);
+      emit2 ("ld a, !mems", "hl");
+      cost (1, 2);
+      emit2 ("ld ep, #0x00");
+      cost (3, 3);
+      if (blen < 16)
+        unpackMaskA (etype, blen - 8);
+      emit2 ("ex a, b");            /* A = low, B = masked high */
+      cost (1, 2);
+      spillPair (PAIR_BA);
+      genMove_o (result->aop, 0, ASMOP_BA, 0, 2, true, true, isPairDead (PAIR_IY, ic), true);
+    }
+
+  spillPair (PAIR_HL);
+
+  if (pushed_b)
+    {
+      emit2 ("pop b");
+      cost (1, 3);
+      _G.stack.pushed -= 1;
+    }
+  if (pushed_a)
+    {
+      emit2 ("pop a");
+      cost (1, 3);
+      _G.stack.pushed -= 1;
+    }
+  if (pushed_hl)
+    _pop (PAIR_HL);
+}
+
+/*-----------------------------------------------------------------*/
+/* genFarPackBits - write a bit-field through a 3-byte __far       */
+/* pointer.  Non-literal values are staged, shifted and masked at  */
+/* EP=0 (parked in B), then the read-modify-write merge runs       */
+/* through (hl) under EP — genPackBits' and/or-mask scheme on the  */
+/* far byte.  char/int fields only (blen <= 16).                   */
+/*-----------------------------------------------------------------*/
+static void
+genFarPackBits (const iCode *ic, operand *right, operand *result)
+{
+  sym_link *etype = getSpec (operandType (result)->next);
+  unsigned blen = SPEC_BLEN (etype);
+  unsigned bstr = SPEC_BSTR (etype);
+  unsigned mask;
+  unsigned long long litval;
+  bool a_dead = isRegDead (A_IDX, ic);
+  bool b_dead = isRegDead (B_IDX, ic);
+  bool hl_dead = isPairDead (PAIR_HL, ic);
+  bool ptr_in_b = result->aop->type == AOP_REG && result->aop->regs[B_IDX] >= 0;
+  bool lit = right->aop->type == AOP_LIT;
+  bool pushed_hl = false, pushed_a = false, pushed_b = false;
+
+  if (blen > 16)
+    {
+      UNIMPLEMENTED;
+      return;
+    }
+  wassert (blen <= 8 || bstr == 0);
+  /* the non-literal value stages through A and B before the pointer claims
+     HLA: a far pointer living in A or B would be corrupted */
+  if (!lit && (ptr_in_b || result->aop->type == AOP_REG && result->aop->regs[A_IDX] >= 0))
+    {
+      UNIMPLEMENTED;
+      return;
+    }
+
+  /* saves first (B is the value stash / merge partner for every non-literal
+     shape), then the pops below run a, hl, b — LIFO */
+  if (!lit && !b_dead)
+    {
+      emit2 ("push b");
+      cost (1, 3);
+      _G.stack.pushed += 1;
+      pushed_b = true;
+    }
+  if (!hl_dead)
+    _push (PAIR_HL), pushed_hl = true;
+  if (!a_dead)
+    {
+      emit2 ("push a");
+      cost (1, 3);
+      _G.stack.pushed += 1;
+      pushed_a = true;
+    }
+
+  /* non-literal value staging at EP=0 (the source read is plain near
+     codegen here, so any near-readable aop works — registers, frame,
+     EXSTK, absolutes):
+       - sub-byte: shift + pre-mask, park in B for the merge
+       - multi-byte: collect into BA, carry it across the pointer staging
+         on the stack (the pop below is SP-paged — near-safe under EP) */
+  bool val_on_stack = false;
+  if (!lit)
+    {
+      if (blen < 8)
+        {
+          mask = ((0xffu << (blen + bstr)) | (0xffu >> (8 - bstr))) & 0xffu;
+          cheapMove (ASMOP_A, 0, right->aop, 0, true);
+          if (blen + bstr == 8)
+            AccLsh (bstr);
+          else
+            {
+              AccRol (bstr);
+              emit2 ("and a, !immedbyte", ~mask & 0xffu);
+              cost (2, 2);
+            }
+          emit3 (A_LD, ASMOP_B, ASMOP_A);
+        }
+      else
+        {
+          genMove (ASMOP_BA, right->aop, true, true, isPairDead (PAIR_IY, ic));
+          _push (PAIR_BA);
+          val_on_stack = true;
+        }
+    }
+
+  /* pointer -> HLA, page -> EP */
+  genMove (ASMOP_HLA, result->aop, true, true, isPairDead (PAIR_IY, ic));
+  emit2 ("ld ep, a");
+  cost (2, 2);
+  if (val_on_stack)
+    _pop (PAIR_BA);             /* A = value low, B = value high */
+
+  if (blen < 8)
+    {
+      mask = ((0xffu << (blen + bstr)) | (0xffu >> (8 - bstr))) & 0xffu;
+      if (lit)
+        {
+          litval = ulFromVal (right->aop->aopu.aop_lit);
+          litval <<= bstr;
+          litval &= (~mask) & 0xff;
+          emit2 ("ld a, !mems", "hl");
+          cost (1, 2);
+          if ((mask | litval) != 0xff)
+            {
+              emit2 ("and a, !immedbyte", mask);
+              cost (2, 2);
+            }
+          if (litval)
+            {
+              emit2 ("or a, !immedbyte", (unsigned)litval);
+              cost (2, 2);
+            }
+        }
+      else
+        {
+          emit2 ("ld a, !mems", "hl");
+          cost (1, 2);
+          emit2 ("and a, !immedbyte", mask);
+          cost (2, 2);
+          emit3 (A_OR, ASMOP_A, ASMOP_B);
+        }
+      emit2 ("ld !mems, a", "hl");
+      cost (1, 2);
+      emit2 ("ld ep, #0x00");
+      cost (3, 3);
+    }
+  else
+    {
+      /* byte-aligned, one full byte + (blen > 8) a second full or partial
+         byte; the non-literal value sits in BA (low in A, high in B) */
+      if (lit)
+        {
+          if (!regalloc_dry_run)
+            emit2 ("ld !mems, %s", "hl", aopGet (right->aop, 0, false));
+          cost (2, 3);
+        }
+      else
+        {
+          emit2 ("ld !mems, a", "hl");
+          cost (1, 2);
+        }
+      if (blen > 8)
+        {
+          unsigned rlen = blen - 8;
+          emit2 ("inc hl");
+          cost (1, 2);
+          if (blen == 16)
+            {
+              /* second full byte */
+              if (lit)
+                {
+                  if (!regalloc_dry_run)
+                    emit2 ("ld !mems, %s", "hl", aopGet (right->aop, 1, false));
+                  cost (2, 3);
+                }
+              else
+                {
+                  emit2 ("ld !mems, b", "hl");
+                  cost (1, 2);
+                }
+            }
+          else
+            {
+              /* partial high byte: read-modify-write merge */
+              mask = (0xffu << rlen) & 0xffu;
+              if (lit)
+                {
+                  litval = ullFromVal (right->aop->aopu.aop_lit);
+                  litval >>= 8;
+                  litval &= (~mask) & 0xff;
+                  emit2 ("ld a, !mems", "hl");
+                  cost (1, 2);
+                  if ((mask | litval) != 0xff)
+                    {
+                      emit2 ("and a, !immedbyte", mask);
+                      cost (2, 2);
+                    }
+                  if (litval)
+                    {
+                      emit2 ("or a, !immedbyte", (unsigned)litval);
+                      cost (2, 2);
+                    }
+                }
+              else
+                {
+                  emit3 (A_LD, ASMOP_A, ASMOP_B);   /* A = value high */
+                  emit2 ("and a, !immedbyte", (~mask) & 0xffu);
+                  cost (2, 2);
+                  emit3 (A_LD, ASMOP_B, ASMOP_A);
+                  emit2 ("ld a, !mems", "hl");
+                  cost (1, 2);
+                  emit2 ("and a, !immedbyte", mask);
+                  cost (2, 2);
+                  emit3 (A_OR, ASMOP_A, ASMOP_B);
+                }
+              emit2 ("ld !mems, a", "hl");
+              cost (1, 2);
+            }
+        }
+      emit2 ("ld ep, #0x00");
+      cost (3, 3);
+    }
+
+  spillPair (PAIR_HL);
+
+  if (pushed_a)
+    {
+      emit2 ("pop a");
+      cost (1, 3);
+      _G.stack.pushed -= 1;
+    }
+  if (pushed_hl)
+    _pop (PAIR_HL);
+  if (pushed_b)
+    {
+      emit2 ("pop b");
+      cost (1, 3);
+      _G.stack.pushed -= 1;
+    }
+}
+
+/*-----------------------------------------------------------------*/
 /* genFarPointerGet - read through a 3-byte __far (EP:offset)      */
 /* pointer (abi-decision.md task #9).  Idiom: pointer staged into  */
 /* HLA (offset -> HL, page -> A; genMove is overlap-safe), then    */
@@ -12291,7 +12641,11 @@ genFarPointerGet (const iCode *ic, operand *left, operand *right, operand *resul
   bool pushed_hl = false, pushed_a = false, pushed_b = false;
   int o;
 
-  wassertl (regalloc_dry_run || !IS_BITVAR (operandType (result)), "Unimplemented bit-field read through a __far pointer");
+  if (IS_BITVAR (operandType (result)))
+    {
+      genFarUnpackBits (ic, left, result, rightval);
+      return;
+    }
 
   if (!size)
     return;
@@ -12479,7 +12833,11 @@ genFarPointerSet (iCode *ic, operand *right, operand *result)
   bool val_on_stack = false, val_staged_b = false;
   int o;
 
-  wassertl (regalloc_dry_run || !IS_BITVAR (operandType (result)->next), "Unimplemented bit-field write through a __far pointer");
+  if (IS_BITVAR (operandType (result)->next))
+    {
+      genFarPackBits (ic, right, result);
+      return;
+    }
 
   if (!size)
     return;
