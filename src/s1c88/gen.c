@@ -8048,23 +8048,131 @@ release:
 }
 
 /*-----------------------------------------------------------------*/
-/* genDiv - generates code for division                            */
+/* genDivMod - generates code for division / modulus via the       */
+/* native DIV (CE D9): unsigned HL / A -> L quotient, H remainder. */
+/* _hasNativeMulFor claims only unsigned 8 / 8 (incl. 1..255       */
+/* literal divisors), so both results always fit (V never set). A  */
+/* zero divisor raises the hardware zero-division exception (C     */
+/* UB). DIV leaves A (the divisor) unchanged and clobbers HL —     */
+/* HLinst_ok keeps live non-operand values out of HL across '/'    */
+/* and '%'.                                                        */
 /*-----------------------------------------------------------------*/
 static void
-genDiv (const iCode * ic)
+genDivMod (iCode *ic)
 {
-  /* Shouldn't occur - all done through function calls */
-  wassertl (0, "Division is handled through support function calls");
+  operand *left = IC_LEFT (ic);   /* dividend */
+  operand *right = IC_RIGHT (ic); /* divisor */
+  operand *result = IC_RESULT (ic);
+
+  aopOp (left, ic, FALSE, FALSE);
+  aopOp (right, ic, FALSE, FALSE);
+  aopOp (result, ic, TRUE, FALSE);
+
+  wassertl (left->aop->size == 1 && right->aop->size <= 2,
+            "Wide division is handled through support function calls.");
+
+  /* A live with a non-operand value? Save it byte-granular (the
+     genMultOneChar scheme): by rSurv the result is never in the saved
+     set, so restoring after the result is written can't overwrite it. */
+  const bool save_a = !isRegDead (A_IDX, ic) &&
+    !aopInReg (left->aop, 0, A_IDX) && !aopInReg (right->aop, 0, A_IDX);
+  if (save_a)
+    {
+      emit2 ("push a");
+      cost2 (2, 11, 11, 7, 12, 10, 3, 3);
+      _G.stack.pushed += 1;
+    }
+
+  /* Stage dividend -> L, divisor -> A, 0 -> H, ordered so neither load
+     clobbers the other operand. */
+  {
+    const bool left_in_a = aopInReg (left->aop, 0, A_IDX);
+    const bool left_in_l = aopInReg (left->aop, 0, L_IDX);
+    const bool left_in_h = aopInReg (left->aop, 0, H_IDX);
+    const bool right_in_lh = aopInReg (right->aop, 0, L_IDX) || aopInReg (right->aop, 0, H_IDX);
+    const bool right_needs_hl = requiresHL (right->aop);
+
+    if (left_in_a && (right_in_lh || right_needs_hl) ||
+        (left_in_l || left_in_h) && right_needs_hl)
+      {
+        /* The divisor load would clobber the dividend's home (A, or the
+           HL the divisor read walks over): bounce the dividend through
+           the stack, popping it straight into L. */
+        emit2 (left_in_a ? "push a" : left_in_l ? "push l" : "push h");
+        cost2 (2, 11, 11, 7, 12, 10, 3, 3);
+        _G.stack.pushed += 1;
+        cheapMove (ASMOP_A, 0, right->aop, 0, true);
+        emit2 ("pop l");
+        cost2 (2, 10, 9, 7, 12, 10, 3, 3);
+        _G.stack.pushed -= 1;
+      }
+    else if (right_in_lh || right_needs_hl)
+      {
+        /* Divisor first (its home is about to be overwritten / it needs
+           HL); the dividend load must then preserve A. */
+        cheapMove (ASMOP_A, 0, right->aop, 0, true);
+        cheapMove (ASMOP_L, 0, left->aop, 0, false);
+      }
+    else
+      {
+        /* Dividend first (may scratch A unless the divisor lives there),
+           divisor last. */
+        cheapMove (ASMOP_L, 0, left->aop, 0, !aopInReg (right->aop, 0, A_IDX));
+        cheapMove (ASMOP_A, 0, right->aop, 0, true);
+      }
+  }
+  cheapMove (ASMOP_H, 0, ASMOP_ZERO, 0, false);
+
+  emit2 ("div");
+  cost (2, 13);
+  spillPair (PAIR_HL);
+  spillPair (PAIR_BA);          /* A holds the divisor now */
+
+  /* Quotient in L for '/', remainder in H for '%'; the upper result
+     bytes are zero (unsigned 8 / 8). For a wide result build the full
+     value in HL first, then move it in one go (no partial-write
+     aliasing with a result that itself lives in L/H). */
+  if (result->aop->size == 1)
+    cheapMove (result->aop, 0, ic->op == '/' ? ASMOP_L : ASMOP_H, 0, true);
+  else
+    {
+      if (ic->op == '%')
+        emit3 (A_LD, ASMOP_L, ASMOP_H);
+      cheapMove (ASMOP_H, 0, ASMOP_ZERO, 0, true);
+      genMove (result->aop, ASMOP_HL, true, true, true, isPairDead (PAIR_IY, ic));
+    }
+
+  if (save_a)
+    {
+      emit2 ("pop a");
+      cost2 (2, 10, 9, 7, 12, 10, 3, 3);
+      _G.stack.pushed -= 1;
+      spillPair (PAIR_BA);
+    }
+
+  freeAsmop (left, NULL);
+  freeAsmop (right, NULL);
+  freeAsmop (result, NULL);
 }
 
 /*-----------------------------------------------------------------*/
-/* genMod - generates code for division                            */
+/* genDiv - generates code for division                            */
 /*-----------------------------------------------------------------*/
 static void
-genMod (const iCode * ic)
+genDiv (iCode *ic)
 {
-  /* Shouldn't occur - all done through function calls */
-  wassert (0);
+  /* Unsigned 8 / 8 comes here (claimed in _hasNativeMulFor); everything
+     else was converted to a support call by the middle end. */
+  genDivMod (ic);
+}
+
+/*-----------------------------------------------------------------*/
+/* genMod - generates code for modulus                             */
+/*-----------------------------------------------------------------*/
+static void
+genMod (iCode *ic)
+{
+  genDivMod (ic);
 }
 
 /*-----------------------------------------------------------------*/

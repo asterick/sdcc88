@@ -244,6 +244,7 @@ z80MightReadFlag(const lineNode *pl, const char *what)
      ISINST(pl->line, "rld") ||
      ISINST(pl->line, "rrd") ||
      ISINST(pl->line, "mlt") ||
+     ISINST(pl->line, "div") ||
      ISINST(pl->line, "out"))
     return false;
   if(ISINST(pl->line, "halt") ||
@@ -722,6 +723,9 @@ z80SurelyWritesFlag(const lineNode *pl, const char *what)
   
 
   if(ISINST(pl->line, "mlt"))
+    return (true);
+
+  if(ISINST(pl->line, "div")) /* S1C88 DIV: Z, N set per quotient; C, V written too */
     return (true);
 
   
@@ -1596,6 +1600,9 @@ int s1c88instructionSize(lineNode *pl)
   
 
   if(ISINST(pl->line, "mlt")) /* S1C88 HL <- L*A: CE D8 (z180-family mlt rr was also 2) */
+    return(2);
+
+  if(ISINST(pl->line, "div")) /* S1C88 L <- HL/A, H <- remainder: CE D9 */
     return(2);
 
   

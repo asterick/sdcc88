@@ -914,7 +914,7 @@ static bool HLinst_ok(const assignment &a, unsigned short int i, const G_t &G, c
 #endif
 
   // Replaces former default drop here.
-  if (ic->op == GET_VALUE_AT_ADDRESS || POINTER_SET(ic) || ic->op == ADDRESS_OF || ic->op == '*' || ic->op == JUMPTABLE) // Some operations always use hl. TODO: See if they can be changed to save / restore a hl in use or use hl only when free.
+  if (ic->op == GET_VALUE_AT_ADDRESS || POINTER_SET(ic) || ic->op == ADDRESS_OF || ic->op == '*' || ic->op == '/' || ic->op == '%' || ic->op == JUMPTABLE) // Some operations always use hl ('/' and '%' are the native DIV: HL / A -> L, H). TODO: See if they can be changed to save / restore a hl in use or use hl only when free.
     return(false);
   if(exstk && (operand_on_stack(result, a, i, G) || IS_TRUE_SYMOP (result) || operand_on_stack(left, a, i, G) || IS_TRUE_SYMOP (left) || operand_on_stack(right, a, i, G) || IS_TRUE_SYMOP (right))) // hl used as pointer to operand.
     return(false);
@@ -1223,6 +1223,8 @@ static float instruction_cost(const assignment &a, unsigned short int i, const G
     case PCALL:
     case RETURN:
     case '*':
+    case '/': // Native DIV only — wide / signed divisions were converted to support calls before allocation.
+    case '%':
     case '>':
     case '<':
     case EQ_OP:

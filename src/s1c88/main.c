@@ -672,11 +672,30 @@ _hasNativeMulFor (iCode *ic, sym_link *left, sym_link *right)
   sym_link *test = NULL;
   int result_size = IS_SYMOP (IC_RESULT(ic)) ? getSize (OP_SYM_TYPE (IC_RESULT(ic))) : 4;
 
-  if (ic->op != '*')
-    return(false);
-
   if (IS_BITINT (OP_SYM_TYPE (IC_RESULT(ic))) && SPEC_BITINTWIDTH (OP_SYM_TYPE (IC_RESULT(ic))) % 8)
     return false;
+
+  /* S1C88 native DIV (CE D9, MODEL1/3 — present on the Pokémon Mini core):
+     unsigned HL / A -> quotient L, remainder H. Claim unsigned 8 / 8 only:
+     the quotient and remainder then always fit in 8 bits (V never set).
+     A zero divisor raises the hardware zero-division exception (C UB).
+     Signed and wider divisions stay support calls. */
+  if (ic->op == '/' || ic->op == '%')
+    {
+      if (!IS_CHAR (left) || !IS_UNSIGNED (left))
+        return false;
+      if (IS_CHAR (right) && IS_UNSIGNED (right))
+        return true;
+      if (IS_LITERAL (right))
+        {
+          unsigned long val = ulFromVal (valFromType (right));
+          return (val > 0 && val <= 255);
+        }
+      return false;
+    }
+
+  if (ic->op != '*')
+    return(false);
 
   if (IS_LITERAL (left))
     test = left;
