@@ -1555,34 +1555,12 @@ _pop (PAIR_ID pairId)
 static void
 genMovePairPair (PAIR_ID srcPair, PAIR_ID dstPair)
 {
-  switch (dstPair)
-    {
-    case PAIR_IX:
-    case PAIR_IY:
-    case PAIR_AF:
-      _push (srcPair);
-      _pop (dstPair);
-      break;
-    case PAIR_BC:
-    case PAIR_DE:
-    case PAIR_HL:
-    case PAIR_BA:
-      if (srcPair == PAIR_IX || srcPair == PAIR_IY)
-        {
-          _push (srcPair);
-          _pop (dstPair);
-        }
-      else
-        {
-          emit2 ("ld %s, %s", _pairs[dstPair].l, _pairs[srcPair].l);
-          cost2 (1, 4, 4, 2, 4, 4, 1, 1);
-          emit2 ("ld %s, %s", _pairs[dstPair].h, _pairs[srcPair].h);
-          cost2 (1, 4, 4, 2, 4, 4, 1, 1);
-        }
-      break;
-    default:
-      wassertl (0, "Tried to move a nonphysical pair");
-    }
+  /* S1C88: the 16-bit transfers are fully orthogonal — LD dst, src exists
+     for every pair combination of BA/HL/IX/IY (2 bytes, 2 cycles).  The z80
+     needed push/pop or byte-halves here. */
+  wassertl (srcPair != PAIR_AF && dstPair != PAIR_AF, "AF is not a transfer pair on the S1C88");
+  emit2 ("ld %s, %s", _pairs[dstPair].name, _pairs[srcPair].name);
+  cost2 (2, 0, 0, 0, 0, 0, 0, 0);
   _G.pairs[dstPair].last_type = _G.pairs[srcPair].last_type;
   _G.pairs[dstPair].base = _G.pairs[srcPair].base;
   _G.pairs[dstPair].value = _G.pairs[srcPair].value;
@@ -2114,12 +2092,39 @@ aopArgByteMask (const asmop *aop)
   return m;
 }
 
+static asmop *aopArg (sym_link *ftype, int i);
+
+/* true iff some argument of ftype is passed in IY (the transport must then be
+   protected from IY-addressing scratch use until it is consumed) */
+static bool
+aopArgsUseIY (sym_link *ftype)
+{
+  if (IFFUNC_HASVARARGS (ftype) || !FUNC_ARGS (ftype))
+    return false;
+  int j = 1;
+  for (value *arg = FUNC_ARGS (ftype); arg; arg = arg->next, j++)
+    {
+      asmop *a = aopArg (ftype, j);
+      if (a && a->regs[IYL_IDX] >= 0)
+        return true;
+    }
+  return false;
+}
+
 static asmop *
 aopArgRegS1C88 (sym_link *ftype, int i)
 {
+  /* Phase 2: IY participates. IX is PERMANENTLY skipped (documented
+     divergence): the callee prologue (`push ix; ld ix, sp`) establishes the
+     frame pointer before genReceive could read an IX argument. YP/XP and the
+     far-pointer pairs are phase 3; IYIX (long) would need IX byte ordinals. */
   static asmop *const list_char[] = { ASMOP_A, ASMOP_L, ASMOP_H, ASMOP_B };  // Epson also: YP,XP
-  static asmop *const list_int[]  = { ASMOP_BA, ASMOP_HL };                  // Epson also: IX,IY
-  static asmop *const list_nptr[] = { ASMOP_HL, ASMOP_BA };                  // Epson also: IY,IX
+  static asmop *const list_int[]  = { ASMOP_BA, ASMOP_HL, ASMOP_IY };        // Epson: BA,HL,IX,IY
+  static asmop *const list_nptr[] = { ASMOP_HL, ASMOP_BA, ASMOP_IY };        // Epson: IY,IX,HL,BA — IY demoted to
+                                                                             // overflow (divergence: the allocator
+                                                                             // cannot hold operands in IY, so IY-first
+                                                                             // would tax every pointer call with a
+                                                                             // transport move)
   static asmop *const list_long[] = { ASMOP_HLBA };                          // Epson also: IYIX
 
   unsigned consumed = 0;
@@ -2134,7 +2139,7 @@ aopArgRegS1C88 (sym_link *ftype, int i)
         switch (getSize (arg->type))
           {
           case 1: list = list_char; n = 4; break;
-          case 2: if (IS_PTR (arg->type)) { list = list_nptr; n = 2; } else { list = list_int; n = 2; } break;
+          case 2: if (IS_PTR (arg->type)) { list = list_nptr; n = 3; } else { list = list_int; n = 3; } break;
           case 4: list = list_long; n = 1; break;
           // size 3 (far pointer) and anything larger -> stack (handled in a later phase)
           }
@@ -2142,6 +2147,8 @@ aopArgRegS1C88 (sym_link *ftype, int i)
       asmop *chosen = 0;
       for (int k = 0; k < n; k++)
         {
+          if (IY_RESERVED && list[k] == ASMOP_IY)   /* --reserve-iy keeps IY out of the ABI */
+            continue;
           unsigned m = aopArgByteMask (list[k]);
           if (!(m & consumed))
             {
@@ -5420,18 +5427,18 @@ static void genSend (const iCode *ic)
 
   bool a_dead = isRegDead (A_IDX, ic);
   bool hl_dead = isPairDead (PAIR_HL, ic);
-  bool de_dead = true;
-  
+  bool iy_dead = true;
+
   for (iCode *walk2 = ic->prev; walk2 && walk2->op == SEND; walk2 = walk2->prev)
     {
       asmop *warg = aopArg (ftype, walk2->argreg);
       wassert (warg);
       a_dead &= (warg->regs[A_IDX] < 0);
       hl_dead &= (warg->regs[L_IDX] < 0 && warg->regs[H_IDX] < 0);
-      de_dead &= ((-1) < 0 && (-1) < 0);
+      iy_dead &= (warg->regs[IYL_IDX] < 0 && warg->regs[IYH_IDX] < 0);
     }
 
-  genMove (argreg, IC_LEFT (ic)->aop, a_dead, hl_dead, de_dead, true);
+  genMove (argreg, IC_LEFT (ic)->aop, a_dead, hl_dead, true, iy_dead);
   
   for (int i = 0; i < IC_LEFT (ic)->aop->size; i++)
     if (!regalloc_dry_run)
@@ -5487,7 +5494,7 @@ genCall (const iCode *ic)
         IC_RESULT (ic)->aop->aopu.aop_stk + (IC_RESULT (ic)->aop->aopu.aop_stk >
             0 ? _G.stack.param_offset : 0);
       sp_offset = fp_offset + _G.stack.pushed + _G.stack.offset;
-      pair = (ic->op == PCALL && !IY_RESERVED) ? PAIR_IY : PAIR_HL;
+      pair = (ic->op == PCALL && !IY_RESERVED && !aopArgsUseIY (ftype)) ? PAIR_IY : PAIR_HL;
       {
           emit2 ("ld %s, !immedword", _pairs[pair].name, (unsigned)sp_offset);
           if (pair == PAIR_IY)
@@ -5637,6 +5644,48 @@ genCall (const iCode *ic)
              BA when IY is reserved), push it, then `jp hl` — the callee's RET
              returns to the label emitted right after.  Near function pointers
              are same-bank, so a plain jp hl is correct. */
+          bool hl_parm = s1c88IsParmInCall (ftype, "l") || s1c88IsParmInCall (ftype, "h");
+
+          if (hl_parm)
+            {
+              /* HL carries an argument, so it cannot transport the function
+                 pointer to a `jp hl` (this silently dropped the HL argument
+                 before).  RET-dispatch instead: build [fptr][retaddr] on the
+                 stack through a parked HL, then `ret` pops the target. */
+              symbol *tlbl = regalloc_dry_run ? 0 : newiTempLabel (NULL);
+              int slots = jump ? 2 : 4;
+              adjustStack (prestackadjust, a_not_parm, bc_not_parm, true, false, false);
+              emit2 ("add sp, !immed%d", -slots);
+              cost2 (4, 0, 0, 0, 0, 0, 0, 0);
+              emit2 ("push hl");                    /* park the HL argument */
+              cost2 (1, 11, 11, 10, 16, 8, 3, 4);
+              _G.stack.pushed += slots + 2;
+              genMove (ASMOP_HL, IC_LEFT (ic)->aop, false, true, true, false);
+              emit2 ("ld %d (sp), hl", 2);          /* the function pointer */
+              cost2 (3, 0, 0, 0, 0, 0, 0, 0);
+              if (!jump)
+                {
+                  if (!regalloc_dry_run)
+                    emit2 ("ld hl, !immed!tlabel", labelKey2num (tlbl->key));
+                  cost2 (3, 10, 9, 6, 12, 6, 3, 3);
+                  emit2 ("ld %d (sp), hl", 4);      /* the return address */
+                  cost2 (3, 0, 0, 0, 0, 0, 0, 0);
+                }
+              emit2 ("pop hl");                     /* the argument, restored */
+              cost2 (1, 10, 9, 7, 12, 10, 3, 3);
+              _G.stack.pushed -= slots + 2;
+              spillPair (PAIR_HL);
+              /* ret pops the fptr slot; the callee's ret pops the retaddr.
+                 The ;pcall tag tells the peephole liveness scan that this ret
+                 is a CALL (arguments are read by the callee). */
+              emit2 ("ret\t;pcall");
+              cost2 (1, 10, 9, 8, 16, 10, 6, 5);
+              if (!jump && tlbl)
+                emitLabel (tlbl);
+            }
+          else
+            {
+
           spillPair (PAIR_HL);
           genMove (ASMOP_HL, IC_LEFT (ic)->aop, a_not_parm, true, de_not_parm, true);
           adjustStack (prestackadjust, a_not_parm, bc_not_parm, de_not_parm, false, false);
@@ -5649,22 +5698,49 @@ genCall (const iCode *ic)
           else
             {
               symbol *tlbl = regalloc_dry_run ? 0 : newiTempLabel (NULL);
-              PAIR_ID rp = !IY_RESERVED ? PAIR_IY : PAIR_BA;   /* free pair to hold the return address */
-              if (!regalloc_dry_run)
-                emit2 ("ld %s, !immed!tlabel", _pairs[rp].name, labelKey2num (tlbl->key));
-              cost2 (rp == PAIR_IY ? 4 : 3, 10, 9, 6, 12, 6, 3, 3);
-              /* raw push: the return address is consumed by the callee's RET,
-                 so _G.stack.pushed is unchanged across the call. */
-              emit2 ("push %s", _pairs[rp].name);
-              if (rp == PAIR_IY)
-                cost2 (2, 15, 14, 12, 16, 8, 4, 5);
+              /* a free pair for the return address: IY unless reserved or
+                 carrying an argument; BA unless carrying arguments */
+              PAIR_ID rp = PAIR_INVALID;
+              if (!IY_RESERVED && !aopArgsUseIY (ftype))
+                rp = PAIR_IY;
+              else if (!s1c88IsParmInCall (ftype, "a") && !s1c88IsParmInCall (ftype, "b"))
+                rp = PAIR_BA;
+              if (rp != PAIR_INVALID)
+                {
+                  if (!regalloc_dry_run)
+                    emit2 ("ld %s, !immed!tlabel", _pairs[rp].name, labelKey2num (tlbl->key));
+                  cost2 (rp == PAIR_IY ? 4 : 3, 10, 9, 6, 12, 6, 3, 3);
+                  /* raw push: the return address is consumed by the callee's RET,
+                     so _G.stack.pushed is unchanged across the call. */
+                  emit2 ("push %s", _pairs[rp].name);
+                  if (rp == PAIR_IY)
+                    cost2 (2, 15, 14, 12, 16, 8, 4, 5);
+                  else
+                    cost2 (1, 11, 11, 10, 16, 8, 3, 4);
+                }
               else
-                cost2 (1, 11, 11, 10, 16, 8, 3, 4);
+                {
+                  /* every pair carries arguments: build the return address in
+                     a reserved stack slot through HL (the function pointer is
+                     parked on the stack meanwhile) */
+                  emit2 ("add sp, !immed%d", -2);   /* the return-address slot */
+                  cost2 (4, 0, 0, 0, 0, 0, 0, 0);
+                  emit2 ("push hl");                /* park the function pointer */
+                  cost2 (1, 11, 11, 10, 16, 8, 3, 4);
+                  if (!regalloc_dry_run)
+                    emit2 ("ld hl, !immed!tlabel", labelKey2num (tlbl->key));
+                  cost2 (3, 10, 9, 6, 12, 6, 3, 3);
+                  emit2 ("ld %d (sp), hl", 2);
+                  cost2 (3, 0, 0, 0, 0, 0, 0, 0);
+                  emit2 ("pop hl");
+                  cost2 (1, 10, 9, 7, 12, 10, 3, 3);
+                }
               emit2 ("!jphl");
               regalloc_dry_run_cost += 1;
               if (tlbl)
                 emitLabel (tlbl);
             }
+          }
         }
     }
   else
@@ -6139,10 +6215,10 @@ genEndFunction (iCode *ic)
        }
       else // Do it the hard way: Copy return address on stack before stack pointer adjustment.
         {
-          if (poststackadjust == 1)
-            {
-              /* S1C88: stage the return-address bytes in A/B (the z80 used
-                 D/E); BA may hold the return value, so it is saved around. */
+          {
+              /* S1C88: stage the return-address bytes in A/B and copy them up
+                 by poststackadjust (the z80 used ex (sp),hl + D/E); BA may
+                 hold the return value, so it is saved around. */
               _push (PAIR_HL);
               _push (PAIR_BA);
               emit2 ("ld hl, !immedword", 4u);
@@ -6154,6 +6230,8 @@ genEndFunction (iCode *ic)
               emit3w (A_INC, ASMOP_HL, 0);
               emit2 ("ld b, (hl)");
               cost2 (1, 7, 6, 5, 8, 6, 2, 2);
+              emit2 ("add hl, !immed%d", poststackadjust - 1);
+              cost2 (3, 0, 0, 0, 0, 0, 0, 0);
               emit2 ("ld (hl), a");
               cost2 (1, 7, 7, 6, 8, 6, 2, 2);
               emit3w (A_INC, ASMOP_HL, 0);
@@ -6161,12 +6239,6 @@ genEndFunction (iCode *ic)
               cost2 (1, 7, 7, 6, 8, 6, 2, 2);
               _pop (PAIR_BA);
               _pop (PAIR_HL);
-            }
-          else {
-              /* The z80 did this with ex (sp), hl + DE; no S1C88 equivalent
-                 without a free pair — the IY branch above handles the
-                 realistic cases. */
-              UNIMPLEMENTED;
             }
 
           adjustStack (poststackadjust,
@@ -13149,36 +13221,6 @@ genAssign (const iCode *ic)
   else if (size == 2 && getPairId (right->aop) != PAIR_INVALID)
     genMove (result->aop, right->aop, isRegDead (A_IDX, ic), isPairDead (PAIR_HL, ic), true, isPairDead (PAIR_IY, ic));
 
-  else if (size == 4 && (requiresHL (right->aop) && right->aop->type != AOP_REG) && (requiresHL (result->aop) && result->aop->type != AOP_REG) && (IY_RESERVED))
-    {
-      /* Special case - simple memcpy */
-      if (!regalloc_dry_run)
-        {
-          aopGet (right->aop, LSB, FALSE);
-          emit2 ("ld d, h");
-          emit2 ("ld e, l");
-          aopGet (result->aop, LSB, FALSE);
-        }
-      regalloc_dry_run_cost += 8;       // Todo: More exact cost here!
-
-      while (size--)
-        {
-          emit2 ("ld a, !mems", "de");
-          cost2 (1, 7, 6, 6, 8, 6, 2, 2);
-          if (size != 0)
-            {
-              emit2 ("!lldahli");
-              emit2 ("inc de");
-              regalloc_dry_run_cost += 3;
-            }
-          else
-            {
-              emit2 ("ld !*hl, a");
-              cost2 (1, 7, 7, 7, 8, 6, 2, 2);
-            }
-        }
-      spillPair (PAIR_HL);
-    }
   else
     {
       if ((result->aop->type == AOP_REG || result->aop->type == AOP_STK || result->aop->type == AOP_EXSTK || result->aop->type == AOP_IY || result->aop->type == AOP_HL) && (right->aop->type == AOP_REG || right->aop->type == AOP_STK || right->aop->type == AOP_EXSTK || right->aop->type == AOP_LIT || right->aop->type == AOP_IMMD || right->aop->type == AOP_DIR || right->aop->type == AOP_IY || right->aop->type == AOP_HL))
@@ -13441,7 +13483,7 @@ genReceive (const iCode *ic)
       if (!dead_regs[result->aop->aopu.aop_reg[i]->rIdx])
         UNIMPLEMENTED;
 
-  genMove (result->aop, aopArg (currFunc->type, ic->argreg), dead_regs[A_IDX], dead_regs[L_IDX] && dead_regs[H_IDX], true && true, true);
+  genMove (result->aop, aopArg (currFunc->type, ic->argreg), dead_regs[A_IDX], dead_regs[L_IDX] && dead_regs[H_IDX], true, dead_regs[IYL_IDX] && dead_regs[IYH_IDX]);
 
   freeAsmop (IC_RESULT (ic), NULL);
 }

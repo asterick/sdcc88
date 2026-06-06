@@ -354,8 +354,8 @@ z80MightRead(const lineNode *pl, const char *what)
   if(ISINST(pl->line, "reti") || ISINST(pl->line, "retn"))
     return(strcmp(what, "sp") == 0);
 
-  if(ISINST(pl->line, "ret")) // --reserve-regs-iy and the sm83 port use ret in code gen for calls through function pointers
-    return((IY_RESERVED) ? s1c88IsReturned(what) || z80MightBeParmInCallFromCurrentFunction(what) : s1c88IsReturned(what)) || strcmp(what, "sp") == 0;
+  if(ISINST(pl->line, "ret")) // S1C88: a ;pcall-tagged ret IS a function-pointer CALL (RET-dispatch) — its arguments are read by the callee
+    return s1c88IsReturned(what) || (strstr(pl->line, ";pcall") && z80MightBeParmInCallFromCurrentFunction(what)) || strcmp(what, "sp") == 0;
 
   if(!strcmp(pl->line, "ex\t(sp), hl") || !strcmp(pl->line, "ex\t(sp),hl"))
     return(!strcmp(what, "h") || !strcmp(what, "l") || strcmp(what, "sp") == 0);
