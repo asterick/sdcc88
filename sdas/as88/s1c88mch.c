@@ -25,7 +25,11 @@ VOID
 minit()
 {
 	hilo = 0;		/* S1C88 is little-endian */
-	exprmasks(4);		/* set up expression/address masks (≤ 4-byte space) */
+	exprmasks(3);		/* 24-bit address space (XL3) — matches the S1C88 CB:PC/EP:offset
+				   model, and the byte-extraction reloc collapse (R_BYT3/R_HIB —
+				   the __far page byte) is only correct in the 3-byte record format
+				   (the proven mcs51/stm8 configuration; under XL4 the linker left a
+				   stray slot byte that corrupted the instruction stream) */
 }
 
 /*

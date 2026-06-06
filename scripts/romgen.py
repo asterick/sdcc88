@@ -9,14 +9,27 @@
 #   bank 0 (common):  physical = logic                       (cart ROM uses 0x2100..0x7FFF)
 #   bank N (N>=1):    physical = N*0x8000 + (logic & 0x7FFF)
 #
+# __far DATA areas (task #9) use the PHYSICAL convention instead: the linker locates them at their
+# true 24-bit physical address (so the codegen's EP page byte, (sym >> 16), is the address the data
+# bus sees — data reads are EP-linear, not CB-banked).  Those ranges must be declared explicitly
+# with --far=start-end (repeatable, hex ok), because a physical address is indistinguishable from a
+# (bank<<16)|logic code address by value alone.  Keep far-data banks disjoint from code banks.
+#
 # The .min file's byte 0 is physical 0x2100 (the cart header), so file_offset = physical - 0x2100.
 #
-#   romgen.py in.ihx out.min
+#   romgen.py in.ihx out.min [--far=start-end]...
 import sys
 
 def main():
-    if len(sys.argv) != 3:
-        sys.exit("usage: romgen.py in.ihx out.min")
+    args = [a for a in sys.argv[1:] if not a.startswith('--far=')]
+    far = []
+    for a in sys.argv[1:]:
+        if a.startswith('--far='):
+            s, e = a[6:].split('-')
+            far.append((int(s, 0), int(e, 0)))
+    if len(args) != 2:
+        sys.exit("usage: romgen.py in.ihx out.min [--far=start-end]...")
+    sys.argv[1:3] = args
     hi = 0           # extended linear address (high 16 bits)
     mem = {}         # file_offset -> byte
     for line in open(sys.argv[1]):
@@ -31,8 +44,11 @@ def main():
         elif typ == 0x00:                    # data
             for i, val in enumerate(data):
                 a = (hi << 16) | (addr + i)
-                bank, logic = a >> 16, a & 0xFFFF
-                phys = logic if bank == 0 else bank * 0x8000 + (logic & 0x7FFF)
+                if any(s <= a <= e for s, e in far):
+                    phys = a                 # __far data: located at its physical address
+                else:
+                    bank, logic = a >> 16, a & 0xFFFF
+                    phys = logic if bank == 0 else bank * 0x8000 + (logic & 0x7FFF)
                 off = phys - 0x2100
                 if off < 0:
                     sys.exit("byte at phys 0x%06x is below the cart base 0x2100" % phys)

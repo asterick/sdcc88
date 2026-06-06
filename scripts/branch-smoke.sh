@@ -38,7 +38,7 @@ EOF
 "$SDAS" -l -o "$tmp/br.rel" "$tmp/br.asm" || { echo "FAIL: assemble"; exit 1; }
 
 # Concatenated code bytes from the listing.
-got="$(grep -E '^ +[0-9A-F]{8} ' "$tmp/br.lst" | cut -c14-37 | tr -d ' \n' | tr 'a-f' 'A-F')"
+got="$(grep -E '^ +[0-9A-F]{6} ' "$tmp/br.lst" | cut -c14-37 | tr -d ' \n' | tr 'a-f' 'A-F')"
 
 # Hand-computed displacements (8-bit rr = target - rr_addr; 16-bit qqrr =
 # target - first_disp_addr - 1):
