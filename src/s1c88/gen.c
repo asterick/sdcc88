@@ -5991,6 +5991,17 @@ genFunction (const iCode * ic)
       cost2 (1, 11, 11, 10, 16, 8, 3, 4);
       emit2 ("push iy");
       cost2 (2, 15, 14, 12, 16, 8, 4, 5);
+      /* EP hygiene (__far, abi-decision.md #9): the interrupt may have hit
+         inside a far-access window (EP != 0), and the handler's near codegen
+         relies on the EP=0 invariant — EP is NOT in the hardware save set
+         (only CB:PC and SC are), so save it and zero it; the epilogue
+         restores it before RETE.  (A is free here: BA was just saved.) */
+      emit2 ("ld a, ep");
+      cost (2, 2);
+      emit2 ("push a");
+      cost (1, 3);
+      emit2 ("ld ep, #0x00");
+      cost (3, 3);
     }
   else
     {
@@ -6160,7 +6171,12 @@ genEndFunction (iCode *ic)
   if (IFFUNC_ISISR (sym->type))
     {
       /* Restore the GP registers saved by the prologue, in reverse order
-         (RETE will restore SC/flags + the interrupt mask). */
+         (RETE will restore SC/flags + the interrupt mask).  EP first — the
+         interrupted code may have been inside a far-access window. */
+      emit2 ("pop a");
+      cost (1, 3);
+      emit2 ("ld ep, a");
+      cost (2, 2);
       emit2 ("pop iy");
       cost2 (2, 12, 10, 8, 12, 10, 4, 5);
       emit2 ("pop hl");

@@ -84,3 +84,8 @@ int pdiff(void) { return (int)(q - p); }
 /* far pointer <-> long */
 unsigned long f2l(void) { return (unsigned long)p; }
 void l2f(unsigned long v) { p = (char __far *)v; }
+
+/* ISR EP hygiene: the handler saves+zeroes EP (the interrupt may hit inside
+   a far-access window), does its own far access, restores EP before rete */
+char isr_sink;
+void isr_far(void) __interrupt(1) { isr_sink = *p; }
