@@ -3,7 +3,10 @@
 **This is the single resume entry point.** If the prompt is *"let's pick up where you left off,"* do the
 steps under **NEXT ACTION**. Everything needed to continue is here or linked from here.
 
-_Last updated: 2026-06-05 (session 17: **#7b COMPLETE + #7c nearly done** — every option mode
+_Last updated: 2026-06-05 (session 18: **task #7 CLOSED** — #7c finale done: the phantom asmops are
+deleted, zero phantom-register emissions remain, two more corpus blind spots (struct-by-value args,
+jump tables) found+fixed, native byte pushes throughout; corpus 18/18 + all option modes GREEN. See
+"Session 18". Earlier: session 17: **#7b COMPLETE + #7c nearly done** — every option mode
 (`--fomit-frame-pointer`/`--opt-code-size`/`--reserve-iy` combos) now produces 0 sdas88 errors (two
 were broken); the EXSTK/omit machinery, genIpush, call-saves, IY-half access, commitPair, makeFreePairId
 all retargeted to BA/IY idioms; `__sfr` = plain memory; 108 constant liveness predicates folded; the 26
@@ -159,7 +162,58 @@ the broader operand-placement work so the allocator keeps 16-bit operands in BA/
 > A from-scratch big-bang reshape was tried and **reset** (unverifiable-red for the whole grind). The dead
 > WIP is in reflog `417bed5` — useful only as a reference for the *end-state* register defs.
 
-## Session 17 (2026-06-05) — #7b COMPLETE; #7c mostly done (the symbol deletion finale remains)
+## Session 18 (2026-06-05) — #7c COMPLETE: zero phantom-register emissions; task #7 CLOSED
+
+**The register-model sweep is DONE.** The phantom z80 registers (C/D/E bytes, BC/DE pairs, the
+combined DEHL/HLDE/HLBC/DEBC long asmops) no longer exist as *emittable things*: the asmop structs,
+their ASMOP_* handles and init code are deleted; every site that could name them is retargeted or
+gone. Commits `7d309f2`..`456b259`:
+
+- **Two more REACHABLE blind spots found and fixed** (the s14 lesson, counts 4 and 5):
+  **struct-by-value argument pushes** (`genIpushValueAtAddress` emitted `ld c,(hl)/push bc/push af/
+  inc sp`; now a BA pair walk + native 1-byte `push a`, live HL stashed in a dead IY) and
+  **jump tables** (`genJumpTab` picked phantom DE/BC for the table-offset add; now `add hl,ba` ×2 +
+  `ld a,(hl); inc hl; ld h,(hl); ld l,a; jp hl`). **`scripts/corpus/18_jumptab.c`** added; corpus
+  is now 18 files.
+- **Native byte pushes everywhere** (`push a/b/l/h`, CF B0–B3): the entire z80 `push pair; inc sp`
+  odd-byte machinery is gone — incl. the raw `push af` arms (NOT encodable: only the byte forms and
+  `push sc` exist). The all-byte-regs-live fallback stages via a reserved pair slot +
+  `ld 2 (sp), hl` + `inc sp`.
+- **Active latent bugs killed en route:** genLeftShift's `countreg = C` fallback (an always-true arm
+  after constant-folding — a `--reserve-iy` miscompile-in-waiting); genCmp's `ccf` sign-flip arm
+  (ccf doesn't exist); genPlus's uninitialized-B `add hl, bc` byte-literal trick (now A over
+  `add hl, ba` with a dead-A gate); genMove_o's 16-bit-load-into-BC arm; genCall's bigreturn
+  IY-path stack imbalance; commitPair's missing PAIR_BA arm (getDeadPairId returns BA — the old
+  switch wassert(0)'d); makeFreePairId returned phantom BC whenever B was dead.
+- **genEndFunction's callee-cleanup "hard way"** return-address hop stages through a saved BA
+  (poststackadjust==1) and is a loud UNIMPLEMENTED otherwise; **genRet's register-bigreturn** writes
+  the hidden buffer through IY (`ld iy,(hl)` + `ld (iy),a`); **gencjneshort's** PAIRPTR fallback
+  compares through B inside a saved BA; **restoreRegs/cheapMove/regMove/genCopy/genSwap/genOr/
+  shiftL2/genPointerSet** all lost their C/D/E/DE/BC arms (retargeted to BA/HL/IY idioms or deleted
+  where operand-impossible); **aopRet/aopArg map the legacy z80 conventions** (sdcccall(0), smallc,
+  z88dk_fastcall) **to the native S1C88 registers**.
+- **All C/D/E register reads constant-folded globally** — sound now that no asmop contains those
+  ordinals: `regs[C/D/E_IDX]` ≡ −1, `aopInReg (…, C/D/E/DE/BC_IDX)` ≡ false, rMask bits ≡ 0.
+- **What deliberately REMAINS (inert, documented):** the `PAIR_BC`/`PAIR_DE` enum members and
+  `C/D/E_IDX` ordinals as *names only* — the `_pairs[]` "bc"/"de" rows, the ralloc reg-table rows,
+  `ralloc2.cc`'s `REG_C/D/E` defines, and graceful phantom arms in `isPairDead`/`isPairInUse`
+  (variable pair-ids still flow through them; PAIR_DE ≡ dead, PAIR_BC ≡ B). Deleting them is a pure
+  renumber of internal ordinals (the allocator only assigns 0..3) with zero behavioral effect —
+  optional cosmetics, not debt. **IYL/IYH_IDX stay by design** (they are ASMOP_IY's byte-wise
+  representation, load-bearing for the IY-pair support).
+- ⚠ Process note: a sloppy text-anchor splice deleted 3,400 lines mid-session (`UNIMPLEMENTED;`
+  matched an earlier site). Recovered by replaying the (deterministic) edit scripts from the last
+  checkpoint — **commit checkpoints after every verified slice.**
+
+**Verification: corpus 18/18 byte-identical 0 sdas88 errors; rom/link/branch smoke GREEN; 0 issues
+across 7 option-mode combos × 29 test files** (struct args/returns, jump tables, long compares,
+forced omit-frame-pointer, reserve-iy, opt-code-size/speed).
+
+**Remaining open tasks: #8 (IX/IY argument passing), #9 (3-byte far pointers).** Also noted:
+`s1c88instructionSize()` can't size `add sp,#imm` / `bcall`/`bjump` (assumes 999 → pessimizes
+branch shortening around calls) — a small peep.c improvement.
+
+## Session 17 (2026-06-05) — #7b COMPLETE; #7c was mostly done (the symbol deletion finale remained)
 
 **#7b is CLOSED and #7c is down to guard-dead residue + the symbol deletion proper.** Commits
 `c3ef689`..`ff8941a`:
