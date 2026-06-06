@@ -3,7 +3,15 @@
 **This is the single resume entry point.** If the prompt is *"let's pick up where you left off,"* do the
 steps under **NEXT ACTION**. Everything needed to continue is here or linked from here.
 
-_Last updated: 2026-06-05 (session 20: **task #9 — 3-byte `__far` pointers — DONE end-to-end** in 5
+_Last updated: 2026-06-06 (session 21: **native DIV** — `genDiv`/`genMod` retargeted from support
+calls to the native `DIV` (`CE D9`, unsigned `HL÷A` → L quotient, H remainder): unsigned 8÷8 is a
+single DIV, unsigned 16÷8 (literal divisors in practice — C promotion widens variable u8 divisors)
+is the two-DIV schoolbook chain with provably-fitting partial quotients; `_hasNativeMulFor` now
+claims `'/'`/`'%'` for exactly those shapes, `HLinst_ok` treats them like `'*'`, byte-granular A/B
+saves, signed/16-bit-divisor/32-bit stay support calls. Design in abi-decision.md "Native DIV";
+corpus file `20_div.c`; **corpus 20/20 byte-identical 0 errors, all smokes GREEN, 7 option-mode
+combos clean.** Commits `1da6979` + `9cf0371`. See "Session 21". Earlier: session 20: **task #9 —
+3-byte `__far` pointers — DONE end-to-end** in 5
 slices: port config + shared-glue emission (far objects = const ROM, 3-byte initializers), the
 HL+EP deref idiom (genFarPointerGet/Set, the EP=0 invariant, EP-toggle walks for absolutes — incl.
 a peephole-fold hazard found the hard way), 24-bit arithmetic/compares/casts (three
@@ -116,9 +124,9 @@ complete**. The remaining work is cleanup + ABI completeness (the register-model
 
 1. Confirm green: `./scripts/dev.sh` → builds the compiler + smoke test → `GREEN`.
 2. The codegen retarget is **functionally complete for the verification corpus** — every *reachable*
-   z80-ism it exposes is gone: **19/19 corpus files assemble with 0 `sdas88` errors** (incl.
-   `19_far.c`, the #9 far-pointer cluster), and the full assemble→link→banked-ROM pipeline — now
-   including **far ROM data** — is GREEN. (Session 14 proved "functionally complete" claims are
+   z80-ism it exposes is gone: **20/20 corpus files assemble with 0 `sdas88` errors** (incl.
+   `19_far.c`, the #9 far-pointer cluster, and `20_div.c`, the native-DIV cluster), and the full
+   assemble→link→banked-ROM pipeline — now including **far ROM data** — is GREEN. (Session 14 proved "functionally complete" claims are
    only as strong as the corpus — keep extending `scripts/corpus/` when touching new codegen territory.)
    All the feature gaps are closed: compares / 8- and 16-bit
    ALU / shifts (sessions 1–4), the **`ldir` struct-copy cluster** (session 5), **`bcall`/`bjump` for
@@ -135,7 +143,9 @@ complete**. The remaining work is cleanup + ABI completeness (the register-model
    - far bit-fields (loud UNIMPLEMENTED), far function pointers / banked *indirect* calls (needs a
      CB-switch dispatch story — direct banked calls work via bcall/bjump).
    - the inert `PAIR_BC`/`PAIR_DE`/`C/D/E_IDX` name removal (pure renumber, s18).
-   - native `DIV` for genDiv/genMod (support calls today, as on z80) and other peephole/cost tuning.
+   - ~~native `DIV` for genDiv/genMod~~ **DONE (session 21)** — unsigned 8÷8 and 16÷8 use the native
+     `DIV`; signed/16-bit-divisor/32-bit stay support calls (claiming signed would need a
+     negate-fixup story). Other peephole/cost tuning remains open-ended.
 4. **Validator workflow** (how to check a slice): compile with `sdcc -ms1c88 --c1mode -o /tmp/x.asm`, then
    `scripts/validate-s1c88.sh /tmp/x.asm` (assembles with `sdas88`; any reject = a z80-ism to fix). For a
    refactor, also confirm **byte-identical** codegen across the corpus (the strongest safety check).
@@ -174,6 +184,46 @@ the broader operand-placement work so the allocator keeps 16-bit operands in BA/
 
 > A from-scratch big-bang reshape was tried and **reset** (unverifiable-red for the whole grind). The dead
 > WIP is in reflog `417bed5` — useful only as a reference for the *end-state* register defs.
+
+## Session 21 (2026-06-06) — native DIV: unsigned 8÷8 and 16÷8 division/modulus
+
+**The "native DIV" polish item is DONE.** `genDiv`/`genMod` no longer wassert — unsigned divisions
+with an 8-bit divisor run on the hardware `DIV` (`CE D9`, unsigned `HL ÷ A` → L quotient,
+H remainder, 2 B/13 cyc, MODEL1/3 — present on the Pokémon Mini core). Commits `1da6979` (8÷8) +
+`9cf0371` (16÷8), each corpus-gated. Design + the exact claim/codegen contract in
+**abi-decision.md "Native DIV"**. The essentials:
+
+- **The claim** (`_hasNativeMulFor`, main.c — SDCCopt consults it for `'/'`/`'%'` too; what it
+  declines keeps the `__div*`/`__mod*` support calls, so the claim must exactly match codegen):
+  unsigned ≤16-bit dividend ÷ (unsigned char | literal 1..255). Signed, 16-bit divisors, 32-bit:
+  not claimed. A zero divisor now raises the **hardware zero-division exception** (C UB; was
+  support-call garbage). **C promotion caveat:** `u16 / u8var` widens the divisor to uint, so the
+  variable-divisor 16÷8 only claims post-narrowing — in practice 16-bit claims are *literal*
+  divisors (`x/10`, `x%10`: binary-to-decimal dropped from a `__divuint` bcall each to ~10 bytes
+  inline).
+- **8÷8** (`genDivMod`, gen.c): `dividend→L, 0→H, divisor→A; div`; quotient L / remainder H;
+  staging is clobber-ordered (divisor-first when its home is L/H; a stack bounce `push a/l/h …
+  pop l` for the circular A↔L and requiresHL-divisor shapes); live non-operand A saved
+  byte-granular (the genMultOneChar scheme).
+- **16÷8**: the schoolbook base-256 chain — `ld b,l; ld l,h; ld h,#0; div` (qhi, running
+  remainder r), `[push l;] ld l,b; div [; pop h]` (qlo; HL = full quotient after the pop). Both
+  partial quotients provably fit (r < divisor ≤ 255 ⇒ `(r:lo)/d < 256`) — V never set; DIV
+  preserves A between steps; the qhi push/pop is skipped for `'%'`/1-byte quotients; a live B
+  (the chain's lo-byte home) gets a byte-granular save with `_G.stack.pushed` keeping SP-relative
+  operand math right across it (verified: live char in B across `x/10`).
+- **Allocator/peephole:** `HLinst_ok` (ralloc2.cc) treats `'/'`/`'%'` like `'*'` (DIV clobbers HL;
+  live non-operand values stay out — safe to add unconditionally: unclaimed divisions are already
+  CALL iCodes at allocation time); both ops moved to the exact-cost dry-run list. peep.c: `div`
+  sizes 2, reads no flags, surely writes Z/N/C/V (the mlt pattern).
+- **Verification:** `scripts/corpus/20_div.c` (single/literal/memory/pointer/condition/chained/
+  divmod-pair/live-A+B/16÷8 incl. dec3 + the unclaimed support-call shapes) — corpus **20/20
+  byte-identical 0 sdas88 errors**; rom/link/branch smokes GREEN; 3 div stress files × 7
+  option-mode combos 0 errors; q10/r10/keepb/dec3/divmod_uu/bigframe-EXSTK hand-traced (no
+  execution test — the corpus checks legality, not runtime semantics).
+
+**Remaining polish after this:** Epson-faithful Phase-3 register args, far bit-fields, far
+function pointers / banked indirect calls, the inert PAIR_BC/DE names, peephole/cost tuning —
+and optionally a signed-division claim (negate-fixup around DIV) if profile data ever wants it.
 
 ## Session 20 (2026-06-05) — task #9 (3-byte __far pointers) DONE end-to-end
 

@@ -286,6 +286,39 @@ needs far areas located at physical 24-bit addresses and byte-3 extraction reloc
 ASxxxx 16-bit-address pipeline — likely an `R_S1C88_BANK`-style reloc on the third byte, exactly
 like the `bcall` bank slot. Far *code* pointers (banked indirect calls) are out of #9's scope.
 
+## Native DIV (decided + implemented 2026-06-06, sessions: commits `1da6979`, `9cf0371`)
+
+The S1C88 `DIV` (`CE D9`, 2 B / 13 cyc, MODEL1/3 — present on the Pokémon Mini core) computes the
+**unsigned** `HL ÷ A` → quotient `L`, remainder `H`. `V` is set (and HL kept) when the quotient
+exceeds 8 bits; `A = 0` raises the **hardware zero-division exception** (C UB — a program dividing
+by zero vectors through exception processing instead of returning garbage like the old support
+call; documented, acceptable).
+
+**What's claimed natively** (`_hasNativeMulFor`, which SDCCopt consults for `'/'`/`'%'` too —
+unclaimed shapes keep the `__div*`/`__mod*` support calls, so claims must exactly match codegen):
+- **unsigned 8 ÷ 8** (both `unsigned char`, or a literal divisor 1..255): one `DIV` — quotient and
+  remainder always fit, `V` never set. `ld l,<dividend>; ld a,<divisor>; ld h,#0; div`.
+- **unsigned 16 ÷ 8** (unsigned ≤16-bit dividend, same divisor classes): the **two-DIV schoolbook
+  base-256 chain** — `ld b,l; ld l,h; ld h,#0; div` (L=qhi, H=r), `[push l;] ld l,b; div [; pop h]`
+  (L=qlo, H=remainder; after `pop h`, HL = the full quotient). Both partial quotients provably fit
+  (the running remainder is < the divisor ≤ 255); `DIV` preserves A (the divisor) between steps.
+  The qhi `push/pop` is skipped for `'%'` and 1-byte-quotient results. **C promotion caveat:**
+  `u16 / u8var` promotes the divisor to `unsigned int`, so the *variable*-divisor 16÷8 only claims
+  when the middle end narrows it back — in practice the 16-bit claims are **literal** divisors
+  (`x/10`, `x%10` — the binary-to-decimal workhorse, previously a `__divuint` call each).
+- **Not claimed:** signed (sign-fixup not worth it yet), 16-bit divisors, 32-bit anything.
+
+**Codegen contract** (`genDivMod` in gen.c): staging is clobber-ordered (divisor-first when its
+home is L/H or already A; dividend-first + a stack bounce — `push a/l/h … pop l`, or `push hl …
+pop hl` for the 16-bit path — when the divisor read `requiresHL`); a live non-operand A gets the
+byte-granular `push a` save (the genMultOneChar scheme), and the 16-bit chain saves a live B the
+same way (`_G.stack.pushed` keeps SP-relative operand math right across the saves). `HLinst_ok`
+(ralloc2.cc) treats `'/'`/`'%'` like `'*'` — DIV clobbers HL, so the allocator keeps live
+non-operand values out of HL across it; both ops run the exact-cost dry-run path. peep.c: `div`
+sizes 2, reads no flags, surely writes Z/N/C/V. Corpus: `scripts/corpus/20_div.c`.
+
+`genDiv`/`genMod` (the old "handled through support calls" wasserts) both route to `genDivMod`.
+
 ### Verification meters
 The **primary validator is `sdas88`**: `scripts/validate-s1c88.sh <file.asm>` assembles emitted codegen and
 freq-ranks any form the S1C88 can't encode — catching wrong encodings/flags/sizes/register-classes, i.e.

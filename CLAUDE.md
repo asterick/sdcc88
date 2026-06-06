@@ -10,9 +10,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 > the **EP=0 invariant**, far objects = const ROM data in area `_FAR` (located at PHYSICAL addresses;
 > `romgen.py --far=start-end`), HLA return ABI (offset HL, page A), ISR EP hygiene, and byte-perfect
 > `(sym>>16)` page relocs after `exprmasks(3)` (XL3) — see HANDOFF "Session 20" + abi-decision.md
-> "Task #9". **19/19 corpus files assemble with 0 sdas88 errors; the banked-ROM pipeline (now incl.
-> far ROM data) is GREEN.** Remaining = optional polish only (Epson-faithful far-ptr/YP/XP register
-> args, far bit-fields, far function pointers, inert PAIR_BC/DE names, native DIV). Validate each
+> "Task #9". Plus **native DIV (s21)**: unsigned 8÷8 / 16÷8 division+modulus on the hardware `DIV`
+> (CE D9) — single DIV resp. the two-DIV base-256 chain; signed/16-bit-divisor stay support calls
+> (abi-decision.md "Native DIV"). **20/20 corpus files assemble with 0 sdas88 errors; the
+> banked-ROM pipeline (now incl. far ROM data) is GREEN.** Remaining = optional polish only
+> (Epson-faithful far-ptr/YP/XP register args, far bit-fields, far function pointers, inert
+> PAIR_BC/DE names, peephole/cost tuning). Validate each
 > change with `./scripts/corpus-check.sh` (byte-identical +
 > sdas88) — **always rebuild via the overlay (`dev.sh`/`corpus-check.sh`), never raw `make -C
 > build/.../src` (it compiles a stale copy).** (All work is on **`main`**.)
@@ -62,7 +65,7 @@ and builds the compiler.
 > S1C88 base; `scripts/branch-smoke.sh` now byte-locks the convention); s16: **#7a done — zero variant-
 > macro refs port-wide** (~2,000 dead lines, every `ex (sp),hl`/`ldir` emit gone) + the reachable
 > builtin cluster (`__builtin_memset/strcpy/strncpy/strchr`) retargeted to native byte loops with
-> corpus file `17_builtins.c`. **19/19 corpus files assemble
+> corpus file `17_builtins.c`. **20/20 corpus files assemble
 > with 0 sdas88 errors.** **Tasks #7, #8 and #9 are ALL CLOSED** (s18/s19/s20): IX is permanently
 > excluded from the argument ABI by the frame prologue; the inert PAIR_BC/PAIR_DE and C/D/E_IDX
 > names are documented optional cosmetics, not debt; and 3-byte `__far` pointers (s20) work
@@ -86,13 +89,14 @@ Decided design:
   to verify; the dead WIP is in reflog at `417bed5` as a reference for the end-state register defs.)
 
 **Progress:** the retarget is functionally complete for the verification corpus (assemble→link→ROM
-GREEN; **19/19 corpus files at 0 sdas88 errors**) and **every numbered task is closed**: the
+GREEN; **20/20 corpus files at 0 sdas88 errors**) and **every numbered task is closed**: the
 register-model sweep #7 (s16/s17/s18 — zero variant-macro refs, zero phantom-register emissions),
 IY argument passing #8 (s19), and 3-byte `__far` pointers #9 (s20 — design + idioms in
 `abi-decision.md` "Task #9"; the EP=0 invariant is load-bearing, read it before touching far
-codegen). What remains is optional polish (Epson-faithful far-ptr/YP/XP register args, far
-bit-fields, far function pointers/banked indirect calls, the inert PAIR_BC/DE names, native DIV).
-See `HANDOFF.md` for per-session commits.
+codegen). Unsigned division/modulus runs on the native `DIV` (s21 — 8÷8 single DIV, 16÷8 two-DIV
+chain; abi-decision.md "Native DIV"). What remains is optional polish (Epson-faithful
+far-ptr/YP/XP register args, far bit-fields, far function pointers/banked indirect calls, the
+inert PAIR_BC/DE names, peephole/cost tuning). See `HANDOFF.md` for per-session commits.
 
 ## Build
 
