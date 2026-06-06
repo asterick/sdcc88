@@ -688,14 +688,32 @@ _hasNativeMulFor (iCode *ic, sym_link *left, sym_link *right)
      16-bit dividend claims are literal divisors, e.g. /10.) */
   if (ic->op == '/' || ic->op == '%')
     {
-      if (!IS_INTEGRAL (left) || !IS_UNSIGNED (left) || getSize (left) > 2)
+      if (!IS_INTEGRAL (left) || getSize (left) > 2)
         return false;
-      if (IS_CHAR (right) && IS_UNSIGNED (right) && getSize (right) == 1)
-        return true;
-      if (IS_LITERAL (right))
+      if (IS_UNSIGNED (left))
         {
-          unsigned long val = ulFromVal (valFromType (right));
-          return (val > 0 && val <= 255);
+          if (IS_CHAR (right) && IS_UNSIGNED (right) && getSize (right) == 1)
+            return true;
+          if (IS_LITERAL (right))
+            {
+              unsigned long val = ulFromVal (valFromType (right));
+              return (val > 0 && val <= 255);
+            }
+        }
+      /* signed 8 / 8: branchless negate-fixup around the unsigned DIV
+         (sep mask abs + mask-applied result; ~17-26 bytes inline), so
+         keep the __divschar/__modschar support calls when optimizing
+         for code size. Negative literal divisors are rare and stay
+         support calls too. */
+      else if (!optimize.codeSize && IS_CHAR (left))
+        {
+          if (IS_CHAR (right) && !IS_UNSIGNED (right) && getSize (right) == 1)
+            return true;
+          if (IS_LITERAL (right))
+            {
+              double dval = floatFromVal (valFromType (right));
+              return (dval >= 1 && dval <= 127);
+            }
         }
       return false;
     }

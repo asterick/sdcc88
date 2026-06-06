@@ -8050,12 +8050,13 @@ release:
 /*-----------------------------------------------------------------*/
 /* genDivMod - generates code for division / modulus via the       */
 /* native DIV (CE D9): unsigned HL / A -> L quotient, H remainder. */
-/* _hasNativeMulFor claims only unsigned 8 / 8 (incl. 1..255       */
-/* literal divisors), so both results always fit (V never set). A  */
-/* zero divisor raises the hardware zero-division exception (C     */
-/* UB). DIV leaves A (the divisor) unchanged and clobbers HL —     */
-/* HLinst_ok keeps live non-operand values out of HL across '/'    */
-/* and '%'.                                                        */
+/* _hasNativeMulFor claims unsigned 8 / 8 and 16 / 8 (divisor an   */
+/* unsigned char or a literal 1..255) plus signed 8 / 8 (negate-   */
+/* fixup, not under --opt-code-size), so the claimed quotients     */
+/* always fit (V never set). A zero divisor raises the hardware    */
+/* zero-division exception (C UB). DIV leaves A (the divisor)      */
+/* unchanged and clobbers HL — HLinst_ok keeps live non-operand    */
+/* values out of HL across '/' and '%'.                            */
 /*-----------------------------------------------------------------*/
 static void
 genDivMod (iCode *ic)
@@ -8072,6 +8073,11 @@ genDivMod (iCode *ic)
             "Wide division is handled through support function calls.");
 
   const bool two_byte = (left->aop->size == 2);
+  /* The signed claim is 8 / 8 only; the C truncation semantics come out
+     of the unsigned DIV by dividing magnitudes and applying the sign
+     masks (quotient: dividend^divisor; remainder: the dividend's). */
+  const bool sign = !SPEC_USIGN (getSpec (operandType (left)));
+  wassertl (!(sign && two_byte), "Signed 16-bit division is handled through support function calls.");
 
   /* A live with a non-operand value? Save it byte-granular (the
      genMultOneChar scheme): by rSurv the result is never in the saved
@@ -8084,11 +8090,12 @@ genDivMod (iCode *ic)
       cost2 (2, 11, 11, 7, 12, 10, 3, 3);
       _G.stack.pushed += 1;
     }
-  /* The 16-bit chain stages the dividend's low byte in B. A live B is
-     saved around the whole staging+chain (the staging genMove may
-     scratch B too); an operand byte living in B is read before the
-     chain overwrites it, so the restore is correct in every case. */
-  const bool save_b = two_byte && !isRegDead (B_IDX, ic);
+  /* The 16-bit chain stages the dividend's low byte in B, and the
+     signed path uses B as the sep sign-mask home. A live B is saved
+     around the whole staging+work (the staging genMove may scratch B
+     too); an operand byte living in B is read before the work
+     overwrites it, so the restore is correct in every case. */
+  const bool save_b = (two_byte || sign) && !isRegDead (B_IDX, ic);
   if (save_b)
     {
       emit2 ("push b");
@@ -8161,7 +8168,12 @@ genDivMod (iCode *ic)
     }
 
   /* Stage dividend -> L, divisor -> A, 0 -> H, ordered so neither load
-     clobbers the other operand. */
+     clobbers the other operand. (For a signed division by a positive
+     literal only the dividend is staged — the divisor's magnitude is
+     loaded after the sign cluster has used A.) */
+  if (sign && right->aop->type == AOP_LIT)
+    cheapMove (ASMOP_L, 0, left->aop, 0, true);
+  else
   {
     const bool left_in_a = aopInReg (left->aop, 0, A_IDX);
     const bool left_in_l = aopInReg (left->aop, 0, L_IDX);
@@ -8198,20 +8210,102 @@ genDivMod (iCode *ic)
         cheapMove (ASMOP_A, 0, right->aop, 0, true);
       }
   }
-  cheapMove (ASMOP_H, 0, ASMOP_ZERO, 0, false);
+  if (!sign)
+    {
+      cheapMove (ASMOP_H, 0, ASMOP_ZERO, 0, false);
 
-  emit2 ("div");
-  cost (2, 13);
-  spillPair (PAIR_HL);
-  spillPair (PAIR_BA);          /* A holds the divisor now */
+      emit2 ("div");
+      cost (2, 13);
+      spillPair (PAIR_HL);
+      spillPair (PAIR_BA);      /* A holds the divisor now */
+    }
+  else
+    {
+      /* Branchless signed 8 / 8: |x| = (x ^ m) - m with m = sep's sign
+         mask (B <- sign of A); divide the magnitudes; re-apply the
+         result's sign the same way. Quotient sign mask = m(dividend) ^
+         m(divisor), remainder mask = m(dividend) — C truncation-toward-
+         zero semantics. For a positive literal divisor m(divisor) = 0,
+         so both ops use m(dividend) and the divisor cluster is skipped. */
+      const bool lit_pos = (right->aop->type == AOP_LIT);
+
+      if (!lit_pos)
+        {
+          emit2 ("sep");                /* B = m(divisor) */
+          cost (2, 3);
+          emit3 (A_XOR, ASMOP_A, ASMOP_B);
+          emit3 (A_SUB, ASMOP_A, ASMOP_B);
+          emit3 (A_LD, ASMOP_H, ASMOP_A);   /* park |divisor| in H */
+          if (ic->op == '/')
+            {
+              emit3 (A_LD, ASMOP_A, ASMOP_B);
+              emit2 ("push a");         /* save m(divisor) */
+              cost2 (2, 11, 11, 7, 12, 10, 3, 3);
+              _G.stack.pushed += 1;
+            }
+        }
+
+      emit3 (A_LD, ASMOP_A, ASMOP_L);
+      emit2 ("sep");                    /* B = m(dividend) */
+      cost (2, 3);
+      emit3 (A_XOR, ASMOP_A, ASMOP_B);
+      emit3 (A_SUB, ASMOP_A, ASMOP_B);
+      emit3 (A_LD, ASMOP_L, ASMOP_A);   /* L = |dividend| */
+
+      /* the result's sign mask -> stack */
+      if (!lit_pos && ic->op == '/')
+        {
+          emit2 ("pop a");              /* A = m(divisor) */
+          cost2 (2, 10, 9, 7, 12, 10, 3, 3);
+          _G.stack.pushed -= 1;
+          emit3 (A_XOR, ASMOP_A, ASMOP_B);  /* A = quotient mask */
+        }
+      else
+        emit3 (A_LD, ASMOP_A, ASMOP_B);     /* A = m(dividend) */
+      emit2 ("push a");
+      cost2 (2, 11, 11, 7, 12, 10, 3, 3);
+      _G.stack.pushed += 1;
+
+      /* |divisor| -> A, 0 -> H, divide the magnitudes */
+      if (lit_pos)
+        cheapMove (ASMOP_A, 0, right->aop, 0, true);
+      else
+        emit3 (A_LD, ASMOP_A, ASMOP_H);
+      cheapMove (ASMOP_H, 0, ASMOP_ZERO, 0, false);
+      emit2 ("div");
+      cost (2, 13);
+
+      /* magnitude -> A, apply the sign mask */
+      emit3 (A_LD, ASMOP_A, ic->op == '/' ? ASMOP_L : ASMOP_H);
+      emit2 ("pop b");
+      cost2 (2, 10, 9, 7, 12, 10, 3, 3);
+      _G.stack.pushed -= 1;
+      emit3 (A_XOR, ASMOP_A, ASMOP_B);
+      emit3 (A_SUB, ASMOP_A, ASMOP_B);      /* A = the signed result */
+      spillPair (PAIR_HL);
+      spillPair (PAIR_BA);
+    }
 
 result_move:
-  /* Quotient in L for '/' (already qhi:qlo in HL for a wide 16 / 8
-     quotient), remainder in H for '%'; all other result bytes are zero.
-     For a wide result build the full value in HL first, then move it in
-     one go (no partial-write aliasing with a result that itself lives
-     in L/H). */
-  if (result->aop->size == 1)
+  /* Unsigned: quotient in L for '/' (already qhi:qlo in HL for a wide
+     16 / 8 quotient), remainder in H for '%'; all other result bytes
+     are zero. Signed: the result byte is in A, wide results sep-extend.
+     For a wide result build the full value in a pair first, then move
+     it in one go (no partial-write aliasing with a result that itself
+     lives in that pair). */
+  if (sign)
+    {
+      if (result->aop->size == 1)
+        cheapMove (result->aop, 0, ASMOP_A, 0, true);
+      else
+        {
+          emit2 ("sep");        /* BA = the sign-extended result */
+          cost (2, 3);
+          spillPair (PAIR_BA);
+          genMove (result->aop, ASMOP_BA, true, isPairDead (PAIR_HL, ic), true, isPairDead (PAIR_IY, ic));
+        }
+    }
+  else if (result->aop->size == 1)
     cheapMove (result->aop, 0, ic->op == '/' ? ASMOP_L : ASMOP_H, 0, true);
   else
     {
@@ -8251,7 +8345,7 @@ result_move:
 static void
 genDiv (iCode *ic)
 {
-  /* Unsigned 8 / 8 comes here (claimed in _hasNativeMulFor); everything
+  /* The divisions claimed in _hasNativeMulFor come here; everything
      else was converted to a support call by the middle end. */
   genDivMod (ic);
 }

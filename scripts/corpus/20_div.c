@@ -44,8 +44,17 @@ void dec3(unsigned int v, unsigned char *out) {
   out[0] = (unsigned char)(v % 10);
 }
 
-/* --- unclaimed: support calls (bcall __divschar/__divsint/__divuint/__divulong/__moduint) --- */
+/* --- signed 8/8: branchless sep-mask negate-fixup around DIV (not under --opt-code-size) --- */
 signed char div_ss(signed char a, signed char b) { return a / b; }
+signed char mod_ss(signed char a, signed char b) { return a % b; }
+int div_ss16(signed char a, signed char b) { return a / b; }                /* sep-extended wide result */
+signed char div_ss_keep(signed char a, signed char b, signed char c) { return a / b + c; }
+signed char gsq, gsr;
+void divmod_ss(signed char a, signed char b) { gsq = a / b; gsr = a % b; } /* save_b across the first cluster */
+
+/* --- unclaimed: support calls (bcall __divsint/__divuint/__divulong/__moduint;
+       NB signed literal divisors widen to int in the middle end, so sc/10 stays __divsint) --- */
+signed char div_s10(signed char a) { return a / 10; }
 int div_ii(int a, int b) { return a / b; }
 unsigned int div_uu16v(unsigned int a, unsigned int b) { return a / b; }    /* 16-bit divisor */
 unsigned int mod_uu16v(unsigned int a, unsigned int b) { return a % b; }
