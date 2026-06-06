@@ -676,15 +676,21 @@ _hasNativeMulFor (iCode *ic, sym_link *left, sym_link *right)
     return false;
 
   /* S1C88 native DIV (CE D9, MODEL1/3 — present on the Pokémon Mini core):
-     unsigned HL / A -> quotient L, remainder H. Claim unsigned 8 / 8 only:
-     the quotient and remainder then always fit in 8 bits (V never set).
-     A zero divisor raises the hardware zero-division exception (C UB).
-     Signed and wider divisions stay support calls. */
+     unsigned HL / A -> quotient L, remainder H. Claim an unsigned dividend
+     of up to 16 bits against an unsigned 8-bit divisor: 8 / 8 is a single
+     DIV (quotient and remainder always fit; V never set), 16 / 8 is the
+     two-DIV schoolbook chain (both partial quotients provably fit, since
+     the running remainder is < the divisor <= 255). A zero divisor raises
+     the hardware zero-division exception (C UB). Signed divisions and
+     16-bit divisors stay support calls. (Note: u16 / u8var promotes the
+     divisor to unsigned int in C, so the variable-divisor 16 / 8 case
+     only claims when the middle end narrows it back — in practice the
+     16-bit dividend claims are literal divisors, e.g. /10.) */
   if (ic->op == '/' || ic->op == '%')
     {
-      if (!IS_CHAR (left) || !IS_UNSIGNED (left))
+      if (!IS_INTEGRAL (left) || !IS_UNSIGNED (left) || getSize (left) > 2)
         return false;
-      if (IS_CHAR (right) && IS_UNSIGNED (right))
+      if (IS_CHAR (right) && IS_UNSIGNED (right) && getSize (right) == 1)
         return true;
       if (IS_LITERAL (right))
         {

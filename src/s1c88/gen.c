@@ -8068,8 +8068,10 @@ genDivMod (iCode *ic)
   aopOp (right, ic, FALSE, FALSE);
   aopOp (result, ic, TRUE, FALSE);
 
-  wassertl (left->aop->size == 1 && right->aop->size <= 2,
+  wassertl (left->aop->size <= 2 && right->aop->size <= 2,
             "Wide division is handled through support function calls.");
+
+  const bool two_byte = (left->aop->size == 2);
 
   /* A live with a non-operand value? Save it byte-granular (the
      genMultOneChar scheme): by rSurv the result is never in the saved
@@ -8081,6 +8083,81 @@ genDivMod (iCode *ic)
       emit2 ("push a");
       cost2 (2, 11, 11, 7, 12, 10, 3, 3);
       _G.stack.pushed += 1;
+    }
+  /* The 16-bit chain stages the dividend's low byte in B. A live B is
+     saved around the whole staging+chain (the staging genMove may
+     scratch B too); an operand byte living in B is read before the
+     chain overwrites it, so the restore is correct in every case. */
+  const bool save_b = two_byte && !isRegDead (B_IDX, ic);
+  if (save_b)
+    {
+      emit2 ("push b");
+      cost2 (2, 11, 11, 7, 12, 10, 3, 3);
+      _G.stack.pushed += 1;
+    }
+
+  if (two_byte)
+    {
+      /* Stage dividend -> HL, divisor -> A, ordered so neither load
+         clobbers the other operand. */
+      const bool left_in_a = left->aop->regs[A_IDX] >= 0;
+      if (requiresHL (right->aop) ||
+          left_in_a && !aopInReg (right->aop, 0, A_IDX))
+        {
+          /* Dividend first (it may occupy A, or the divisor read needs
+             HL): stage it, then fetch the divisor — bouncing the staged
+             HL through the stack when the divisor read walks over it. */
+          genMove (ASMOP_HL, left->aop, true, true, true, isPairDead (PAIR_IY, ic));
+          if (requiresHL (right->aop))
+            {
+              emit2 ("push hl");
+              cost2 (1, 11, 12, 10, 16, 12, 4, 3);
+              _G.stack.pushed += 2;
+              cheapMove (ASMOP_A, 0, right->aop, 0, true);
+              emit2 ("pop hl");
+              cost2 (1, 10, 9, 7, 12, 10, 3, 3);
+              _G.stack.pushed -= 2;
+            }
+          else
+            cheapMove (ASMOP_A, 0, right->aop, 0, true);
+        }
+      else
+        {
+          /* Divisor first (a no-op when it is already in A); the
+             dividend load must then preserve A. */
+          cheapMove (ASMOP_A, 0, right->aop, 0, true);
+          genMove (ASMOP_HL, left->aop, false, true, true, isPairDead (PAIR_IY, ic));
+        }
+
+      /* The schoolbook base-256 chain: divide the high byte first, then
+         the running remainder paired with the low byte. Both partial
+         quotients fit in 8 bits (the remainder is < the divisor <= 255),
+         so V is never set. DIV preserves A (the divisor) between steps. */
+      emit3 (A_LD, ASMOP_B, ASMOP_L);   /* B = lo */
+      emit3 (A_LD, ASMOP_L, ASMOP_H);   /* HL = 0:hi */
+      cheapMove (ASMOP_H, 0, ASMOP_ZERO, 0, false);
+      emit2 ("div");                    /* L = qhi, H = r */
+      cost (2, 13);
+      const bool need_qhi = (ic->op == '/' && result->aop->size > 1);
+      if (need_qhi)
+        {
+          emit2 ("push l");
+          cost2 (2, 11, 11, 7, 12, 10, 3, 3);
+          _G.stack.pushed += 1;
+        }
+      emit3 (A_LD, ASMOP_L, ASMOP_B);   /* HL = r:lo */
+      emit2 ("div");                    /* L = qlo, H = remainder */
+      cost (2, 13);
+      if (need_qhi)
+        {
+          emit2 ("pop h");              /* HL = qhi:qlo = the quotient */
+          cost2 (2, 10, 9, 7, 12, 10, 3, 3);
+          _G.stack.pushed -= 1;
+        }
+      spillPair (PAIR_HL);
+      spillPair (PAIR_BA);              /* A holds the divisor, B the lo byte */
+
+      goto result_move;
     }
 
   /* Stage dividend -> L, divisor -> A, 0 -> H, ordered so neither load
@@ -8128,20 +8205,33 @@ genDivMod (iCode *ic)
   spillPair (PAIR_HL);
   spillPair (PAIR_BA);          /* A holds the divisor now */
 
-  /* Quotient in L for '/', remainder in H for '%'; the upper result
-     bytes are zero (unsigned 8 / 8). For a wide result build the full
-     value in HL first, then move it in one go (no partial-write
-     aliasing with a result that itself lives in L/H). */
+result_move:
+  /* Quotient in L for '/' (already qhi:qlo in HL for a wide 16 / 8
+     quotient), remainder in H for '%'; all other result bytes are zero.
+     For a wide result build the full value in HL first, then move it in
+     one go (no partial-write aliasing with a result that itself lives
+     in L/H). */
   if (result->aop->size == 1)
     cheapMove (result->aop, 0, ic->op == '/' ? ASMOP_L : ASMOP_H, 0, true);
   else
     {
       if (ic->op == '%')
-        emit3 (A_LD, ASMOP_L, ASMOP_H);
-      cheapMove (ASMOP_H, 0, ASMOP_ZERO, 0, true);
+        {
+          emit3 (A_LD, ASMOP_L, ASMOP_H);
+          cheapMove (ASMOP_H, 0, ASMOP_ZERO, 0, true);
+        }
+      else if (!two_byte)
+        cheapMove (ASMOP_H, 0, ASMOP_ZERO, 0, true);
       genMove (result->aop, ASMOP_HL, true, true, true, isPairDead (PAIR_IY, ic));
     }
 
+  if (save_b)
+    {
+      emit2 ("pop b");
+      cost2 (2, 10, 9, 7, 12, 10, 3, 3);
+      _G.stack.pushed -= 1;
+      spillPair (PAIR_BA);
+    }
   if (save_a)
     {
       emit2 ("pop a");
