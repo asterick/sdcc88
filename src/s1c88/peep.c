@@ -1421,14 +1421,24 @@ int s1c88instructionSize(lineNode *pl)
 
   /* 16 bit add / subtract / and / or */
   
-  if ((ISINST(pl->line, "add") || ISINST(pl->line, "adc") || ISINST(pl->line, "sbc")) && !STRNCASECMP(op1start, "hl", 2))
+  /* S1C88 16-bit ALU (dst in ba/hl/ix/iy/sp):
+       reg, reg                      -> 2 (CF xx)
+       add/sub/cp  reg, #imm         -> 3
+       adc/sbc     reg, #imm         -> 4 (CF-prefixed)
+       add         sp,  #imm         -> 4 (CF 68 ll hh) */
+  if (op1start && op2start &&
+      (ISINST(pl->line, "add") || ISINST(pl->line, "adc") || ISINST(pl->line, "sub") ||
+       ISINST(pl->line, "sbc") || ISINST(pl->line, "cp")) &&
+      (!STRNCASECMP(op1start, "ba", 2) || !STRNCASECMP(op1start, "hl", 2) ||
+       !STRNCASECMP(op1start, "ix", 2) || !STRNCASECMP(op1start, "iy", 2) ||
+       !STRNCASECMP(op1start, "sp", 2)))
     {
-      if(ISINST(pl->line, "add") || ISINST(pl->line, "and") || ISINST(pl->line, "or"))
-        return(1);
-      return(2);
+      if (op2start[0] != '#')
+        return (2);
+      if (ISINST(pl->line, "adc") || ISINST(pl->line, "sbc") || !STRNCASECMP(op1start, "sp", 2))
+        return (4);
+      return (3);
     }
-  if ((ISINST(pl->line, "add")) && (!STRNCASECMP(op1start, "ix", 2) || !STRNCASECMP(op1start, "iy", 2)))
-    return(2);
 
   /* signed 8 bit adjustment to stack pointer */
   
@@ -1538,6 +1548,11 @@ int s1c88instructionSize(lineNode *pl)
 
   if(ISINST(pl->line, "call"))
     return(3);
+
+  /* banked pseudo-ops: the linker resolves them into at most
+     ld nb, #bank + carl (the 6-byte worst-case slot) */
+  if(ISINST(pl->line, "bcall") || ISINST(pl->line, "bjump"))
+    return(6);
 
   /* Alias for ld a, (hl+)/(hld) etc */
   
