@@ -3,10 +3,21 @@
 **This is the single resume entry point.** If the prompt is *"let's pick up where you left off,"* do the
 steps under **NEXT ACTION**. Everything needed to continue is here or linked from here.
 
-_Last updated: 2026-06-05 (session 19: **#8 IY argument passing DONE** (int BA,HL,IY; nptr HL,BA,IY;
+_Last updated: 2026-06-05 (session 20: **task #9 — 3-byte `__far` pointers — DONE end-to-end** in 5
+slices: port config + shared-glue emission (far objects = const ROM, 3-byte initializers), the
+HL+EP deref idiom (genFarPointerGet/Set, the EP=0 invariant, EP-toggle walks for absolutes — incl.
+a peephole-fold hazard found the hard way), 24-bit arithmetic/compares/casts (three
+"pointers-are-2-bytes" middle-end miscompiles fixed: optimizeOpWidth narrowing, geniCodeSubtract
+missing widening, genAddrOf dropping the page) + the **HLA return ABI** (offset HL, page A — Epson
+HLP; ASMOP_HLA), ISR EP hygiene (save+zero EP, restore before rete), and the **link story**:
+`exprmasks(3)` (XL4's byte-reloc collapse corrupted streams; XL3 = byte-perfect `(sym>>16)` page
+relocs via the stock R_BYT3/R_HIB path), far areas located at PHYSICAL addresses, `romgen.py
+--far=start-end`, rom-smoke carries a far ROM block. **Corpus 19/19 byte-identical 0 errors; all
+smokes GREEN.** Remaining: optional cosmetics only — see "Session 20". Earlier: session 19: **#8 IY
+argument passing DONE** (int BA,HL,IY; nptr HL,BA,IY;
 IX excluded by the frame prologue) + a **pre-existing PCALL HL-argument miscompile fixed via
 RET-dispatch**; instruction sizing corrected (jrl→jrs improvements); reserve-regs-iy hardened (the
-old census flag was a no-op misspelling). Remaining: #9 far pointers. See "Session 19". Earlier:
+old census flag was a no-op misspelling). See "Session 19". Earlier:
 session 18: **task #7 CLOSED** — #7c finale done: the phantom asmops are
 deleted, zero phantom-register emissions remain, two more corpus blind spots (struct-by-value args,
 jump tables) found+fixed, native byte pushes throughout; corpus 18/18 + all option modes GREEN. See
@@ -105,8 +116,9 @@ complete**. The remaining work is cleanup + ABI completeness (the register-model
 
 1. Confirm green: `./scripts/dev.sh` → builds the compiler + smoke test → `GREEN`.
 2. The codegen retarget is **functionally complete for the verification corpus** — every *reachable*
-   z80-ism it exposes is gone: **16/16 corpus files assemble with 0 `sdas88` errors**, and the full
-   assemble→link→banked-ROM pipeline is GREEN. (Session 14 proved "functionally complete" claims are
+   z80-ism it exposes is gone: **19/19 corpus files assemble with 0 `sdas88` errors** (incl.
+   `19_far.c`, the #9 far-pointer cluster), and the full assemble→link→banked-ROM pipeline — now
+   including **far ROM data** — is GREEN. (Session 14 proved "functionally complete" claims are
    only as strong as the corpus — keep extending `scripts/corpus/` when touching new codegen territory.)
    All the feature gaps are closed: compares / 8- and 16-bit
    ALU / shifts (sessions 1–4), the **`ldir` struct-copy cluster** (session 5), **`bcall`/`bjump` for
@@ -116,17 +128,14 @@ complete**. The remaining work is cleanup + ABI completeness (the register-model
    findings (`or a,l/h`, bitfield `set/res`/`rld/rrd`, `ld (iy+d),#imm`, `ldir` block copy, STL-address
    BA) (14), **`genMult` literal path + variable 8×8 `MLT` + block-scope extern `.globl` + the #10
    `jp <signed cc>` lowering** (15). See the per-session entries below.
-3. **Remaining work = the open tasks** (cleanup + ABI completeness, not functional gaps):
-   - **#7 — register-model dead-code sweep / symbol removal.** **Tier (a) — the dead variant branches —
-     is DONE (session 16): zero variant-macro refs remain port-wide,** and it took 19 of the 20
-     `ex (sp),hl` sites and every `ldir` emit with it. What's left:
-     **(b)** the 4 latent `push de` sites (see "Session 16" — only the genIpush `d_free` byte-push
-     fallback ~5769 is even theoretically reachable; needs a register-pressure repro), and
-     **(c)** the structural symbol removal — PAIR_DE (182), PAIR_BC (74), ASMOP_DE (47), C/D/E_IDX
-     (149), IYL/IYH_IDX (107) refs in gen.c, plus the `*_IDX` ordinals keyed into `ralloc2.cc`'s Boost
-     allocator. Always-green, build + byte-identical after each step.
-   - **#8 — ABI Phase 2: IX/IY argument passing** (int 3rd/4th + near-ptr 1st/2nd currently spill to stack).
-   - **#9 — ABI Phase 3: 3-byte far pointers + `_near`/`_far` memory model** (large).
+3. **ALL numbered tasks are CLOSED** (#7 s18, #8 s19, #9 s20 — see the per-session entries).
+   **There are no open correctness tasks.** What remains is optional polish:
+   - Epson-faithful Phase-3 ABI cosmetics: far-ptr register args (`IYP/IXP/HLP`), `YP/XP` char
+     args, `IYIX` long args (everything is correctly stacked today; caller+callee agree).
+   - far bit-fields (loud UNIMPLEMENTED), far function pointers / banked *indirect* calls (needs a
+     CB-switch dispatch story — direct banked calls work via bcall/bjump).
+   - the inert `PAIR_BC`/`PAIR_DE`/`C/D/E_IDX` name removal (pure renumber, s18).
+   - native `DIV` for genDiv/genMod (support calls today, as on z80) and other peephole/cost tuning.
 4. **Validator workflow** (how to check a slice): compile with `sdcc -ms1c88 --c1mode -o /tmp/x.asm`, then
    `scripts/validate-s1c88.sh /tmp/x.asm` (assembles with `sdas88`; any reject = a z80-ism to fix). For a
    refactor, also confirm **byte-identical** codegen across the corpus (the strongest safety check).
@@ -165,6 +174,56 @@ the broader operand-placement work so the allocator keeps 16-bit operands in BA/
 
 > A from-scratch big-bang reshape was tried and **reset** (unverifiable-red for the whole grind). The dead
 > WIP is in reflog `417bed5` — useful only as a reference for the *end-state* register defs.
+
+## Session 20 (2026-06-05) — task #9 (3-byte __far pointers) DONE end-to-end
+
+**The last open task is CLOSED.** `__far` works from C source to a flashed-ROM byte image. Commits
+`3a6ed47..90f1b8f` (5 always-green slices, each corpus-gated). Design recorded in
+**abi-decision.md "Task #9"** — read it before touching far codegen. The essentials:
+
+- **Model:** a far pointer = a **24-bit linear physical data address** in 3 little-endian bytes
+  (byte 2 IS the EP page — S1C88 data paging is linear, so the stock SDCC `(sym>>16)` emission is
+  natively correct). `__far` → S_XDATA → FPOINTER, fptr_size=3; unqualified/gptr stays 2-byte near,
+  untagged. Far objects are **const ROM data** (area `_FAR`, emitted as a romable static segment —
+  the PM has no far RAM); a far object never straddles a 64K page (Epson `_far` semantics).
+- **The EP=0 invariant:** all near codegen assumes EP=0. Far accesses stage the pointer into
+  **HLA** (a new 3-byte reg asmop: offset→HL, page→A), `ld ep,a`, walk `(hl)`, and ALWAYS restore
+  `ld ep,#0` (A untouched). While EP≠0: (ix+d)/(iy+d)/[sp+dd] stay near (own page regs) — but
+  absolutes are repaged, AND the peephole can fold an iy-literal store into an absolute INSIDE the
+  window (a real miscompile found in testing) — so absolute results/values use a page-in-B
+  **EP-toggle** walk with DIRECT absolute emission (correct even after folding). Pathological
+  shapes (reg results >2B, EXSTK operands, staging collisions) are UNIMPLEMENTED traps whose
+  dry-run cost steers the allocator away.
+- **ABI:** far args = stack (Phase-3 Epson IYP/IXP/HLP = optional cosmetic); far return = **HLA**
+  (Epson HLP) — caller chaining is free (`bcall f; ld ep,a; ld a,(hl)`). ISRs save+zero EP after
+  the GP saves and restore before `rete` (EP is NOT in the hardware save set).
+- **Middle-end fixes (all in `register_s1c88_port.patch`, gated inert for other ports):** glue
+  emitted far objects nowhere (xdata written only for mcs51-like) and runtime-GSINIT'd const far
+  data; printIvalPtr/printIvalCharPtr truncated 3-byte initializers (`use_dw_for_init`) and emitted
+  GP *tag* bytes for 2-byte near pointers + literal far pages; genconstprop clamped every pointer's
+  value range to GPTRSIZE=2 → "known-zero" page bytes constant-folded away (`xor a,a` for the page);
+  optimizeOpWidth narrowed a pointer-`+`'s signed addend to uint16 whenever NEARPTRSIZE==2 (p+=n
+  broke for negative n); geniCodeSubtract lacked geniCodeAdd's #3807 widening (p-=n lost the sign
+  byte). gen.c: genAddrOf was 2-byte-only (page dropped); aopGet IMMD byte 2 was `!zero` (now
+  `!bankimmeds` = `#((sym) >> 16)`); peep.c sizes the CE-page special-register loads.
+- **The link story:** `(sym>>16)` resolves through the STOCK reloc path (asexpr R_HIB → outrxb's
+  s1c88 gate → R_BYTE|R_BYT3|R_HIB → lkrloc3 adb_24_hi, ds390-proven) — but only after
+  **`exprmasks(4)`→`exprmasks(3)`** in s1c88mch.c (under XL4 the linker's byte-slot collapse left a
+  stray byte that CORRUPTED the instruction stream; XL3 output is byte-identical to hand-assembled
+  reference). Far areas are located at their **physical** address (data reads are EP-linear, not
+  CB-banked — the `(bank<<16)|logic` code convention cannot serve them); `romgen.py
+  --far=start-end` declares those ranges (indistinguishable by value); keep far-data banks disjoint
+  from code banks. branch-smoke's listing parser updated for XL3's 6-digit addresses (encodings
+  unchanged).
+- **Verification:** `scripts/corpus/19_far.c` (objects/initializers/deref/displacement/indexed
+  tables/EP-toggle walks/literals/casts/24-bit arith/compares/returns/ISR) — corpus 19/19
+  byte-identical 0 sdas88 errors; clean × 4 option modes; rom-smoke now builds a banked ROM **with
+  a far ROM block** and byte-verifies both the physical placement and the linked page byte.
+
+**Remaining (all optional, none functional):** Epson-faithful far-ptr register args (IYP/IXP/HLP)
++ YP/XP char args + IYIX longs (Phase 3 cosmetics); far bit-fields (loud UNIMPLEMENTED); far
+function pointers / banked indirect calls (out of #9's scope — needs a CB-switch dispatch story);
+the inert PAIR_BC/PAIR_DE name removal (s18). **There are no open correctness tasks.**
 
 ## Session 19 (2026-06-05) — peep sizing fixed; #8 (IY argument passing) DONE + a PCALL miscompile fixed
 
