@@ -172,12 +172,6 @@ z80MightBeParmInCallFromCurrentFunction(const char *what)
     return TRUE;
   if (strchr(what, 'h') && s1c88_regs_used_as_parms_in_calls_from_current_function[H_IDX])
     return TRUE;
-  if (strchr(what, 'e') && s1c88_regs_used_as_parms_in_calls_from_current_function[E_IDX])
-    return TRUE;
-  if (strchr(what, 'd') && s1c88_regs_used_as_parms_in_calls_from_current_function[D_IDX])
-    return TRUE;
-  if (strchr(what, 'c') && s1c88_regs_used_as_parms_in_calls_from_current_function[C_IDX])
-    return TRUE;
   if (strchr(what, 'b') && s1c88_regs_used_as_parms_in_calls_from_current_function[B_IDX])
     return TRUE;
   if (strchr(what, 'a') && s1c88_regs_used_as_parms_in_calls_from_current_function[A_IDX])
