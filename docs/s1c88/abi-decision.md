@@ -226,6 +226,66 @@ Until phases 2-3 land the ABI diverges from Epson for args that need IX/IY/YP/XP
 lower-priority byte reg). This is safe — the convention is sdcc88-internal (caller+callee both read
 `aopArg`); there is no Epson-object interop yet.
 
+## Task #9: 3-byte far pointers + the `_near`/`_far` memory model (design decided 2026-06-05)
+
+The S1C88 data-memory paging is **linear**: a data access is physically `page×65536 + offset16`
+(EP prefixes `[HL]` and absolute `[hhll]`; XP/YP prefix `[IX]`/`[IY]` — memory-model.md §2.4.2).
+That makes the far-pointer representation trivial:
+
+- **A far pointer is a 24-bit linear physical data address**, stored little-endian in 3 bytes:
+  `[0]=addr&0xFF, [1]=(addr>>8)&0xFF, [2]=addr>>16` — byte 2 **is** the EP page value, bytes 0–1
+  are the 16-bit offset. SDCCglue's stock 3-byte emission `name, (name>>8), (name>>16)` is therefore
+  natively correct, and far-pointer arithmetic is plain 24-bit integer arithmetic (pages are
+  64K-aligned and contiguous).
+- **C surface:** `__far` (port keyword "far" → S_XDATA → the `xdata` memmap → pointer class
+  FPOINTER, `fptr_size = 3`). `__near` = explicit S_DATA. Unqualified pointers stay GPOINTER,
+  **2 bytes, untagged, == near** (no runtime-tagged generic pointers). far→near/generic casts
+  truncate to the offset; near→far widens with page 0 — correct, because the near space *is*
+  physical `0x000000–0x00FFFF` (page 0).
+
+**The EP=0 invariant.** All near codegen (absolute `[hhll]`, indirect `[HL]`) implicitly assumes
+EP=0 (the small-model convention). Therefore every far access sequence must leave EP zero:
+`ld a,<page>; ld ep,a; …access via [hl]…; ld ep,#0` — the immediate restore form (`CE C5 00`)
+does not touch A, so it can run after a read lands its result in A. XP/YP are never touched
+(far accesses route through HL+EP only). ISRs must preserve the invariant against interrupting
+mid-sequence: the ISR prologue saves EP and zeroes it (`ld a,ep; push a; ld ep,#0`), the epilogue
+restores (`pop a; ld ep,a`) — EP is not part of the hardware exception save (only CB:PC and SC are).
+
+**Codegen idioms:**
+- far read: `<page>→A; ld ep,a; <offset>→HL; ld a,[hl]` (+ `inc hl` walk for multi-byte), `ld ep,#0`.
+- far write: page→EP as above, value through A/B, `ld [hl],a`, `ld ep,#0`.
+- genCast near→far: copy 2 bytes + `#0x00` page; far→near: copy bytes 0–1.
+- 3-byte ALU (p++, p+n, ==, <): the generic byte-wise paths; 24-bit linear add/compare is correct.
+
+**Far objects are const ROM data.** On the Pokémon Mini all RAM (4K) is near; the only far *objects*
+are ROM tables. `__far` objects are emitted as a **romable static segment** (area `_FAR`,
+`emitStaticSeg` semantics — initializer bytes inline, never GSINIT runtime stores). Non-const
+`__far` RAM objects are unsupported (documented; there is no far RAM on this target). Writes
+*through* far pointers remain legal codegen (the target may map far RAM on other S1C88 chips).
+
+**ABI:**
+- far-ptr argument passing: **stack** (documented divergence from Epson `IYP/IXP/HLP` — our
+  allocator has no page-register model; caller+callee agree via `aopArg`, no interop concern).
+- far-ptr return: **offset in HL, page in A** — i.e. bytes (L, H, A) — faithful to Epson `HLP`.
+
+**Shared-glue patch points** (these live in upstream files, so they extend
+`third_party/sdcc/register_s1c88_port.patch`; all are gated so other ports in the same driver are
+byte-identical):
+1. `SDCCglue.c glue()`: the xdata oBuf is only written for mcs51-like/mos6502 — gate in S1C88.
+2. `SDCCglue.c emitMaps()`: route s1c88's xdata through `emitStaticSeg` (ROM const data), not
+   `emitRegularMap` (which emits `.ds` + GSINIT runtime-init stores — wrong twice for far ROM).
+3. `SDCCglue.c printIvalPtr()` symbol path: `size==FARPTRSIZE` must emit 3 real bytes when
+   FARPTRSIZE==3 (`use_dw_for_init` short-circuits it to `.dw`, and `printPointerType` hardcodes 2);
+   a 2-byte pointer must NOT fall into the `GPTRSIZE` branch's tag-byte emission (it emitted
+   `lo,hi,#0x40` = 3 bytes into a `.ds 2` slot once FARPTRSIZE stopped masking it).
+4. `printIvalPtr()` literal `case 3`: an FPOINTER literal's third byte must be `aopLiteral(val,2)`
+   (the real page), not `pointerTypeToGPByte` (the mcs51 generic-pointer *tag* — page 0 for us).
+
+**Link story (deferred within #9):** the page byte of a link-time symbol is `(sym >> 16)`; that
+needs far areas located at physical 24-bit addresses and byte-3 extraction relocs through the
+ASxxxx 16-bit-address pipeline — likely an `R_S1C88_BANK`-style reloc on the third byte, exactly
+like the `bcall` bank slot. Far *code* pointers (banked indirect calls) are out of #9's scope.
+
 ### Verification meters
 The **primary validator is `sdas88`**: `scripts/validate-s1c88.sh <file.asm>` assembles emitted codegen and
 freq-ranks any form the S1C88 can't encode — catching wrong encodings/flags/sizes/register-classes, i.e.

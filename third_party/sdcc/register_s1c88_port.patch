@@ -45,3 +45,108 @@ index da3258a..302b0cd 100644
 +#endif
  
  #endif /* PORT_INCLUDE */
+--- a/src/SDCCglue.c
++++ b/src/SDCCglue.c
+@@ -832,7 +832,8 @@
+ static void
+ printPointerType (struct dbuf_s *oBuf, const char *name)
+ {
+-  _printPointerType (oBuf, name, (options.model == MODEL_FLAT24) ? 3 : 2);
++  /* a port with a true 3-byte far pointer (s1c88) emits all three bytes */
++  _printPointerType (oBuf, name, (options.model == MODEL_FLAT24 || FARPTRSIZE == 3) ? 3 : 2);
+   dbuf_printf (oBuf, "\n");
+ }
+ 
+@@ -1534,11 +1535,23 @@
+               dbuf_printf (oBuf, "\tret #<%s\n", val->name);
+               dbuf_printf (oBuf, IN_CODESPACE (SPEC_OCLS (val->etype)) ? "\tret #>(%s + 0x8000)\n" : "\tret #0\n", val->name);
+             }
+-          else if (port->use_dw_for_init)
++          else if (port->use_dw_for_init && FARPTRSIZE == 2)
+             dbuf_tprintf (oBuf, "\t!dws\n", val->name);
+           else
+             printPointerType (oBuf, val->name);
+         }
++      else if (size == GPTRSIZE && size == NEARPTRSIZE && GPTRSIZE < FARPTRSIZE)
++        {
++          /* untagged 2-byte near/generic pointer on a port whose far pointer
++             is wider (s1c88): plain emission, no generic-pointer tag byte */
++          if (port->use_dw_for_init)
++            dbuf_tprintf (oBuf, "\t!dws\n", val->name);
++          else
++            {
++              _printPointerType (oBuf, val->name, size);
++              dbuf_printf (oBuf, "\n");
++            }
++        }
+       else if (size == GPTRSIZE)
+         {
+           int type;
+@@ -1723,9 +1736,11 @@
+             dbuf_printf (oBuf, "\t.byte %s,%s", aopLiteral (val, 1), aopLiteral (val, 0));
+           if (IS_GENPTR (val->type))
+             dbuf_printf (oBuf, ",%s\n", aopLiteral (val, 2));
+-          else if (IS_PTR (val->type))
++          else if (IS_PTR (val->type) && GPTRSIZE > FARPTRSIZE)
++            /* mcs51-like tagged generic pointer: byte 2 is the space tag */
+             dbuf_tprintf (oBuf, ",!immedbyte\n", pointerTypeToGPByte (DCL_TYPE (val->type), val->name, sym->name));
+           else
++            /* true 3-byte pointer (s1c88 far): byte 2 is the real page byte */
+             dbuf_printf (oBuf, ",%s\n", aopLiteral (val, 2));
+           break;
+         case 4:
+@@ -1762,11 +1777,23 @@
+     }
+   else if (size == FARPTRSIZE)
+     {
+-      if (port->use_dw_for_init)
++      if (port->use_dw_for_init && FARPTRSIZE == 2)
+         dbuf_tprintf (oBuf, "\t!dws\n", val->name);
+       else
+         printPointerType (oBuf, val->name);
+     }
++  else if (size == GPTRSIZE && size == NEARPTRSIZE && GPTRSIZE < FARPTRSIZE)
++    {
++      /* untagged 2-byte near/generic pointer on a port whose far pointer is
++         wider (s1c88): plain emission, no generic-pointer tag byte */
++      if (port->use_dw_for_init)
++        dbuf_tprintf (oBuf, "\t!dws\n", val->name);
++      else
++        {
++          _printPointerType (oBuf, val->name, size);
++          dbuf_printf (oBuf, "\n");
++        }
++    }
+   else if (size == GPTRSIZE)
+     {
+       printGPointerType (oBuf, val->name, sym->name,
+@@ -2046,7 +2073,19 @@
+   emitRegularMap (i_abs, TRUE, TRUE);
+   emitRegularMap (bit, TRUE, TRUE);
+   emitRegularMap (pdata, TRUE, TRUE);
+-  emitRegularMap (xdata, TRUE, TRUE);
++  if (TARGET_IS_S1C88)
++    {
++      /* the __far space is const ROM data on the S1C88: emit it as a romable
++         static segment (initializer bytes inline), never .ds + GSINIT runtime
++         stores (which would also need EP-paged addressing) */
++      if (xdata->syms)
++        {
++          dbuf_tprintf (&xdata->oBuf, "\t!areacode\n", xdata->sname);
++          emitStaticSeg (xdata, &xdata->oBuf);
++        }
++    }
++  else
++    emitRegularMap (xdata, TRUE, TRUE);
+   emitRegularMap (x_abs, TRUE, TRUE);
+   if (port->genXINIT)
+     {
+@@ -2509,7 +2548,7 @@
+     }
+ 
+   /* copy external ram data */
+-  if (xdata && (mcs51_like || TARGET_MOS6502_LIKE ))
++  if (xdata && (mcs51_like || TARGET_MOS6502_LIKE || (TARGET_IS_S1C88 && dbuf_get_length (&xdata->oBuf))))
+     {
+       fprintf (asmFile, "%s", iComments2);
+       fprintf (asmFile, "; uninitialized external ram data\n");

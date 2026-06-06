@@ -109,6 +109,8 @@ static char *_keywords[] = {
   "nonbanked",
   "banked",
   "at",
+  "far",                        /* __far = 3-byte (24-bit EP:offset) data pointer / far-space object */
+  "near",                       /* __near = explicit 2-byte data pointer (the default) */
   "_naked",
   "critical",
   "interrupt",
@@ -815,7 +817,10 @@ PORT s1c88_port =
     s1c88canSplitReg,
   },
   /* Sizes: char, short, int, long, long long, near ptr, far ptr, gptr, func ptr, banked func ptr, bit, float, BitInt (in bits) */
-  { 1, 2, 2, 4, 8, 2, 2, 2, 2, 2, 1, 4, 64 },
+  /* far ptr = 3: 24-bit linear data address (EP page : 16-bit offset) — S1C88 data paging is linear
+     (physical = EP*65536 + HL), so byte 2 is simply (addr >> 16) and SDCCglue's stock 3-byte
+     initializer emission is natively correct. gptr stays 2 (== near; no runtime-tagged pointers). */
+  { 1, 2, 2, 4, 8, 2, 3, 2, 2, 2, 1, 4, 64 },
   /* tags for generic pointers */
   { 0x00, 0x40, 0x60, 0x80 },   /* far, near, xstack, code */
   {
@@ -825,7 +830,7 @@ PORT s1c88_port =
     "DATA",
     NULL,                       /* idata */
     NULL,                       /* pdata */
-    NULL,                       /* xdata */
+    "FAR",                      /* xdata = the __far data space (EP-paged, beyond the 64K near window) */
     NULL,                       /* bit */
     "RSEG (ABS)",
     "GSINIT",                   /* static initialization */
