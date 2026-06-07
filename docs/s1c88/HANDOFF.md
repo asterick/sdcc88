@@ -10,7 +10,9 @@ control-flow differential module** (`control.c`, 467 values) found **bug #4 — 
 widening clobbered a live A (FIXED, `07d17ba`)** and **bug #5 — a `char` arg alongside a stacked
 `long` arg dropped under register pressure (FIXED, `4ac3b14`: genIpush now excludes
 already-sent arg registers from push scratch; regression in `calls.c`)**. Differential modules:
-arith 5876 + control 467 + calls 72. See "Session 25". Earlier — session 24: **two new test layers + three reachable codegen bugs
+arith 5876 + control 467 + calls 72 + memory 32 (aggregates: arrays/structs/unions/near
+bitfields — its draft caught a test-soundness issue, not a bug: plain `int` bitfield signedness
+is impl-defined; use explicit `signed`). See "Session 25". Earlier — session 24: **two new test layers + three reachable codegen bugs
 they found**. (1) `tests/emu/cases/07_far.c` + a `--far` lane in `emu-test.sh` give far
 pointers their first EXECUTION coverage (far ROM reads via EP paging; emu-test 7/7). (2) A
 host-vs-emulator **DIFFERENTIAL harness** — `scripts/diff-test.sh` + `tests/diff/` — compiles the
