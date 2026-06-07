@@ -217,14 +217,19 @@ list. The A/BA overlap is handled by construction (once `A` is taken, no char pi
   near-ptr `HL,BA`; long `HLBA`. Anything the Epson ABI would place in `IX/IY/YP/XP` (and any overflow)
   goes on the **stack** for now. Verified: `f2(int,int)`→BA,HL; `fc(char,int)`→A,HL; `f3(int,int,int)`→3rd
   on stack; caller/callee agree.
-- **Phase 2 — next:** add `IX`,`IY` (int 3rd/4th, near-ptr 1st/2nd), `IYIX` (long) + the S1C88
-  index-register move codegen (`ASMOP_IX`, `ld ix,hl`, non-byte-addressable handling).
-- **Phase 3 — later (with the deferred far-pointer/page-register work):** char `YP,XP`; far-ptr
-  `IYP/IXP/HLP` and far-ptr return `HLP`.
+- **Phase 2 — DONE (s19, with IX excluded by the frame prologue):** int = BA, HL, IY; near-ptr =
+  HL, BA, IY; IYIX longs deferred.
+- **Phase 3 — CLOSED as a documented divergence (decided 2026-06-06, won't do):** char `YP,XP`
+  args, far-ptr `IYP/IXP/HLP` args, `IYIX` longs. Rationale: caller+callee already agree via the
+  stack (no correctness gap and no Epson-object interop exists to match); the allocator has no
+  page-register model; and receiving a far pointer's page in EP would collide with the
+  load-bearing **EP=0 invariant** on every function entry — Epson-faithful register far-ptr args
+  are actively hazardous in this codegen model, not merely unimplemented. Far-ptr *returns* remain
+  Epson-faithful (HLA = Epson HLP).
 
-Until phases 2-3 land the ABI diverges from Epson for args that need IX/IY/YP/XP (they're stacked / use a
-lower-priority byte reg). This is safe — the convention is sdcc88-internal (caller+callee both read
-`aopArg`); there is no Epson-object interop yet.
+The ABI therefore permanently diverges from Epson for args that would need IX/YP/XP/page registers
+(they're stacked). This is safe — the convention is sdcc88-internal (caller+callee both read
+`aopArg`); there is no Epson-object interop.
 
 ## Task #9: 3-byte far pointers + the `_near`/`_far` memory model (design decided 2026-06-05)
 
@@ -284,7 +289,12 @@ byte-identical):
 **Link story (deferred within #9):** the page byte of a link-time symbol is `(sym >> 16)`; that
 needs far areas located at physical 24-bit addresses and byte-3 extraction relocs through the
 ASxxxx 16-bit-address pipeline — likely an `R_S1C88_BANK`-style reloc on the third byte, exactly
-like the `bcall` bank slot. Far *code* pointers (banked indirect calls) are out of #9's scope.
+like the `bcall` bank slot. ~~Far *code* pointers (banked indirect calls) are out of #9's scope.~~
+**DONE (2026-06-06):** function pointers are 3-byte banked code pointers — see "The call model:
+MAXIMUM mode". **Far bit-fields are DONE too** (genFarUnpackBits/genFarPackBits: raw bytes via
+HL+EP, mask/shift/sign at EP=0, the genPackBits and/or-mask merge against `(hl)` under EP;
+non-literal values stage at EP=0 before the pointer claims HLA, multi-byte ones carried across on
+the stack — `pop ba` is SP-paged, near-safe under EP).
 
 ## Native DIV (decided + implemented 2026-06-06, sessions: commits `1da6979`, `9cf0371`)
 
@@ -306,7 +316,13 @@ unclaimed shapes keep the `__div*`/`__mod*` support calls, so claims must exactl
   `u16 / u8var` promotes the divisor to `unsigned int`, so the *variable*-divisor 16÷8 only claims
   when the middle end narrows it back — in practice the 16-bit claims are **literal** divisors
   (`x/10`, `x%10` — the binary-to-decimal workhorse, previously a `__divuint` call each).
-- **Not claimed:** signed (sign-fixup not worth it yet), 16-bit divisors, 32-bit anything.
+- **signed 8 ÷ 8** (both `signed char`; NOT under `--opt-code-size` — the inline cluster is
+  ~26 bytes vs a 6-byte bcall): branchless C-truncation via the sep sign-mask identity
+  `|x| = (x^m) - m` (SEP: B ← sign of A), unsigned DIV on the magnitudes, the result's mask
+  (`m(dividend)^m(divisor)` for `/`, `m(dividend)` for `%`) re-applied the same way. Wide results
+  sep-extend into BA. B is the mask home (byte-granular save when live).
+- **Not claimed:** 16-bit divisors, 32-bit anything; signed literal divisors never fire in
+  practice (the middle end widens `sc/10` to int before consulting the hook).
 
 **Codegen contract** (`genDivMod` in gen.c): staging is clobber-ordered (divisor-first when its
 home is L/H or already A; dividend-first + a stack bounce — `push a/l/h … pop l`, or `push hl …
@@ -318,6 +334,37 @@ non-operand values out of HL across it; both ops run the exact-cost dry-run path
 sizes 2, reads no flags, surely writes Z/N/C/V. Corpus: `scripts/corpus/20_div.c`.
 
 `genDiv`/`genMod` (the old "handled through support calls" wasserts) both route to `genDivMod`.
+
+## The call model: MAXIMUM mode (decided + fixed 2026-06-06 — load-bearing, read before touching calls)
+
+**The Pokémon Mini runs the S1C88 in MAXIMUM mode: every call pushes a 3-byte `PCL PCH CB` return
+frame and `RET` pops all three, restoring the caller's bank** (Epson instruction-set p.58,
+memory-model §225–251; PokeMini pushes `PC.B.I`+`PCH`+`PCL` on every CALL and pops 3 on RET — min
+mode pins the bank window, which a 2MB banked ROM cannot use). The linker's `bcall`/`bjump` design
+always depended on this (no compiler-side bank restore); codegen however had inherited the z80
+2-byte frame and was wrong everywhere until commit `89efb3b`. The model:
+
+- **`call_overhead` = 5** (3-byte frame + 2-byte saved IX): stacked args start at `ix+5` /
+  `sp+3-at-entry`.
+- **The CALLER cleans up stack parameters** (`isFuncCalleeStackCleanup` returns false by default):
+  only RET can consume a 3-byte frame — no `pop hl … jp hl` epilogue trick can restore CB.
+  Explicit `__z88dk_callee` still works via one universal epilogue that moves the 3-byte frame up
+  over the parameter area byte-by-byte (CB first; A/HL saved when they carry return bytes).
+- **Indirect calls** (`PCALL`): the target's 16-bit offset goes into the **`__sdcc_fptr` scratch
+  cell** (2 bytes of near RAM — a runtime-provided symbol like the `__div`/`__mul` support
+  routines), the bank into NB, then the native indirect **`call (hhll)`** (FB) — the hardware
+  builds and restores the full frame. Tail positions use `ld nb, a` + `jp hl` (reuses the caller's
+  own frame). **NB-window discipline: at most ONE instruction between `ld nb` and the consuming
+  branch** (the linker's own `ld nb ; nop ; carl` shape; the Minx blacks out interrupt acceptance
+  for exactly that shadow — PokeMini `Shift_U`). Not reentrant against an ISR that itself makes an
+  indirect call between the cell store and the call.
+- **Function pointers are 3 bytes: (lo, hi, bank)** (`funcptr_size = 3`). Code symbols link as
+  `(bank<<16)|logic`, so `&f`'s third byte — the stock `(sym >> 16)` emission, via the #9 XL3
+  byte relocs — IS the bank; `printIvalFuncPtr` emits all three bytes (patch-gated alongside
+  stm8). Casting a 2-byte data pointer widens with bank 0 (the common bank). End-to-end verified:
+  linking with `_CODE=0x028000` puts `00 80 02` in an fptr initializer.
+- **ISRs were already correct**: the interrupt sequence pushes `CB → PCH → PCL → SC` and RETE pops
+  them all (and NB←CB), so the s10 RETE model needed no change.
 
 ### Verification meters
 The **primary validator is `sdas88`**: `scripts/validate-s1c88.sh <file.asm>` assembles emitted codegen and

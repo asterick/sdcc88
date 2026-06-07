@@ -10,12 +10,15 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 > the **EP=0 invariant**, far objects = const ROM data in area `_FAR` (located at PHYSICAL addresses;
 > `romgen.py --far=start-end`), HLA return ABI (offset HL, page A), ISR EP hygiene, and byte-perfect
 > `(sym>>16)` page relocs after `exprmasks(3)` (XL3) — see HANDOFF "Session 20" + abi-decision.md
-> "Task #9". Plus **native DIV (s21)**: unsigned 8÷8 / 16÷8 division+modulus on the hardware `DIV`
-> (CE D9) — single DIV resp. the two-DIV base-256 chain; signed/16-bit-divisor stay support calls
-> (abi-decision.md "Native DIV"). **20/20 corpus files assemble with 0 sdas88 errors; the
-> banked-ROM pipeline (now incl. far ROM data) is GREEN.** Remaining = optional polish only
-> (Epson-faithful far-ptr/YP/XP register args, far bit-fields, far function pointers, inert
-> PAIR_BC/DE names, peephole/cost tuning). Validate each
+> "Task #9". Plus **native DIV (s21/s22)**: unsigned 8÷8 / 16÷8 / signed 8÷8 on the hardware `DIV`
+> (abi-decision.md "Native DIV"). **The polish list is CLOSED (s22)**: phantom PAIR_BC/DE/C/D/E
+> names deleted, far bit-fields implemented, **banked 3-byte function pointers end-to-end**, and —
+> found en route — **the call model was corrected to S1C88 MAXIMUM mode** (3-byte CB:PC return
+> frames, caller cleanup, PCALL via the `__sdcc_fptr` cell + native `call (hhll)`; the old 2-byte
+> z80 frame assumption was a port-wide latent bug — read abi-decision.md "The call model: MAXIMUM
+> mode" before touching calls). Phase-3 Epson register args: closed as documented divergence.
+> **20/20 corpus files assemble with 0 sdas88 errors; the banked-ROM pipeline (incl. far ROM data
+> and linked fptr bank bytes) is GREEN.** Remaining = open-ended peephole/cost tuning. Validate each
 > change with `./scripts/corpus-check.sh` (byte-identical +
 > sdas88) — **always rebuild via the overlay (`dev.sh`/`corpus-check.sh`), never raw `make -C
 > build/.../src` (it compiles a stale copy).** (All work is on **`main`**.)
@@ -93,10 +96,14 @@ GREEN; **20/20 corpus files at 0 sdas88 errors**) and **every numbered task is c
 register-model sweep #7 (s16/s17/s18 — zero variant-macro refs, zero phantom-register emissions),
 IY argument passing #8 (s19), and 3-byte `__far` pointers #9 (s20 — design + idioms in
 `abi-decision.md` "Task #9"; the EP=0 invariant is load-bearing, read it before touching far
-codegen). Unsigned division/modulus runs on the native `DIV` (s21 — 8÷8 single DIV, 16÷8 two-DIV
-chain; abi-decision.md "Native DIV"). What remains is optional polish (Epson-faithful
-far-ptr/YP/XP register args, far bit-fields, far function pointers/banked indirect calls, the
-inert PAIR_BC/DE names, peephole/cost tuning). See `HANDOFF.md` for per-session commits.
+codegen). Division/modulus runs on the native `DIV` (s21/s22 — unsigned 8÷8 + 16÷8 chain + signed
+8÷8 sep-mask fixup; abi-decision.md "Native DIV"). **The s22 polish push closed everything else**:
+the phantom-register names are deleted, far bit-fields work (HL+EP RMW), function pointers are
+3-byte banked code pointers (lo, hi, bank — dispatched via `ld nb` + `call (__sdcc_fptr)`), and
+the **call model is S1C88 MAXIMUM mode** (3-byte CB:PC frames, `call_overhead` 5, caller cleanup —
+a corrected port-wide latent bug; abi-decision.md "The call model: MAXIMUM mode" is load-bearing).
+What remains is open-ended peephole/cost tuning. Runtime contract: programs provide
+`__sdcc_fptr:: .ds 2` in near RAM. See `HANDOFF.md` for per-session commits.
 
 ## Build
 

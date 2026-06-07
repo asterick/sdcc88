@@ -219,10 +219,12 @@ The linker needs each code area's `a_bank`. Two pieces:
   *potentially-far/cross-bank* transfers (function calls, tail-jumps); local control flow keeps using plain
   `jrs`/`jrl` chosen by the compiler peephole.
 - **`map`/`base` vs name-encoding** — pick the ASlink banking mechanism (see §7).
-- **Return bank:** on `MODEL2/3 maximum mode`, `CALL` also pushes `CB`, so `RET` restores the caller's bank
-  automatically (`memory-model.md` §2.x). Confirm the target model; if not maximum mode, the callee must
-  restore the caller's bank itself. **Affects whether `CALL` alone is sufficient or needs a return-bank
-  convention.**
+- **Return bank: RESOLVED (2026-06-06)** — the Pokémon Mini runs **maximum mode** (PokeMini pushes
+  `PC.B.I` on every CALL and RET pops 3 bytes; min mode pins the bank window, unusable for a 2MB
+  banked ROM). `CALL`/`CARL` push the 3-byte `PCL PCH CB` frame and `RET` restores the caller's
+  bank automatically — `CALL` alone is sufficient, exactly as this design assumed. The compiler's
+  call model was retargeted to match (`call_overhead` 5, caller cleanup, the `__sdcc_fptr`
+  indirect-call cell) — see `abi-decision.md` "The call model: MAXIMUM mode".
 
 ---
 

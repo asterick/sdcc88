@@ -3,7 +3,20 @@
 **This is the single resume entry point.** If the prompt is *"let's pick up where you left off,"* do the
 steps under **NEXT ACTION**. Everything needed to continue is here or linked from here.
 
-_Last updated: 2026-06-06 (session 21: **native DIV** — `genDiv`/`genMod` retargeted from support
+_Last updated: 2026-06-06 (session 22: **the polish list is CLOSED — and a port-wide latent bug
+found and fixed**. (1) **signed 8÷8 division** joins the native DIV (branchless sep-mask fixup,
+not under --opt-code-size); (2) the **phantom-register names are GONE** (PAIR_BC/PAIR_DE/C/D/E_IDX
+deleted, ~670 lines incl. dead genArrayInit; 3 byte-identical phases); (3) **far bit-fields
+implemented** (HL+EP read-modify-write; mask/sign work at EP=0); (4) **THE BIG ONE — the call
+model was minimum-mode (2-byte z80 frames) but the PM is MAXIMUM mode (3-byte CB:PC frames,
+PokeMini-verified)**: call_overhead 5, caller cleanup (only RET can pop a 3-byte frame), PCALL via
+the `__sdcc_fptr` cell + native `call (hhll)`, the s19 RET-dispatch/manufactured-return schemes
+deleted (they built frames RET would misinterpret on silicon); (5) **banked function pointers** —
+3-byte (lo,hi,bank) code pointers end-to-end (the bank byte links via XL3; `ld nb` + the CB←NB
+latch dispatches; verified `00 80 02` in a linked initializer with _CODE=0x028000); (6) Phase-3
+Epson register args **closed as documented divergence** (EP=0 invariant makes them hazardous).
+See "Session 22"; design in abi-decision.md "The call model: MAXIMUM mode". **Corpus 20/20, all
+smokes GREEN.** Remaining = peephole/cost tuning only. Earlier: session 21: **native DIV** — `genDiv`/`genMod` retargeted from support
 calls to the native `DIV` (`CE D9`, unsigned `HL÷A` → L quotient, H remainder): unsigned 8÷8 is a
 single DIV, unsigned 16÷8 (literal divisors in practice — C promotion widens variable u8 divisors)
 is the two-DIV schoolbook chain with provably-fitting partial quotients; `_hasNativeMulFor` now
@@ -136,16 +149,17 @@ complete**. The remaining work is cleanup + ABI completeness (the register-model
    findings (`or a,l/h`, bitfield `set/res`/`rld/rrd`, `ld (iy+d),#imm`, `ldir` block copy, STL-address
    BA) (14), **`genMult` literal path + variable 8×8 `MLT` + block-scope extern `.globl` + the #10
    `jp <signed cc>` lowering** (15). See the per-session entries below.
-3. **ALL numbered tasks are CLOSED** (#7 s18, #8 s19, #9 s20 — see the per-session entries).
-   **There are no open correctness tasks.** What remains is optional polish:
-   - Epson-faithful Phase-3 ABI cosmetics: far-ptr register args (`IYP/IXP/HLP`), `YP/XP` char
-     args, `IYIX` long args (everything is correctly stacked today; caller+callee agree).
-   - far bit-fields (loud UNIMPLEMENTED), far function pointers / banked *indirect* calls (needs a
-     CB-switch dispatch story — direct banked calls work via bcall/bjump).
-   - the inert `PAIR_BC`/`PAIR_DE`/`C/D/E_IDX` name removal (pure renumber, s18).
-   - ~~native `DIV` for genDiv/genMod~~ **DONE (session 21)** — unsigned 8÷8 and 16÷8 use the native
-     `DIV`; signed/16-bit-divisor/32-bit stay support calls (claiming signed would need a
-     negate-fixup story). Other peephole/cost tuning remains open-ended.
+3. **ALL numbered tasks are CLOSED** (#7 s18, #8 s19, #9 s20) **and the polish list is CLOSED too**
+   (session 22): native DIV incl. signed 8÷8 (s21+s22), the phantom-register names deleted, far
+   bit-fields implemented, banked function pointers end-to-end, Phase-3 Epson register args closed
+   as documented divergence — **plus the session-22 max-mode call-model correction** (a port-wide
+   latent bug: 2-byte z80 frames vs the PM's 3-byte CB:PC maximum-mode frames — read
+   abi-decision.md "The call model: MAXIMUM mode" before touching anything call-related).
+   **There are no open correctness tasks.** What remains is open-ended peephole/cost tuning, and
+   one recorded hazard to watch: pointers to code-space DATA (CPOINTER) are 3 bytes but deref
+   near-only — fine while const data stays in the common bank (the current convention).
+   **Runtime contract:** programs provide `__sdcc_fptr:: .ds 2` in near RAM (like the
+   `__div`/`__mul` support routines).
 4. **Validator workflow** (how to check a slice): compile with `sdcc -ms1c88 --c1mode -o /tmp/x.asm`, then
    `scripts/validate-s1c88.sh /tmp/x.asm` (assembles with `sdas88`; any reject = a z80-ism to fix). For a
    refactor, also confirm **byte-identical** codegen across the corpus (the strongest safety check).
@@ -184,6 +198,58 @@ the broader operand-placement work so the allocator keeps 16-bit operands in BA/
 
 > A from-scratch big-bang reshape was tried and **reset** (unverifiable-red for the whole grind). The dead
 > WIP is in reflog `417bed5` — useful only as a reference for the *end-state* register defs.
+
+## Session 22 (2026-06-06) — the polish list closed; the MAX-MODE call-model bug found and fixed
+
+**Every remaining polish item is done, and chasing the banked-function-pointer design surfaced a
+port-wide latent correctness bug that got fixed on the spot.** Commits `0450dfe` (signed div),
+`2ebe74e` (phantom names), `e45e57e` (far bit-fields), `89efb3b` (max mode), `29c4af8` (banked
+fptrs). The essentials per item:
+
+- **Signed 8÷8 division** (`0450dfe`): hasNativeMulFor claims signed char ÷ signed char (and the
+  hook claims positive literal divisors, which never fire — the middle end widens `sc/10` to int).
+  Branchless: `|x| = (x^m) - m` with m = SEP's sign mask; unsigned DIV on magnitudes; the result
+  mask (q: `m(divd)^m(divr)`, r: `m(divd)`) re-applied the same way; wide results sep-extend.
+  NOT claimed under `--opt-code-size` (~26 B inline vs a 6 B bcall) — the gate is verified.
+- **Phantom names deleted** (`2ebe74e`, the s18 finale, 3 byte-identical phases): PAIR_BC/PAIR_DE
+  out of the PAIR_ID enum and `_pairs[]`; C/D/E_IDX out of ralloc.h/`s1c88_regs[]` (IYL/IYH
+  renumber to 4/5); ralloc2.cc REG_C/D/E folded under the 0..3-only invariant (DEinst_ok is
+  `return true`); the de_dead/bc_free plumbing dropped from genMove/genMove_o/genCopy/adjustStack/
+  restoreRegs (~140 call sites); dead genArrayInit + RLE machinery deleted (ARRAYINIT never
+  generated). En route: genMove_o's stack-pop trick and genPointerSet's lit-word store no longer
+  pick phantom pairs (the latter now saves a live HL); the reserve-regs-iy no-third-pointer case
+  is a loud UNIMPLEMENTED.
+- **Far bit-fields** (`e45e57e`): genFarUnpackBits/genFarPackBits — raw bytes through HL+EP,
+  every mask/shift/sign op at EP=0, stores/loads of the VALUE at EP=0 too (multi-byte values ride
+  the stack across the pointer staging; `pop ba` is SP-paged = near-safe under EP). Any alignment,
+  signedness, result/value aop; blen>16 keeps a loud trap. `19_far.c` gained the fb_* cluster.
+- **⚠ THE MAX-MODE CALL MODEL** (`89efb3b` — read abi-decision.md "The call model: MAXIMUM mode"):
+  the S1C88 max mode pushes CB with every call; RET pops 3 bytes. The PM IS max mode
+  (PokeMini: CALLS pushes PC.B.I+PCH+PCL; min mode can't bank-switch a 2MB ROM). The linker's
+  bcall/bjump always assumed it; codegen assumed z80 2-byte frames — every stacked arg off by one
+  on silicon, and the s9/s19 PCALL schemes built frames RET would misinterpret. Nothing caught it
+  because no ROM executes in-repo (the s15 lesson again). Fix: call_overhead 4→5; CALLER cleanup
+  by default (only RET can consume the frame; __z88dk_callee keeps one universal 3-byte frame-hop
+  epilogue); PCALL = stage offset into the `__sdcc_fptr` near-RAM cell + native `call (hhll)`;
+  tails keep `jp hl`. 14/20 corpus files re-baselined (+1 offsets, epilogues, dispatches —
+  hand-verified incl. varargs `&n+1` at ix+7).
+- **Banked function pointers** (`29c4af8`): funcptr_size = 3 — (lo, hi, bank); code symbols link
+  as (bank<<16)|logic so `&f`'s `(sym>>16)` byte IS the bank (the #9 XL3 relocs, zero linker
+  work); printIvalFuncPtr's 3-byte arm gated for s1c88 (patch regenerated from pristine).
+  Dispatch: `ld nb, <bank>` then `call (__sdcc_fptr)` / `jp hl` — the CB←NB latch switches, the
+  max-mode frame restores. **NB-window discipline: ≤1 instruction between ld nb and the branch**
+  (the Minx interrupt blackout covers exactly the linker's own `ld nb; nop; carl` window).
+  Peepholes 135/136 (call→jp tails) banned from `call (__sdcc_fptr)` — caught emitting a relative
+  jump to the cell. **End-to-end:** linked with _CODE=0x028000, the fptr initializer bytes read
+  `00 80 02` (offset + linker-resolved bank).
+- **Phase-3 Epson register args: closed, won't do** (abi-decision.md updated): stack passing is
+  correct on both sides, no Epson interop exists, and far-ptr args in EP-paired registers would
+  collide with the EP=0 invariant at every entry.
+
+**Remaining: open-ended peephole/cost tuning only.** Watch item: CPOINTER (code-space DATA)
+pointers are 3 bytes (since #9) but deref near-only — fine while const data stays in the common
+bank. Runtime contract: `__sdcc_fptr:: .ds 2` in near RAM, and indirect calls are not reentrant
+against an ISR that itself makes an indirect call mid-dispatch.
 
 ## Session 21 (2026-06-06) — native DIV: unsigned 8÷8 and 16÷8 division/modulus
 
