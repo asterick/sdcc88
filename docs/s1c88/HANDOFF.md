@@ -277,8 +277,20 @@ loops, short-circuit `&&`/`||` with side effects, ternary, goto. 467 values matc
   pressure + broader ABI coverage). The harness's per-width `diff_e1/e2/e4` emitters (added to
   dodge #5 before it was fixed) are kept — they're a clean, compact design regardless.
 
+**ISR EXECUTION case** (`49a5f52`): `tests/emu/cases/08_isr.c` drives a real timer-0 interrupt
+end-to-end on the kept IRQ + timers — program the timer, install `&tim0_isr` at vector
+`2*IRQ_TIM0 = 0x10`, set the IRQ group priority + enable, drop the CPU level (`and sc,#0x3f`
+inline asm) so the IRQ is accepted, then run a fixed foreground sum while the ISR fires;
+verifies the sum is unperturbed (the `__interrupt` prologue/epilogue + RETE saved/restored
+regs), the ISR ran, and its body computed correctly. Negative control (omit the SC unmask)
+confirms it depends on real delivery. To install the vector the table (low memory, vector N at
+`2*N`) had to be writable, so the **embedded BIOS was removed** — `cpu_read`/`cpu_write` route
+everything outside the `0x2000..0x20FF` register window through the unified `memory[]` (the BIOS
+couldn't boot post-prune and the runner forces PC=0x2100 anyway). emu-test now **8/8**.
+
 (Earlier this session, before the prune: the far emu case and the differential harness +
-arith module — see Session 24.) emu-test 7/7; diff-test arith 5876 + control 467; corpus 20/20.
+arith module — see Session 24.) diff-test arith 5876 + control 467 + calls 72 + memory 32;
+corpus 20/20.
 
 ## Session 24 (2026-06-07) — far execution coverage + a differential harness; three bugs found
 
