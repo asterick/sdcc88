@@ -4001,6 +4001,36 @@ skip_byte:
 
       // No byte can be assigned safely (i.e. the assignment is a permutation). Cache one in the accumulator.
 
+      /* S1C88: the accumulator-cache trick below is unsound when A itself is
+         inside the permutation cycle — `ld a, <src>` destroys A's old value
+         before the byte sourced FROM A is read.  (Latent in the z80 original
+         too, but the BA-first argument ABI makes the plain A<->B swap common
+         here: a temp allocated {B,A} sent to the BA argument register used to
+         have its swap silently DROPPED, crossing the argument bytes — caught
+         at runtime by tests/emu 04.)  Handle the A<->B 2-cycle with the native
+         EX A,B; flag any other cycle through A so the dry-run cost steers the
+         allocator away from it. */
+      if (cached_byte == -1 && result->regs[A_IDX] >= roffset && result->regs[A_IDX] < roffset + n &&
+        !assigned[result->regs[A_IDX] - roffset])
+        {
+          const int ai = result->regs[A_IDX] - roffset;   /* byte whose target is A */
+          const int bi = result->regs[B_IDX] - roffset;   /* byte whose target is B (if any) */
+          if (result->regs[B_IDX] >= roffset && result->regs[B_IDX] < roffset + n && !assigned[bi] &&
+            source->aopu.aop_reg[soffset + ai]->rIdx == B_IDX &&
+            source->aopu.aop_reg[soffset + bi]->rIdx == A_IDX)
+            {
+              emit2 ("ex a, b");
+              cost (1, 2);
+              assigned[ai] = true;
+              assigned[bi] = true;
+              regsize -= 2;
+              size -= 2;
+              a_free = false;
+              continue;
+            }
+          UNIMPLEMENTED;   /* permutation cycle through A that is not the plain A<->B swap */
+        }
+
       if (cached_byte != -1)
         {
           // Already one cached. Can happen when the assignment is a permutation consisting of multiple cycles.
@@ -5410,7 +5440,15 @@ genCall (const iCode *ic)
       PAIR_ID pair;
       int fp_offset, sp_offset;
 
-      if (!hl_free)
+      /* S1C88: prefer IY for the hidden-buffer address whenever the argument
+         ABI leaves it free — for direct calls too, not only PCALL.  The HL
+         fallback stages through BA, and with sdcccall(1) the first two 16-bit
+         args occupy BA AND HL, so a struct-return call with two int args has
+         no scratch pair on that path (it used to hit the wassert below).  IY
+         is caller-clobbered (it is an argument register, s19), so it is fair
+         game after _saveRegsForCall. */
+      pair = (!IY_RESERVED && !aopArgsUseIY (ftype)) ? PAIR_IY : PAIR_HL;
+      if (!hl_free && pair == PAIR_HL)
         _push (PAIR_HL);
       aopOp (IC_RESULT (ic), ic, true, false);
       wassert (IC_RESULT (ic)->aop->type == AOP_STK || IC_RESULT (ic)->aop->type == AOP_EXSTK);
@@ -5418,7 +5456,6 @@ genCall (const iCode *ic)
         IC_RESULT (ic)->aop->aopu.aop_stk + (IC_RESULT (ic)->aop->aopu.aop_stk >
             0 ? _G.stack.param_offset : 0);
       sp_offset = fp_offset + _G.stack.pushed + _G.stack.offset;
-      pair = (ic->op == PCALL && !IY_RESERVED && !aopArgsUseIY (ftype)) ? PAIR_IY : PAIR_HL;
       {
           emit2 ("ld %s, !immedword", _pairs[pair].name, (unsigned)sp_offset);
           if (pair == PAIR_IY)
@@ -5431,20 +5468,15 @@ genCall (const iCode *ic)
           else
             cost2 (1, 11, 7, 2, 8, 8, 1, 1);
         }
-      if (!hl_free)
+      if (!hl_free && pair == PAIR_HL)
         {
-          if (pair == PAIR_HL)
-            {
-              /* S1C88: stage the buffer address in BA while restoring HL
-                 (the z80 used DE/BC). */
-              wassert (isPairDead (PAIR_BA, ic));
-              emit2 ("ld ba, hl");
-              cost2 (2, 0, 0, 0, 0, 0, 0, 0);
-              _pop (PAIR_HL);
-              pair = PAIR_BA;
-            }
-          else
-            _pop (PAIR_HL);    /* the IY path never touched HL */
+          /* S1C88: stage the buffer address in BA while restoring HL
+             (the z80 used DE/BC). */
+          wassert (isPairDead (PAIR_BA, ic));
+          emit2 ("ld ba, hl");
+          cost2 (2, 0, 0, 0, 0, 0, 0, 0);
+          _pop (PAIR_HL);
+          pair = PAIR_BA;
         }
       emit2 ("push %s", _pairs[pair].name);
       if (pair == PAIR_IY)
@@ -6254,7 +6286,7 @@ genRet (const iCode *ic)
                      `(hl)`), so this works for any frame offset.  `off` is
                      computed after the push so it includes the saved word. */
                   _push (PAIR_HL);
-                  off = _G.stack.offset + _G.stack.param_offset + _G.stack.pushed + (_G.omitFramePtr ? 0 : 2);
+                  off = _G.stack.offset + _G.stack.param_offset + _G.stack.pushed + (_G.omitFramePtr ? 0 : 3) /* S1C88 MAX mode: 3-byte CB:PC return frame (z80 had 2) */;
                   setupPairFromSP (PAIR_HL, off);
                   emit2 ("ld iy, !*hl");
                   cost2 (2, 14, 12, 8, 0, 6, 4, 4);
@@ -6283,7 +6315,7 @@ genRet (const iCode *ic)
   else if (IC_LEFT (ic)->aop->type == AOP_LIT)
     {
       unsigned long long lit = ullFromVal (IC_LEFT (ic)->aop->aopu.aop_lit);
-      setupPairFromSP (PAIR_HL, _G.stack.offset + _G.stack.param_offset + _G.stack.pushed + (_G.omitFramePtr ? 0 : 2));
+      setupPairFromSP (PAIR_HL, _G.stack.offset + _G.stack.param_offset + _G.stack.pushed + (_G.omitFramePtr ? 0 : 3) /* S1C88 MAX mode: 3-byte CB:PC return frame (z80 had 2) */);
       emit2 ("!ldahli");
       regalloc_dry_run_cost += 6;
       emit2 ("ld h, !*hl");
@@ -6302,7 +6334,7 @@ genRet (const iCode *ic)
   // gbz80 doesn't have have ldir. Rabbit 2000 to Rabbit 3000 (i.e. r2k and r2ka port) have an ldir wait state bug that affects copies between different types of memory.
   else if (IC_LEFT (ic)->aop->type == AOP_STK || IC_LEFT (ic)->aop->type == AOP_EXSTK || (IC_LEFT (ic)->aop->type == AOP_DIR || IC_LEFT (ic)->aop->type == AOP_IY))
     {
-      setupPairFromSP (PAIR_HL, _G.stack.offset + _G.stack.param_offset + _G.stack.pushed + (_G.omitFramePtr ? 0 : 2));
+      setupPairFromSP (PAIR_HL, _G.stack.offset + _G.stack.param_offset + _G.stack.pushed + (_G.omitFramePtr ? 0 : 3) /* S1C88 MAX mode: 3-byte CB:PC return frame (z80 had 2) */);
       /* IY = dest (the caller's hidden return-buffer pointer, 2 bytes via [HL]).
          S1C88 has no DE; the 16-bit `ld iy,(hl)` reads the pointer in one go. */
       emit2 ("ld iy, !*hl");
@@ -6347,7 +6379,7 @@ genRet (const iCode *ic)
     {
       /* S1C88: read the caller's hidden buffer pointer in one 16-bit load
          and write through IY (the z80 walked it with BC). */
-      setupPairFromSP (PAIR_HL, _G.stack.offset + _G.stack.param_offset + _G.stack.pushed + (_G.omitFramePtr ? 0 : 2));
+      setupPairFromSP (PAIR_HL, _G.stack.offset + _G.stack.param_offset + _G.stack.pushed + (_G.omitFramePtr ? 0 : 3) /* S1C88 MAX mode: 3-byte CB:PC return frame (z80 had 2) */);
       emit2 ("ld iy, !*hl");
       cost2 (2, 0, 0, 0, 0, 0, 0, 0);
       spillPair (PAIR_IY);
@@ -7563,9 +7595,15 @@ genSub (const iCode *ic, asmop *result, asmop *left, asmop *right)
       _G.preserveCarry = !!size;
       cheapMove (result, offset++, ASMOP_A, 0, true);
 
+      /* A result byte already stored into L or H corrupts a PAIRPTR-in-HL
+         operand for the REMAINING bytes (setupPair AOP_PAIRPTR adjusts the
+         cached pointer blindly -- it assumes the pair is never clobbered).
+         Check the bytes written so far (offset was just incremented), not
+         the upcoming one: byte 0 landing in L with byte 1 still to be read
+         through (hl) is exactly the miscompile (caught by tests/emu 02). */
       if ((left->type == AOP_PAIRPTR && left->aopu.aop_pairId == PAIR_HL || right->type == AOP_PAIRPTR && right->aopu.aop_pairId == PAIR_HL) &&
         size &&
-        (aopInReg (result, offset, L_IDX) || aopInReg (result, offset, H_IDX)))
+        (result->regs[L_IDX] >= 0 && result->regs[L_IDX] < offset || result->regs[H_IDX] >= 0 && result->regs[H_IDX] < offset))
         UNIMPLEMENTED;
     }
 

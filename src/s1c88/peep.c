@@ -504,12 +504,18 @@ z80MightRead(const lineNode *pl, const char *what)
      ISINST(pl->line, "rrd")))
     return(!!strstr("ahl", what));
 
-  // Bit set, reset and test group
+  // Bit test: the S1C88 operand order is `bit reg, #mask` — the REGISTER is
+  // the FIRST operand (z80 had `bit #n, reg`, register after the comma).
+  // Scanning the wrong side made notUsed() think `bit a, #0x01` doesn't read
+  // A, so peephole 7 deleted the A reload before it (caught by tests/emu 03,
+  // a wrong quotient out of the C-compiled __divuint). argCont stops at the
+  // comma. set/res don't exist on the S1C88 (bits are done via and/or a,#mask)
+  // but keep them conservative should one ever appear.
   if(ISINST(pl->line, "bit") ||
      ISINST(pl->line, "set") ||
      ISINST(pl->line, "res"))
     {
-      return(argCont(strchr(pl->line + 4, ','), what));
+      return(argCont(pl->line + 4, what));
     }
 
   if (ISINST(pl->line, "ccf") || ISINST(pl->line, "scf") || ISINST(pl->line, "nop") || ISINST(pl->line, "halt"))
