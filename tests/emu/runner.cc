@@ -85,8 +85,10 @@ int main(int argc, char** argv) {
 	if (verbose) fprintf(stderr, "[emu] loaded %zu bytes at phys 0x2100\n", n);
 
 	// reset, then bypass the BIOS: jump straight to crt0 at 0x2100 (bank 0, so
-	// cb/nb = 0; sc stays 0xC0 = interrupts masked). Memory is always accessible
-	// now — control has no enable side effects.
+	// cb/nb = 0; sc stays 0xC0 = interrupts masked). The BIOS will NOT boot with
+	// the peripherals pruned from the core, so we must never run it — PC is forced
+	// to the cartridge entry here. Memory is always accessible (control has no
+	// enable side effects).
 	cpu_reset(m);
 	m.reg.pc = 0x2100;
 	m.reg.cb = 0;

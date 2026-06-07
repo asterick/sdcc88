@@ -23,13 +23,8 @@ OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 namespace Machine { struct State; };
 
 #include "irq.h"
-#include "tim256.h"
 #include "timers.h"
-#include "rtc.h"
 #include "control.h"
-#include "input.h"
-#include "eeprom.h"
-#include "gpio.h"
 #include "tracing.h"
 
 const auto OSC1_SPEED	= 32768;
@@ -123,12 +118,8 @@ namespace Machine {
 	struct State {
 		CPU::State reg;
 		IRQ::State irq;
-		RTC::State rtc;
 		Control::State ctrl;
-		TIM256::State tim256;
 		Timers::State timers;
-		Input::State input;
-		GPIO::State gpio;
 
 		uint8_t bus_cap;
 		int clocks;
@@ -156,7 +147,6 @@ extern "C" void cpu_advance(Machine::State& cpu, int ticks);
 // Bridge functions
 extern "C" void cpu_reset(Machine::State& cpu);
 extern "C" void cpu_advance(Machine::State& cpu, int ticks);
-extern "C" void update_inputs(Machine::State& cpu, uint16_t value);
 extern "C" const char* get_version();
 
 // Clock management

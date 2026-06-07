@@ -30,6 +30,10 @@ extern "C" const char* get_version() {
 }
 
 extern "C" void cpu_reset(Machine::State& cpu) {
+	// NB: the reset vector is read from the BIOS image, but with the LCD/blitter/
+	// audio/RTC/etc. peripherals pruned the BIOS will not boot — the harness must
+	// bypass it (the runner forces PC to the cartridge entry, 0x2100). Do not
+	// rely on a clean reset-into-BIOS boot.
 	cpu.reg.pc = cpu_read16(cpu, 0x0000);
 	cpu.reg.sc = 0xC0;
 	cpu.reg.ep = 0xFF;
@@ -44,39 +48,23 @@ extern "C" void cpu_reset(Machine::State& cpu) {
 
 	Control::reset(cpu.ctrl);
 	IRQ::reset(cpu);
-	RTC::reset(cpu);
-	TIM256::reset(cpu);
 	Timers::reset(cpu);
-	Input::reset(cpu.input);
-	GPIO::reset(cpu.gpio);
-}
-
-extern "C" void update_inputs(Machine::State& cpu, uint16_t value) {
-	Input::update(cpu, value);
 }
 
 void cpu_clock(Machine::State& cpu, int cycles) {
-	const int osc3 = cycles * OSC3_SPEED / CPU_SPEED;	
+	const int osc3 = cycles * OSC3_SPEED / CPU_SPEED;
 	int osc1 = 0;
 
 	cpu.osc1_overflow += osc3 * OSC1_SPEED;
 
 	if (cpu.status <= Machine::STATUS_HALTED) {
+		// derive elapsed OSC1 (32kHz) ticks so OSC1-sourced timers advance
+		while (cpu.osc1_overflow >= OSC3_SPEED) {
+			cpu.osc1_overflow -= OSC3_SPEED;
+			osc1++;
+		}
+
 		Timers::clock(cpu, osc1, osc3);
-
-		if (cpu.osc1_overflow >= OSC3_SPEED) {
-			// Assume we are not going to get more than a couple ticks out of this thing
-			do {
-				cpu.osc1_overflow -= OSC3_SPEED;
-				osc1++;
-			} while (cpu.osc1_overflow >= OSC3_SPEED);
-
-			// These are the devices that only advance with OSC3
-			TIM256::clock(cpu, osc1);
-			RTC::clock(cpu, osc1);
-	 	} else {
-	 		osc1 = 0;
-	 	}
 	}
 
  	// OSC3 = 4mhz oscillator, OSC1 = 32khz oscillator
@@ -109,16 +97,8 @@ static inline uint8_t cpu_read_reg(Machine::State& cpu, uint32_t address) {
 	switch (address) {
 	case 0x2000 ... 0x2002:
 		return Control::read(cpu.ctrl, address);
-	case 0x2008 ... 0x200B:
-		return RTC::read(cpu, address);
 	case 0x2020 ... 0x202A:
 		return IRQ::read(cpu, address);
-	case 0x2040 ... 0x2041:
-		return TIM256::read(cpu, address);
-	case 0x2050 ... 0x2055:
-		return Input::read(cpu.input, address);
-	case 0x2060 ... 0x2062:
-		return GPIO::read(cpu.gpio, address);
 	case 0x2010:
 		// This should be handled properly
 		return 0b010000;
@@ -137,20 +117,8 @@ static inline void cpu_write_reg(Machine::State& cpu, uint8_t data, uint32_t add
 	case 0x2000 ... 0x2002:
 		Control::write(cpu.ctrl, data, address);
 		break ;
-	case 0x2008 ... 0x200B:
-		RTC::write(cpu, data, address);
-		break ;
 	case 0x2020 ... 0x202A:
 		IRQ::write(cpu, data, address);
-		break ;
-	case 0x2040 ... 0x2041:
-		TIM256::write(cpu, data, address);
-		break ;
-	case 0x2050 ... 0x2055:
-		Input::write(cpu.input, data, address);
-		break ;
-	case 0x2060 ... 0x2062:
-		GPIO::write(cpu.gpio, data, address);
 		break ;
 	case 0x2018 ... 0x201D:
 	case 0x2030 ... 0x203F:
