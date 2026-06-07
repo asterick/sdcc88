@@ -4996,6 +4996,29 @@ genIpush (const iCode *ic)
 
   int size = IC_LEFT (ic)->aop->size;
 
+  /* Registers already loaded by preceding SENDs for this same call hold live
+     argument values until the call, but a literal/immediate SEND (e.g. a `char`
+     arg) creates no live range, so isRegDead() reports the register free here.
+     The z80 base pushed via DE/BC and never touched those regs; the S1C88
+     pushes via BA, so using A/B as the push vehicle would clobber an
+     already-sent argument. Mark the registers held by preceding SENDs occupied
+     so they are excluded from the push below. (genSend does the symmetric scan.) */
+  bool send_a = false, send_b = false, send_h = false, send_l = false, send_iyl = false, send_iyh = false;
+  for (iCode *walk2 = ic->prev; walk2 && (walk2->op == SEND || walk2->op == IPUSH); walk2 = walk2->prev)
+    {
+      if (walk2->op != SEND)
+        continue;
+      asmop *warg = aopArg (ftype, walk2->argreg);
+      if (!warg)
+        continue;
+      send_a |= (warg->regs[A_IDX] >= 0);
+      send_b |= (warg->regs[B_IDX] >= 0);
+      send_h |= (warg->regs[H_IDX] >= 0);
+      send_l |= (warg->regs[L_IDX] >= 0);
+      send_iyl |= (warg->regs[IYL_IDX] >= 0);
+      send_iyh |= (warg->regs[IYH_IDX] >= 0);
+    }
+
   if (size == 1 && smallc) /* The SmallC calling convention pushes 8-bit parameters as 16-bit values. */
     {
       if (IC_LEFT (ic)->aop->type == AOP_REG && IC_LEFT (ic)->aop->aopu.aop_reg[0]->rIdx == L_IDX)
@@ -5040,12 +5063,12 @@ genIpush (const iCode *ic)
       {
         int d = 0;
 
-        bool a_free = isRegDead (A_IDX, ic) && (IC_LEFT (ic)->aop->regs[A_IDX] < 0 || IC_LEFT (ic)->aop->regs[A_IDX] >= size - 1);
-        bool b_free = isRegDead (B_IDX, ic) && (IC_LEFT (ic)->aop->regs[B_IDX] < 0 || IC_LEFT (ic)->aop->regs[B_IDX] >= size - 1);
-        bool h_free = isRegDead (H_IDX, ic) && (IC_LEFT (ic)->aop->regs[H_IDX] < 0 || IC_LEFT (ic)->aop->regs[H_IDX] >= size - 1);
-        bool l_free = isRegDead (L_IDX, ic) && (IC_LEFT (ic)->aop->regs[L_IDX] < 0 || IC_LEFT (ic)->aop->regs[L_IDX] >= size - 1);
-        bool iyh_free = isRegDead (IYH_IDX, ic) && (IC_LEFT (ic)->aop->regs[IYH_IDX] < 0 || IC_LEFT (ic)->aop->regs[IYH_IDX] >= size - 1);
-        bool iyl_free = isRegDead (IYL_IDX, ic) && (IC_LEFT (ic)->aop->regs[IYL_IDX] < 0 || IC_LEFT (ic)->aop->regs[IYL_IDX] >= size - 1);
+        bool a_free = isRegDead (A_IDX, ic) && !send_a && (IC_LEFT (ic)->aop->regs[A_IDX] < 0 || IC_LEFT (ic)->aop->regs[A_IDX] >= size - 1);
+        bool b_free = isRegDead (B_IDX, ic) && !send_b && (IC_LEFT (ic)->aop->regs[B_IDX] < 0 || IC_LEFT (ic)->aop->regs[B_IDX] >= size - 1);
+        bool h_free = isRegDead (H_IDX, ic) && !send_h && (IC_LEFT (ic)->aop->regs[H_IDX] < 0 || IC_LEFT (ic)->aop->regs[H_IDX] >= size - 1);
+        bool l_free = isRegDead (L_IDX, ic) && !send_l && (IC_LEFT (ic)->aop->regs[L_IDX] < 0 || IC_LEFT (ic)->aop->regs[L_IDX] >= size - 1);
+        bool iyh_free = isRegDead (IYH_IDX, ic) && !send_iyh && (IC_LEFT (ic)->aop->regs[IYH_IDX] < 0 || IC_LEFT (ic)->aop->regs[IYH_IDX] >= size - 1);
+        bool iyl_free = isRegDead (IYL_IDX, ic) && !send_iyl && (IC_LEFT (ic)->aop->regs[IYL_IDX] < 0 || IC_LEFT (ic)->aop->regs[IYL_IDX] >= size - 1);
         bool hl_free = isPairDead (PAIR_HL, ic) && (h_free || IC_LEFT (ic)->aop->regs[H_IDX] >= size - 2) && (l_free || IC_LEFT (ic)->aop->regs[L_IDX] >= size - 2);
         bool ba_free = isPairDead (PAIR_BA, ic) && (b_free || IC_LEFT (ic)->aop->regs[B_IDX] >= size - 2) && (a_free || IC_LEFT (ic)->aop->regs[A_IDX] >= size - 2);
 
