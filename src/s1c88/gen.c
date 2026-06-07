@@ -14462,7 +14462,15 @@ genCast (const iCode *ic)
       surviving_a |= (result->aop->regs[A_IDX] >= 0 && result->aop->regs[A_IDX] < right->aop->size);
       bool hl_dead = isPairDead (PAIR_HL, ic) && (result->aop->regs[L_IDX] < 0 || result->aop->regs[L_IDX] >= right->aop->size) && (result->aop->regs[H_IDX] < 0 || result->aop->regs[H_IDX] >= right->aop->size);
       bool iy_dead = true && (result->aop->regs[IYL_IDX] < 0 || result->aop->regs[IYL_IDX] >= right->aop->size) && (result->aop->regs[IYH_IDX] < 0 || result->aop->regs[IYH_IDX] >= right->aop->size);
-      genMove_o (result->aop, right->aop->size, ASMOP_ZERO, 0, size, !surviving_a, hl_dead, iy_dead, true);
+      /* Zero-filling the upper bytes into memory needs a scratch (xor a,a; ld
+         (mem),a) and clobbers A — genMove_o does NOT honor a_dead for a
+         ZERO->memory fill. If A is live across the cast (e.g. it still holds the
+         source value needed by a following compare), preserve it here, exactly
+         as the signed path below does. Otherwise a `(unsigned long)x` whose x is
+         also compared miscompiles: the compare reads a zeroed A. */
+      if (surviving_a && !pushed_a)
+        _push (PAIR_AF), pushed_a = true;
+      genMove_o (result->aop, right->aop->size, ASMOP_ZERO, 0, size, true, hl_dead, iy_dead, true);
     }
   else
     {
