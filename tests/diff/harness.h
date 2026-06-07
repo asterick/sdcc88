@@ -49,29 +49,45 @@ static void diff_putc(char c) { DIFF_CHAR_OUT = (unsigned char)c; }
 
 static void diff_puts(const char *s) { while (*s) diff_putc(*s++); }
 
-/* tag:hhhh...\n  (big-endian hex, nbytes wide) */
-static void diff_emit(const char *tag, u32 v, u8 nbytes)
+/* Primitive emitters take a SINGLE argument each — never a char alongside a
+   stacked long. (An earlier diff_emit(tag, u32 v, u8 nbytes) tripped a backend
+   bug where the char `nbytes` was dropped/clobbered by the stacked long `v`'s
+   staging under register pressure; see docs HANDOFF "Session 24". Keeping each
+   helper to one scalar/pointer arg sidesteps that ABI hazard so the harness can
+   test the rest of the codegen.) Bytes are extracted in the EMIT_* macros. */
+static void diff_tag(const char *tag) { diff_puts(tag); diff_putc(':'); }
+
+static void diff_hex2(u8 b)
 {
     static const char hexd[] = "0123456789abcdef";
-    u8 i;
-    diff_puts(tag);
-    diff_putc(':');
-    for (i = nbytes; i; i--) {
-        u8 byte = (u8)(v >> (8 * (i - 1)));
-        diff_putc(hexd[(byte >> 4) & 0xF]);
-        diff_putc(hexd[byte & 0xF]);
-    }
-    diff_putc('\n');
+    diff_putc(hexd[(b >> 4) & 0xF]);
+    diff_putc(hexd[b & 0xF]);
 }
 
-/* Each macro truncates to its width (the two's-complement bit pattern), which is
-   identical on host and target — see SOUNDNESS above. */
-#define EMIT_U8(tag, x)  diff_emit((tag), (u32)(u8)(x), 1)
-#define EMIT_I8(tag, x)  diff_emit((tag), (u32)(u8)(i8)(x), 1)
-#define EMIT_U16(tag, x) diff_emit((tag), (u32)(u16)(x), 2)
-#define EMIT_I16(tag, x) diff_emit((tag), (u32)(u16)(i16)(x), 2)
-#define EMIT_U32(tag, x) diff_emit((tag), (u32)(x), 4)
-#define EMIT_I32(tag, x) diff_emit((tag), (u32)(i32)(x), 4)
+static void diff_nl(void) { diff_putc('\n'); }
+
+/* Per-width emitters: each takes (tag, value) only — a pointer + a long, never a
+   char alongside the long, so the byte extraction (which would otherwise pass a
+   char arg) stays inside these functions and off the call boundary. The EMIT_*
+   macros are then a single call each (compact — large test functions stay within
+   the jrs branch range). */
+static void diff_e1(const char *tag, u32 v) { diff_tag(tag); diff_hex2((u8)v); diff_nl(); }
+static void diff_e2(const char *tag, u32 v) { diff_tag(tag); diff_hex2((u8)(v >> 8)); diff_hex2((u8)v); diff_nl(); }
+static void diff_e4(const char *tag, u32 v)
+{
+    diff_tag(tag);
+    diff_hex2((u8)(v >> 24)); diff_hex2((u8)(v >> 16)); diff_hex2((u8)(v >> 8)); diff_hex2((u8)v);
+    diff_nl();
+}
+
+/* tag:hh[hh[hhhh]]\n  big-endian hex; each macro truncates to its width (the
+   two's-complement bit pattern), identical on host and target — see SOUNDNESS. */
+#define EMIT_U8(tag, x)  diff_e1((tag), (u32)(u8)(x))
+#define EMIT_I8(tag, x)  diff_e1((tag), (u32)(u8)(i8)(x))
+#define EMIT_U16(tag, x) diff_e2((tag), (u32)(u16)(x))
+#define EMIT_I16(tag, x) diff_e2((tag), (u32)(u16)(i16)(x))
+#define EMIT_U32(tag, x) diff_e4((tag), (u32)(x))
+#define EMIT_I32(tag, x) diff_e4((tag), (u32)(i32)(x))
 
 void diff_run(void);
 
