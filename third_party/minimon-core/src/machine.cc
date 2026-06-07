@@ -21,10 +21,6 @@ OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 #include "machine.h"
 #include "debug.h"
 
-static const uint8_t bios[0x2000] = {
-	#include "bios.h"
-};
-
 extern "C" const char* get_version() {
 	return "0.1.0";
 }
@@ -133,12 +129,14 @@ static inline void cpu_write_reg(Machine::State& cpu, uint8_t data, uint32_t add
 
 extern "C" uint8_t cpu_read(Machine::State& cpu, uint32_t address) {
 	switch (address) {
-		case 0x0000 ... 0x0FFF:
-			return cpu.bus_cap = bios[address];
 		case 0x2000 ... 0x20FF:
 			return cpu.bus_cap = cpu_read_reg(cpu, address);
 		default:
-			// RAM (0x1000..0x1FFF) + cartridge/far data, one unified array
+			// Everything but the register window is one unified writable array:
+			// the interrupt vector table (0x0000..), RAM (0x1000..0x1FFF), and
+			// cartridge/far data (0x2100..). The BIOS is gone (it could not boot
+			// with the peripherals pruned), so low memory is plain writable RAM —
+			// which lets ISR tests install vectors at 2*N.
 			return cpu.bus_cap = cpu.memory[address % sizeof(cpu.memory)];
 	}
 }
@@ -147,13 +145,10 @@ extern "C" void cpu_write(Machine::State& cpu, uint8_t data, uint32_t address) {
 	cpu.bus_cap = data;
 
 	switch (address) {
-		case 0x0000 ... 0x0FFF:
-			break ;	// BIOS ROM — ignore writes
 		case 0x2000 ... 0x20FF:
 			cpu_write_reg(cpu, data, address);
 			break ;
 		default:
-			// RAM + cartridge/far all writable, so far writes stick
 			cpu.memory[address % sizeof(cpu.memory)] = data;
 			break ;
 	}

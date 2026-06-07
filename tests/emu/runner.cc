@@ -78,7 +78,7 @@ int main(int argc, char** argv) {
 	FILE* f = fopen(rom_path, "rb");
 	if (!f) { perror(rom_path); return 2; }
 	memset(m.memory, 0xFF, sizeof(m.memory));	// unprogrammed ROM reads 0xFF
-	memset(m.memory + 0x1000, 0x00, 0x1000);	// RAM powers on clear (mailbox starts 0)
+	memset(m.memory, 0x00, 0x2000);		// low memory (interrupt vectors) + RAM power on clear
 	size_t n = fread(m.memory + 0x2100, 1, sizeof(m.memory) - 0x2100, f);
 	fclose(f);
 	if (n == 0) { fprintf(stderr, "%s: empty ROM\n", rom_path); return 2; }
