@@ -8,8 +8,9 @@ harness** (LCD/blitter/audio/RTC/TIM256/input/GPIO/EEPROM removed; control = 3 d
 + cartridge unified into one writable `memory[]` so **far writes work**; BIOS bypassed). **New
 control-flow differential module** (`control.c`, 467 values) found **bug #4 — genCast unsigned
 widening clobbered a live A (FIXED, `07d17ba`)** and **bug #5 — a `char` arg alongside a stacked
-`long` arg is dropped under register pressure (OPEN, pressure-dependent, harness restructured to
-dodge it; next: minimize + fix in genSend)**. See "Session 25". Earlier — session 24: **two new test layers + three reachable codegen bugs
+`long` arg dropped under register pressure (FIXED, `4ac3b14`: genIpush now excludes
+already-sent arg registers from push scratch; regression in `calls.c`)**. Differential modules:
+arith 5876 + control 467 + calls 72. See "Session 25". Earlier — session 24: **two new test layers + three reachable codegen bugs
 they found**. (1) `tests/emu/cases/07_far.c` + a `--far` lane in `emu-test.sh` give far
 pointers their first EXECUTION coverage (far ROM reads via EP paging; emu-test 7/7). (2) A
 host-vs-emulator **DIFFERENTIAL harness** — `scripts/diff-test.sh` + `tests/diff/` — compiles the
@@ -261,15 +262,18 @@ loops, short-circuit `&&`/`||` with side effects, ternary, goto. 467 values matc
   Added the guard. z80 dodges it (builds the widened value in registers DEHL); the S1C88's
   smaller file forces the stack-temp + A-scratch path. 4 cast-heavy corpus files re-baselined,
   reviewed benign.
-- **#5 (OPEN — not yet fixed): a `char` arg passed alongside a stacked `long` arg is
-  dropped/clobbered under register pressure.** `diff_emit(const char *tag, u32 v, u8 nbytes)`
-  received `nbytes == v` (the `ld a,#nbytes` was omitted; A was used to stage `v`). **Pressure-
-  dependent — every minimal repro compiled correctly; only `t_nested`'s allocation triggered
-  it**, so it's recorded here rather than fixed blind. Reachable by any printf-like
-  `f(ptr, long, char)` call. The harness was restructured to dodge it (per-width `diff_e1/e2/e4`
-  each take only `(tag, u32)`; byte extraction stays inside them, off the call boundary) so the
-  rest of the codegen stays testable. **Next: minimize #5 (vary register pressure around a
-  `f(ptr,long,char)` call) and fix in genSend/genCall arg ordering.**
+- **#5 (FIXED, `4ac3b14`): a `char` arg passed alongside a stacked `long` arg was
+  dropped/clobbered under register pressure.** `f(ptr, long, char)`: arg setup runs in reverse
+  — SEND(char→A), IPUSH(long v), SEND(ptr→HL), CALL — and the S1C88 stages the stacked long
+  through BA, clobbering A; the char came through as v's low byte (the peephole then removed the
+  dead `ld a,#n`). Root cause: a *literal/immediate* SEND creates no live range, so
+  `isRegDead(A)` reported A free at the IPUSH and genIpush used BA. (An iTemp arg has a live
+  range and was correctly excluded — only literal/char args broke.) z80 dodges it (pushes via
+  DE/BC). Fix: genIpush now scans the preceding SENDs for this call (as genSend already does)
+  and excludes their arg registers from the push-scratch candidates → it stages via a free pair
+  (HL/IY). Regression: `tests/diff/cases/calls.c` (the `f(ptr,long,char)` shape under nested-loop
+  pressure + broader ABI coverage). The harness's per-width `diff_e1/e2/e4` emitters (added to
+  dodge #5 before it was fixed) are kept — they're a clean, compact design regardless.
 
 (Earlier this session, before the prune: the far emu case and the differential harness +
 arith module — see Session 24.) emu-test 7/7; diff-test arith 5876 + control 467; corpus 20/20.
