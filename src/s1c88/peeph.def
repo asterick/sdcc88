@@ -2529,7 +2529,7 @@ replace {
 } by {
 	carl	%5
 	; peephole s1c88-j5 z80 call -> s1c88 carl (16-bit relative call)
-} if notSame(%5 'hl' 'ix' 'iy')
+} if notSame(%5 'hl' 'ix' 'iy' '(__sdcc_fptr)')
 
 replace {
 	call	%1, %5

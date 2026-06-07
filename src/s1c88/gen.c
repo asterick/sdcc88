@@ -2221,25 +2221,12 @@ isFuncCalleeStackCleanup (sym_link *ftype)
   if (IFFUNC_ISZ88DK_CALLEE (ftype))
     return true;
 
-  if (FUNC_SDCCCALL (ftype) == 0 || FUNC_ISSMALLC (ftype) || FUNC_ISZ88DK_FASTCALL (ftype))
-    return false;
-
-  if (IFFUNC_ISBANKEDCALL (ftype))
-    return false;
-
-  if (FUNC_HASVARARGS (ftype))
-    return false;
-
-  wassert (FUNC_SDCCCALL (ftype) == 1);
-
-  // Callee cleans up stack for all non-vararg functions on sm83.
-  
-
-  // Callee cleans up stack if return value has at most 16 bits or the return value is float and there is a first argument of type float.
-  if (!ftype->next || getSize (ftype->next) <= 2)
-    return true;
-  else if (IS_FLOAT (ftype->next) && farg)
-    return true;
+  /* S1C88 maximum mode: the return frame is 3 bytes (PCL PCH CB) and only
+     RET can consume it (a jp can't restore CB), so the z80 callee-cleanup
+     epilogue tricks (pop hl ... jp hl) don't exist here. The CALLER cleans
+     up stack parameters by default; only an explicit __z88dk_callee opts a
+     function into the (bulkier) 3-byte frame-hop epilogue. */
+  (void) farg;
   return false;
 }
 
@@ -5550,6 +5537,13 @@ genCall (const iCode *ic)
       if (!aopInReg (aopRet (currFunc->type), 0, aopRet (ftype)->aopu.aop_reg[0]->rIdx))
         tailjump = false;
 
+  /* An indirect tail-jump needs HL for `jp hl` (the only register-indirect
+     transfer); with an HL argument the target must go through the call
+     form instead, so don't convert. */
+  if (tailjump && ic->op == PCALL &&
+      (s1c88IsParmInCall (ftype, "l") || s1c88IsParmInCall (ftype, "h")))
+    tailjump = false;
+
   const bool jump = tailjump || !ic->parmBytes && !bigreturn && ic->op != PCALL && !IFFUNC_ISBANKEDCALL (dtype) && !IFFUNC_ISZ88DK_SHORTCALL(ftype) && IFFUNC_ISNORETURN (ftype);
 
   if (ic->op == PCALL)
@@ -5563,121 +5557,75 @@ genCall (const iCode *ic)
           wassertl(0, "__z88dk_short_call via function pointer not implemented");
        }
 
-      if (isLitWord (IC_LEFT (ic)->aop))
+      if (jump && isLitWord (IC_LEFT (ic)->aop))
         {
+          /* tail-jump to a constant address: same-bank by definition (a
+             2-byte near code pointer can only name the common/current
+             bank); the caller's own 3-byte CB:PC frame is reused. */
           adjustStack (prestackadjust, a_free, hl_free, false);
-          emit2 (jump ? "jp %s" : "call %s", aopGetLitWordLong (IC_LEFT (ic)->aop, 0, FALSE));
-          if (jump)
-            cost2 (3, 10, 9, 8, 16,	8, 4, 3);
-          else
-            cost2 (3, 17, 16, 12, 24, 14, 5, 3);
+          emit2 ("jp %s", aopGetLitWordLong (IC_LEFT (ic)->aop, 0, FALSE));
+          cost2 (3, 10, 9, 8, 16, 8, 4, 3);
         }
-      else
+      else if (jump)
         {
-          /* S1C88: the only register-indirect transfer is `jp hl` (there is no
-             `jp iy`/`call hl`/`call (iy)`, and no ___sdcc_call_* helper here).
-             Put the function pointer in HL.  For a tail-jump just `jp hl`; for
-             a call, manufacture a return address in a free pair (IY normally,
-             BA when IY is reserved), push it, then `jp hl` — the callee's RET
-             returns to the label emitted right after.  Near function pointers
-             are same-bank, so a plain jp hl is correct. */
-          bool hl_parm = s1c88IsParmInCall (ftype, "l") || s1c88IsParmInCall (ftype, "h");
-
-          if (hl_parm)
-            {
-              /* HL carries an argument, so it cannot transport the function
-                 pointer to a `jp hl` (this silently dropped the HL argument
-                 before).  RET-dispatch instead: build [fptr][retaddr] on the
-                 stack through a parked HL, then `ret` pops the target. */
-              symbol *tlbl = regalloc_dry_run ? 0 : newiTempLabel (NULL);
-              int slots = jump ? 2 : 4;
-              adjustStack (prestackadjust, a_not_parm, false, false);
-              emit2 ("add sp, !immed%d", -slots);
-              cost2 (4, 0, 0, 0, 0, 0, 0, 0);
-              emit2 ("push hl");                    /* park the HL argument */
-              cost2 (1, 11, 11, 10, 16, 8, 3, 4);
-              _G.stack.pushed += slots + 2;
-              genMove (ASMOP_HL, IC_LEFT (ic)->aop, false, true, false);
-              emit2 ("ld %d (sp), hl", 2);          /* the function pointer */
-              cost2 (3, 0, 0, 0, 0, 0, 0, 0);
-              if (!jump)
-                {
-                  if (!regalloc_dry_run)
-                    emit2 ("ld hl, !immed!tlabel", labelKey2num (tlbl->key));
-                  cost2 (3, 10, 9, 6, 12, 6, 3, 3);
-                  emit2 ("ld %d (sp), hl", 4);      /* the return address */
-                  cost2 (3, 0, 0, 0, 0, 0, 0, 0);
-                }
-              emit2 ("pop hl");                     /* the argument, restored */
-              cost2 (1, 10, 9, 7, 12, 10, 3, 3);
-              _G.stack.pushed -= slots + 2;
-              spillPair (PAIR_HL);
-              /* ret pops the fptr slot; the callee's ret pops the retaddr.
-                 The ;pcall tag tells the peephole liveness scan that this ret
-                 is a CALL (arguments are read by the callee). */
-              emit2 ("ret\t;pcall");
-              cost2 (1, 10, 9, 8, 16, 10, 6, 5);
-              if (!jump && tlbl)
-                emitLabel (tlbl);
-            }
-          else
-            {
-
+          /* tail-jump through a register: `jp hl` keeps the caller's CB:PC
+             frame intact (correct in MAXIMUM mode — the callee's RET pops
+             it, restoring the original caller's bank); HL is free here, the
+             tailjump conversion above excluded HL-argument targets. */
           spillPair (PAIR_HL);
           genMove (ASMOP_HL, IC_LEFT (ic)->aop, a_not_parm, true, true);
           adjustStack (prestackadjust, a_not_parm, false, false);
+          emit2 ("!jphl");
+          cost2 (1, 4, 3, 4, 4, 8, 3, 1);
+        }
+      else
+        {
+          /* Indirect CALL, MAXIMUM-mode model: stage the target into the
+             __sdcc_fptr scratch cell (2 bytes of near RAM, provided by the
+             runtime like the __div/__mul support routines) and use the
+             native indirect `call (hhll)` — it pushes the full 3-byte
+             CB:PC return frame, and the callee's RET restores it. (The
+             old jp-hl + manufactured-return / RET-dispatch schemes built
+             2-byte frames — wrong in max mode, where RET also pops CB.)
+             NB == CB between branches (the linker's branch convention
+             maintains that), so the call's CB<-NB latch keeps the current
+             bank: near function pointers are same-bank by definition.
+             The cell transport leaves every argument register untouched:
+             HL when it carries no argument, IY when available, or HL
+             around a stack park as the universal fallback.
+             Not reentrant against an ISR that itself makes an indirect
+             call between the store and the call — documented. */
+          bool hl_parm = s1c88IsParmInCall (ftype, "l") || s1c88IsParmInCall (ftype, "h");
 
-          if (jump)
+          adjustStack (prestackadjust, a_not_parm, !hl_parm, false);
+          emit2 (".globl __sdcc_fptr");
+
+          if (!hl_parm)
             {
-              emit2 ("!jphl");
-              cost2 (1, 4, 3, 4, 4, 8, 3, 1);
+              spillPair (PAIR_HL);
+              genMove (ASMOP_HL, IC_LEFT (ic)->aop, a_not_parm, true, true);
+              emit2 ("ld (__sdcc_fptr), hl");
+              cost (3, 5);
+            }
+          else if (!IY_RESERVED && !aopArgsUseIY (ftype))
+            {
+              spillPair (PAIR_IY);
+              genMove (ASMOP_IY, IC_LEFT (ic)->aop, a_not_parm, false, true);
+              emit2 ("ld (__sdcc_fptr), iy");
+              cost (3, 5);
             }
           else
             {
-              symbol *tlbl = regalloc_dry_run ? 0 : newiTempLabel (NULL);
-              /* a free pair for the return address: IY unless reserved or
-                 carrying an argument; BA unless carrying arguments */
-              PAIR_ID rp = PAIR_INVALID;
-              if (!IY_RESERVED && !aopArgsUseIY (ftype))
-                rp = PAIR_IY;
-              else if (!s1c88IsParmInCall (ftype, "a") && !s1c88IsParmInCall (ftype, "b"))
-                rp = PAIR_BA;
-              if (rp != PAIR_INVALID)
-                {
-                  if (!regalloc_dry_run)
-                    emit2 ("ld %s, !immed!tlabel", _pairs[rp].name, labelKey2num (tlbl->key));
-                  cost2 (rp == PAIR_IY ? 4 : 3, 10, 9, 6, 12, 6, 3, 3);
-                  /* raw push: the return address is consumed by the callee's RET,
-                     so _G.stack.pushed is unchanged across the call. */
-                  emit2 ("push %s", _pairs[rp].name);
-                  if (rp == PAIR_IY)
-                    cost2 (2, 15, 14, 12, 16, 8, 4, 5);
-                  else
-                    cost2 (1, 11, 11, 10, 16, 8, 3, 4);
-                }
-              else
-                {
-                  /* every pair carries arguments: build the return address in
-                     a reserved stack slot through HL (the function pointer is
-                     parked on the stack meanwhile) */
-                  emit2 ("add sp, !immed%d", -2);   /* the return-address slot */
-                  cost2 (4, 0, 0, 0, 0, 0, 0, 0);
-                  emit2 ("push hl");                /* park the function pointer */
-                  cost2 (1, 11, 11, 10, 16, 8, 3, 4);
-                  if (!regalloc_dry_run)
-                    emit2 ("ld hl, !immed!tlabel", labelKey2num (tlbl->key));
-                  cost2 (3, 10, 9, 6, 12, 6, 3, 3);
-                  emit2 ("ld %d (sp), hl", 2);
-                  cost2 (3, 0, 0, 0, 0, 0, 0, 0);
-                  emit2 ("pop hl");
-                  cost2 (1, 10, 9, 7, 12, 10, 3, 3);
-                }
-              emit2 ("!jphl");
-              regalloc_dry_run_cost += 1;
-              if (tlbl)
-                emitLabel (tlbl);
+              /* park the HL argument, stage through HL, restore */
+              _push (PAIR_HL);
+              genMove (ASMOP_HL, IC_LEFT (ic)->aop, a_not_parm, true, false);
+              emit2 ("ld (__sdcc_fptr), hl");
+              cost (3, 5);
+              _pop (PAIR_HL);
             }
-          }
+
+          emit2 ("call (__sdcc_fptr)");
+          cost (3, 9);
         }
     }
   else
@@ -6127,70 +6075,60 @@ genEndFunction (iCode *ic)
     {
       wassertl(regalloc_dry_run || !IFFUNC_ISBANKEDCALL (sym->type), "Unimplemented __banked __z88dk_callee support on callee side");
       wassertl(regalloc_dry_run || !IFFUNC_HASVARARGS (sym->type), "__z88dk_callee function may to have variable arguments");
+      wassertl(regalloc_dry_run || !IFFUNC_ISISR (sym->type), "__z88dk_callee makes no sense on an ISR");
 
-      if (hl_free && !IFFUNC_ISISR (sym->type))
-        {
+      /* __z88dk_callee, MAXIMUM mode: the return frame is 3 bytes
+         (PCL PCH CB) and only RET can consume it (no jp can restore CB),
+         so the z80 pop-and-jp tricks are gone. Move the whole frame up
+         over the parameter area byte-by-byte — top byte (CB) first, since
+         the regions overlap when poststackadjust < 3 — then drop SP onto
+         the moved frame and fall through to the plain ret. A and HL are
+         the working registers, saved when they carry return-value bytes
+         (the saves sit below the frame; `base` re-points the copy). */
+      {
+        const bool save_a_ret = aopRet (sym->type) && aopRet (sym->type)->regs[A_IDX] >= 0;
+        const bool save_hl_ret = aopRet (sym->type) &&
+          (aopRet (sym->type)->regs[L_IDX] >= 0 || aopRet (sym->type)->regs[H_IDX] >= 0);
+        int base = 0;
+        int k;
+
+        if (save_hl_ret)
+          {
+            _push (PAIR_HL);
+            base += 2;
+          }
+        if (save_a_ret)
+          {
+            emit2 ("push a");
+            cost (1, 3);
+            _G.stack.pushed += 1;
+            base += 1;
+          }
+        for (k = 2; k >= 0; k--)
+          {
+            emit2 ("ld hl, !immed%d", base + k);
+            cost2 (3, 10, 9, 6, 12, 6, 3, 3);
+            emit2 ("add hl, sp");
+            cost2 (1, 11, 7, 2, 8, 8, 1, 1);
+            emit2 ("ld a, (hl)");
+            cost2 (1, 7, 6, 5, 8, 6, 2, 2);
+            emit2 ("add hl, !immed%d", poststackadjust);
+            cost2 (3, 0, 0, 0, 0, 0, 0, 0);
+            emit2 ("ld (hl), a");
+            cost2 (1, 7, 7, 6, 8, 6, 2, 2);
+          }
+        if (save_a_ret)
+          {
+            emit2 ("pop a");
+            cost (1, 3);
+            _G.stack.pushed -= 1;
+          }
+        if (save_hl_ret)
           _pop (PAIR_HL);
-          // Parameters should be initialized, so reading them should be fine
-          // we also exactly know which registers we can trash
-          {
-              adjustStack (poststackadjust,
-              !aopRet (sym->type) || aopRet (sym->type)->regs[A_IDX] < 0, false, iy_free);
-            }
-          emit2 ("!jphl");
-          cost2 (1, 4, 3, 4, 4, 8, 3, 1);
-          goto done;
-        }
-      else if (iy_free && !!IFFUNC_ISISR (sym->type))
-        {
-          _pop (PAIR_IY);
-          adjustStack (poststackadjust, !aopRet (sym->type) || aopRet (sym->type)->regs[A_IDX] < 0, hl_free, false);
-          emit2 ("jp (iy)");
-          cost2 (2, 8, 6, 6, 0, 8, 4, 2);
-          goto done;
-        }
-      else if (iy_free)
-       {
-         /* S1C88 has no DE/BC pair: hop the return address over the param
-            area in IY — the only free pair here (HL holds the return value,
-            and IX was just restored as the caller's frame pointer). */
-         _pop (PAIR_IY);
-         adjustStack (poststackadjust, !aopRet (sym->type) || aopRet (sym->type)->regs[A_IDX] < 0, false, false);
-         _push (PAIR_IY);
-       }
-      else // Do it the hard way: Copy return address on stack before stack pointer adjustment.
-        {
-          {
-              /* S1C88: stage the return-address bytes in A/B and copy them up
-                 by poststackadjust (the z80 used ex (sp),hl + D/E); BA may
-                 hold the return value, so it is saved around. */
-              _push (PAIR_HL);
-              _push (PAIR_BA);
-              emit2 ("ld hl, !immedword", 4u);
-              cost2 (3, 10, 9, 6, 12, 6, 3, 3);
-              emit2 ("add hl, sp");
-              cost2 (1, 11, 7, 2, 8, 8, 1, 1);
-              emit2 ("ld a, (hl)");
-              cost2 (1, 7, 6, 5, 8, 6, 2, 2);
-              emit3w (A_INC, ASMOP_HL, 0);
-              emit2 ("ld b, (hl)");
-              cost2 (1, 7, 6, 5, 8, 6, 2, 2);
-              emit2 ("add hl, !immed%d", poststackadjust - 1);
-              cost2 (3, 0, 0, 0, 0, 0, 0, 0);
-              emit2 ("ld (hl), a");
-              cost2 (1, 7, 7, 6, 8, 6, 2, 2);
-              emit3w (A_INC, ASMOP_HL, 0);
-              emit2 ("ld (hl), b");
-              cost2 (1, 7, 7, 6, 8, 6, 2, 2);
-              _pop (PAIR_BA);
-              _pop (PAIR_HL);
-            }
 
-          adjustStack (poststackadjust,
-          !aopRet (sym->type) || aopRet (sym->type)->regs[A_IDX] < 0,
-          false,
-          iy_free);
-        }
+        /* SP onto the moved frame (flags are dead in the epilogue) */
+        adjustStack (poststackadjust, true, false, false);
+      }
     }
 
   if (options.debug && currFunc)

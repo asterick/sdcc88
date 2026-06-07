@@ -896,7 +896,12 @@ PORT s1c88_port =
   },
   { NULL, NULL },
   1,                            /* ABI revision */
-  { -1, 0, 0, 4, 0, 3, 0 },
+  /* stack: direction, bank_overhead, isr_overhead, call_overhead 5 =
+     3-byte CB:PC return frame (S1C88 MAXIMUM mode — every call pushes CB
+     and RET pops it; PokeMini-verified) + 2-byte saved IX frame pointer.
+     (The z80 value 4 assumed 2-byte minimum-mode frames — wrong for the
+     Pokémon Mini, whose 2MB banked ROM requires max mode.) */
+  { -1, 0, 0, 5, 0, 3, 0 },
   { 
     -1,                         /* shifts never use support routines */
     true,                       /* use support routine for int x int -> long multiplication */
