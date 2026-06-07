@@ -3,7 +3,13 @@
 **This is the single resume entry point.** If the prompt is *"let's pick up where you left off,"* do the
 steps under **NEXT ACTION**. Everything needed to continue is here or linked from here.
 
-_Last updated: 2026-06-07 (session 24: **two new test layers + three reachable codegen bugs
+_Last updated: 2026-06-07 (session 25: **emulator pruned to a minimal CPU+memory+IRQ+timers
+harness** (LCD/blitter/audio/RTC/TIM256/input/GPIO/EEPROM removed; control = 3 dumb bytes; RAM
++ cartridge unified into one writable `memory[]` so **far writes work**; BIOS bypassed). **New
+control-flow differential module** (`control.c`, 467 values) found **bug #4 — genCast unsigned
+widening clobbered a live A (FIXED, `07d17ba`)** and **bug #5 — a `char` arg alongside a stacked
+`long` arg is dropped under register pressure (OPEN, pressure-dependent, harness restructured to
+dodge it; next: minimize + fix in genSend)**. See "Session 25". Earlier — session 24: **two new test layers + three reachable codegen bugs
 they found**. (1) `tests/emu/cases/07_far.c` + a `--far` lane in `emu-test.sh` give far
 pointers their first EXECUTION coverage (far ROM reads via EP paging; emu-test 7/7). (2) A
 host-vs-emulator **DIFFERENTIAL harness** — `scripts/diff-test.sh` + `tests/diff/` — compiles the
@@ -225,6 +231,48 @@ the broader operand-placement work so the allocator keeps 16-bit operands in BA/
 
 > A from-scratch big-bang reshape was tried and **reset** (unverifiable-red for the whole grind). The dead
 > WIP is in reflog `417bed5` — useful only as a reference for the *end-state* register defs.
+
+## Session 25 (2026-06-07) — emulator pruned to a minimal harness; control-flow diff module; a 4th bug fixed + a 5th found
+
+**Two threads: pruning the vendored emulator core, and growing the differential suite (which found two more bugs).**
+
+**Emulator prune** (commits `8236cfa`, `68eea6f`): the codegen tests need a CPU + memory + a
+few peripherals, not a full Pokémon Mini. Removed **LCD, blitter, audio, RTC, TIM256, input,
+GPIO, EEPROM**; kept CPU (`machine`/`operations`), **IRQ**, the programmable **timers** (for
+exercising interrupts later), and **control** (neutered to three side-effect-free bytes — no
+LCD/cart enable gating). **RAM + cartridge merged into one writable `memory[0x200000]`** (RAM
+0x1000–0x1FFF, cartridge/far from 0x2100) so **far writes stick and read back** — `07_far`
+gained char+int write-then-readback coverage at a scratch far address. `cpu_clock` keeps the
+OSC1 (32 kHz) derivation for the timers (now computed before `Timers::clock` so OSC1-sourced
+timers actually advance); the CPU only ever executed off OSC3 (the microcontroller's
+run-on-OSC1 feature was never modelled — nothing to remove). **The BIOS will not boot with the
+peripherals gone** — the runner forces PC to 0x2100; flagged in `cpu_reset`, the runner, and
+the core README. 15 modules → 6.
+
+**Control-flow differential module** (`1fea6fa`): `tests/diff/cases/control.c` — if/else-if,
+switch (jump-table + gap + fallthrough + default), for/while/do-while, break/continue, nested
+loops, short-circuit `&&`/`||` with side effects, ternary, goto. 467 values match. It found:
+
+- **#4 (FIXED, `07d17ba`): genCast unsigned widening clobbered a live A.** `if (x<N) … (unsigned
+  long)x …`: the u8→u32 cast zero-fills its stack temp with `xor a,a; ld (mem),a`, clobbering A
+  while it still holds `x` (live for the compare) → the compare reads 0 and always takes the
+  first branch. The signed widening path already guarded with `_push(PAIR_AF)`; the unsigned
+  path didn't (it relied on genMove_o honoring `a_dead` for ZERO→memory, which it doesn't).
+  Added the guard. z80 dodges it (builds the widened value in registers DEHL); the S1C88's
+  smaller file forces the stack-temp + A-scratch path. 4 cast-heavy corpus files re-baselined,
+  reviewed benign.
+- **#5 (OPEN — not yet fixed): a `char` arg passed alongside a stacked `long` arg is
+  dropped/clobbered under register pressure.** `diff_emit(const char *tag, u32 v, u8 nbytes)`
+  received `nbytes == v` (the `ld a,#nbytes` was omitted; A was used to stage `v`). **Pressure-
+  dependent — every minimal repro compiled correctly; only `t_nested`'s allocation triggered
+  it**, so it's recorded here rather than fixed blind. Reachable by any printf-like
+  `f(ptr, long, char)` call. The harness was restructured to dodge it (per-width `diff_e1/e2/e4`
+  each take only `(tag, u32)`; byte extraction stays inside them, off the call boundary) so the
+  rest of the codegen stays testable. **Next: minimize #5 (vary register pressure around a
+  `f(ptr,long,char)` call) and fix in genSend/genCall arg ordering.**
+
+(Earlier this session, before the prune: the far emu case and the differential harness +
+arith module — see Session 24.) emu-test 7/7; diff-test arith 5876 + control 467; corpus 20/20.
 
 ## Session 24 (2026-06-07) — far execution coverage + a differential harness; three bugs found
 
