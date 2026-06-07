@@ -862,8 +862,12 @@ PORT s1c88_port =
   /* Sizes: char, short, int, long, long long, near ptr, far ptr, gptr, func ptr, banked func ptr, bit, float, BitInt (in bits) */
   /* far ptr = 3: 24-bit linear data address (EP page : 16-bit offset) — S1C88 data paging is linear
      (physical = EP*65536 + HL), so byte 2 is simply (addr >> 16) and SDCCglue's stock 3-byte
-     initializer emission is natively correct. gptr stays 2 (== near; no runtime-tagged pointers). */
-  { 1, 2, 2, 4, 8, 2, 3, 2, 2, 2, 1, 4, 64 },
+     initializer emission is natively correct. gptr stays 2 (== near; no runtime-tagged pointers).
+     func ptr = 3: a banked code pointer (lo, hi, bank) — code symbols link as (bank<<16)|logic,
+     so &f's third byte (sym>>16) IS the bank (the #9 XL3 reloc machinery); the PCALL dispatch is
+     `ld nb,<bank>` + `call (__sdcc_fptr)` (the call's CB<-NB latch switches the bank, the 3-byte
+     max-mode frame restores it on return). */
+  { 1, 2, 2, 4, 8, 2, 3, 2, 3, 3, 1, 4, 64 },
   /* tags for generic pointers */
   { 0x00, 0x40, 0x60, 0x80 },   /* far, near, xstack, code */
   {

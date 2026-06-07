@@ -5557,71 +5557,109 @@ genCall (const iCode *ic)
           wassertl(0, "__z88dk_short_call via function pointer not implemented");
        }
 
-      if (jump && isLitWord (IC_LEFT (ic)->aop))
+      /* Function pointers are 3 bytes: (lo, hi, bank) — code symbols link
+         as (bank<<16)|logic, so byte 2 of &f IS the target's bank. The
+         dispatch loads NB and lets the branch's CB<-NB latch switch banks;
+         the 3-byte MAXIMUM-mode frame restores the caller's bank on RET.
+         NB-window discipline: at most ONE instruction between `ld nb, a`
+         and the branch that consumes it (the linker's own `ld nb ; nop ;
+         carl` shape — the hardware's post-NB-write interrupt blackout
+         covers exactly this window). */
+      const bool a_parm = s1c88IsParmInCall (ftype, "a");
+      const bool hl_parm = s1c88IsParmInCall (ftype, "l") || s1c88IsParmInCall (ftype, "h");
+
+      if (jump)
         {
-          /* tail-jump to a constant address: same-bank by definition (a
-             2-byte near code pointer can only name the common/current
-             bank); the caller's own 3-byte CB:PC frame is reused. */
-          adjustStack (prestackadjust, a_free, hl_free, false);
-          emit2 ("jp %s", aopGetLitWordLong (IC_LEFT (ic)->aop, 0, FALSE));
-          cost2 (3, 10, 9, 8, 16, 8, 4, 3);
-        }
-      else if (jump)
-        {
-          /* tail-jump through a register: `jp hl` keeps the caller's CB:PC
-             frame intact (correct in MAXIMUM mode — the callee's RET pops
-             it, restoring the original caller's bank); HL is free here, the
-             tailjump conversion above excluded HL-argument targets. */
+          /* tail-jump: `ld nb, <bank>` + `jp hl` switches to the target's
+             bank and reuses the caller's own CB:PC frame — the eventual
+             RET still restores the original caller's bank. HL is free here
+             (the tailjump conversion excluded HL-argument targets); a live
+             A argument is parked around the bank load. */
           spillPair (PAIR_HL);
-          genMove (ASMOP_HL, IC_LEFT (ic)->aop, a_not_parm, true, true);
-          adjustStack (prestackadjust, a_not_parm, false, false);
+          adjustStack (prestackadjust, !a_parm, false, false);
+          if (a_parm)
+            {
+              emit2 ("push a");
+              cost (1, 3);
+              _G.stack.pushed += 1;
+            }
+          genMove (ASMOP_HLA, IC_LEFT (ic)->aop, true, true, isPairDead (PAIR_IY, ic));
+          emit2 ("ld nb, a");
+          cost (2, 2);
+          if (a_parm)
+            {
+              emit2 ("pop a");          /* the one in-window instruction */
+              cost (1, 3);
+              _G.stack.pushed -= 1;
+            }
           emit2 ("!jphl");
           cost2 (1, 4, 3, 4, 4, 8, 3, 1);
         }
       else
         {
-          /* Indirect CALL, MAXIMUM-mode model: stage the target into the
-             __sdcc_fptr scratch cell (2 bytes of near RAM, provided by the
-             runtime like the __div/__mul support routines) and use the
-             native indirect `call (hhll)` — it pushes the full 3-byte
-             CB:PC return frame, and the callee's RET restores it. (The
-             old jp-hl + manufactured-return / RET-dispatch schemes built
-             2-byte frames — wrong in max mode, where RET also pops CB.)
-             NB == CB between branches (the linker's branch convention
-             maintains that), so the call's CB<-NB latch keeps the current
-             bank: near function pointers are same-bank by definition.
-             The cell transport leaves every argument register untouched:
-             HL when it carries no argument, IY when available, or HL
-             around a stack park as the universal fallback.
-             Not reentrant against an ISR that itself makes an indirect
-             call between the store and the call — documented. */
-          bool hl_parm = s1c88IsParmInCall (ftype, "l") || s1c88IsParmInCall (ftype, "h");
-
-          adjustStack (prestackadjust, a_not_parm, !hl_parm, false);
+          /* Indirect CALL: stage offset into the __sdcc_fptr scratch cell
+             (2 bytes of near RAM, provided by the runtime like the
+             __div/__mul support routines), bank into NB, then the native
+             indirect `call (hhll)` — it pushes the full 3-byte CB:PC
+             return frame and the callee's RET restores it. The transport
+             leaves every argument register untouched: HLA directly when
+             free, IY+A when HL carries arguments, or parks around the
+             stack as the universal fallback. Not reentrant against an ISR
+             that itself makes an indirect call between the store and the
+             call — documented. */
+          adjustStack (prestackadjust, !a_parm, !hl_parm, false);
           emit2 (".globl __sdcc_fptr");
 
-          if (!hl_parm)
+          if (hl_parm && !IY_RESERVED && !aopArgsUseIY (ftype))
             {
-              spillPair (PAIR_HL);
-              genMove (ASMOP_HL, IC_LEFT (ic)->aop, a_not_parm, true, true);
-              emit2 ("ld (__sdcc_fptr), hl");
-              cost (3, 5);
-            }
-          else if (!IY_RESERVED && !aopArgsUseIY (ftype))
-            {
+              /* offset through IY, bank through (parked) A */
               spillPair (PAIR_IY);
-              genMove (ASMOP_IY, IC_LEFT (ic)->aop, a_not_parm, false, true);
+              genMove_o (ASMOP_IY, 0, IC_LEFT (ic)->aop, 0, 2, !a_parm, false, true, true);
               emit2 ("ld (__sdcc_fptr), iy");
               cost (3, 5);
+              if (a_parm)
+                {
+                  emit2 ("push a");
+                  cost (1, 3);
+                  _G.stack.pushed += 1;
+                }
+              cheapMove (ASMOP_A, 0, IC_LEFT (ic)->aop, 2, true);
+              emit2 ("ld nb, a");
+              cost (2, 2);
+              if (a_parm)
+                {
+                  emit2 ("pop a");      /* the one in-window instruction */
+                  cost (1, 3);
+                  _G.stack.pushed -= 1;
+                }
             }
           else
             {
-              /* park the HL argument, stage through HL, restore */
-              _push (PAIR_HL);
-              genMove (ASMOP_HL, IC_LEFT (ic)->aop, a_not_parm, true, false);
+              /* through HLA; park live A/HL arguments around it (pop hl
+                 lands before the bank load, pop a is the one in-window
+                 instruction) */
+              if (a_parm)
+                {
+                  emit2 ("push a");
+                  cost (1, 3);
+                  _G.stack.pushed += 1;
+                }
+              if (hl_parm)
+                _push (PAIR_HL);
+              spillPair (PAIR_HL);
+              genMove (ASMOP_HLA, IC_LEFT (ic)->aop, true, true, isPairDead (PAIR_IY, ic));
               emit2 ("ld (__sdcc_fptr), hl");
               cost (3, 5);
-              _pop (PAIR_HL);
+              if (hl_parm)
+                _pop (PAIR_HL);
+              emit2 ("ld nb, a");
+              cost (2, 2);
+              if (a_parm)
+                {
+                  emit2 ("pop a");      /* the one in-window instruction */
+                  cost (1, 3);
+                  _G.stack.pushed -= 1;
+                }
             }
 
           emit2 ("call (__sdcc_fptr)");
