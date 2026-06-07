@@ -18,10 +18,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 > z80 frame assumption was a port-wide latent bug — read abi-decision.md "The call model: MAXIMUM
 > mode" before touching calls). Phase-3 Epson register args: closed as documented divergence.
 > **20/20 corpus files assemble with 0 sdas88 errors; the banked-ROM pipeline (incl. far ROM data
-> and linked fptr bank bytes) is GREEN.** Remaining = open-ended peephole/cost tuning. Validate each
-> change with `./scripts/corpus-check.sh` (byte-identical +
-> sdas88) — **always rebuild via the overlay (`dev.sh`/`corpus-check.sh`), never raw `make -C
-> build/.../src` (it compiles a stale copy).** (All work is on **`main`**.)
+> and linked fptr bank bytes) is GREEN.** **NEW (s23): EXECUTION testing — `scripts/emu-test.sh`
+> runs `tests/emu/cases/*.c` on the vendored minimon emulator core (`third_party/minimon-core`),
+> 6/6 PASS; its first run caught 4 runtime miscompiles + 1 linker bug that corpus-clean assembly
+> hid (HANDOFF "Session 23").** Remaining = open-ended peephole/cost tuning. Validate each change
+> with `./scripts/corpus-check.sh` (byte-identical + sdas88) **and `scripts/emu-test.sh`
+> (executes on the emulator)** — **always rebuild via the overlay (`dev.sh`/`corpus-check.sh`),
+> never raw `make -C build/.../src` (it compiles a stale copy).** (All work is on **`main`**.)
 
 ## Project Overview
 

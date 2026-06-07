@@ -3,7 +3,17 @@
 **This is the single resume entry point.** If the prompt is *"let's pick up where you left off,"* do the
 steps under **NEXT ACTION**. Everything needed to continue is here or linked from here.
 
-_Last updated: 2026-06-06 (session 22: **the polish list is CLOSED — and a port-wide latent bug
+_Last updated: 2026-06-06 (session 23: **EXECUTION testing exists — the minimon emulator is now
+the harness** (`scripts/emu-test.sh`, vendored core in `third_party/minimon-core`, 6/6 cases
+PASS), and its FIRST RUN caught **four runtime miscompiles + one linker bug** that 20/20
+corpus-clean assembly never could: the genSub PAIRPTR result-in-L guard (off-by-one), the genCopy
+A-in-cycle swap silently DROPPED (→ native `ex a,b` — a latent z80-upstream bug our BA-first arg
+ABI hits constantly), the struct-return hidden-buffer push with both BA+HL as args (ICE → IY), the
+four genRet hidden-pointer reads still assuming 2-byte z80 return frames (max mode = 3-byte
+CB:PC), the peep.c `bit` operand-order notUsed() miss (deleted the A reload before `bit a,#0x01`,
+breaking C-compiled `__divuint` for dividends ≥0x8000), and sdld's bank-0 bcall slot patch
+corrupting record addresses across T-line splits. **Run `scripts/emu-test.sh` for every codegen
+change from now on.** See "Session 23". Earlier: session 22: **the polish list is CLOSED — and a port-wide latent bug
 found and fixed**. (1) **signed 8÷8 division** joins the native DIV (branchless sep-mask fixup,
 not under --opt-code-size); (2) the **phantom-register names are GONE** (PAIR_BC/PAIR_DE/C/D/E_IDX
 deleted, ~670 lines incl. dead genArrayInit; 3 byte-identical phases); (3) **far bit-fields
@@ -135,7 +145,11 @@ complete**. The remaining work is cleanup + ABI completeness (the register-model
 
 ## NEXT ACTION (do this)
 
-1. Confirm green: `./scripts/dev.sh` → builds the compiler + smoke test → `GREEN`.
+1. Confirm green: `./scripts/dev.sh` → builds the compiler + smoke test → `GREEN`, then
+   **`scripts/emu-test.sh` → 6/6 PASS** (the EXECUTION harness: compiles, links, romgens and RUNS
+   each `tests/emu/cases/*.c` on the vendored minimon emulator core — real S1C88 semantics incl.
+   max-mode 3-byte frames). corpus-check proves asm is *stable*; emu-test proves it *computes the
+   right values*. Add an emu case whenever you touch new codegen territory.
 2. The codegen retarget is **functionally complete for the verification corpus** — every *reachable*
    z80-ism it exposes is gone: **20/20 corpus files assemble with 0 `sdas88` errors** (incl.
    `19_far.c`, the #9 far-pointer cluster, and `20_div.c`, the native-DIV cluster), and the full
@@ -198,6 +212,64 @@ the broader operand-placement work so the allocator keeps 16-bit operands in BA/
 
 > A from-scratch big-bang reshape was tried and **reset** (unverifiable-red for the whole grind). The dead
 > WIP is in reflog `417bed5` — useful only as a reference for the *end-state* register defs.
+
+## Session 23 (2026-06-06) — the emulator test harness: execution is now the ground truth
+
+**The minimon.js Pokémon Mini emulator core is vendored (`third_party/minimon-core`, ISC, from
+minimon.js `c3c3c93`; the generated opcode `table.h` is checked in pinned) and wrapped as an
+EXECUTION harness: `scripts/emu-test.sh` compiles each `tests/emu/cases/*.c` (host cpp →
+`--c1mode`), assembles, links with `tests/emu/crt0.asm`, romgens to a flat `.min` and RUNS it on
+the emulator — main()'s return value is the verdict (0 = pass).** Commits `b90e160`/`1a31d8d`
+(vendor+pin), `fdae401` (linker fix), `6ca6e65` (codegen fixes), `0facbf9` (harness). 6/6 PASS.
+
+The harness mechanics (all in `tests/emu/`):
+- **runner.cc** — native host build of the core (plain g++, no deps; `make -C tests/emu` →
+  `build/emu/runner`). Loads the `.min` at `cartridge[0x2100]`, bypasses the BIOS (cart enabled,
+  PC forced to 0x2100), steps instruction-by-instruction. Mailbox at the top of RAM: 0x1FF8
+  char-out (host polls every step → `emu_puts` streams), 0x1FFA/B exit code (BA), 0x1FFC
+  done-magic before `halt`. Stray-halt/crash/timeout get distinct exit codes.
+- **crt0.asm** — linked FIRST: entry at 0x2100 and the area-order contract (_HOME _CODE _GSINIT
+  _GSFINAL _INITIALIZER | _DATA _INITIALIZED). EP=XP=YP=0 (the EP=0 invariant), SP=0x1FF0, zeroes
+  _DATA, copies _INITIALIZER, owns the `__sdcc_fptr` cell, `bcall _main`, stores BA+magic, halts.
+  **Gotcha: `_CODE` needs an explicit `-b _CODE=0x4000`** — sdas88 implicitly opens _CODE as area
+  0 of every module, so it's first in link order and would land at address 0.
+- **runtime** — SDCC's generic `_divuint/_divsint/_moduint/_modsint/_mulint` compiled BY OUR PORT
+  per run and linked into every case: self-hosting, the runtime exercises the codegen too.
+
+**The first run caught 5 real bugs that 20/20 corpus-clean assembly never could** (all fixed):
+1. **sdld bank-0 bcall slot corruption** (`fdae401`): the R_S1C88_BANK bank-0/same-bank path NOPs
+   `CE C4` at `rtval[rtp-2..rtp-1]` — but the slot can split across T lines, leaving CE C4 in the
+   PREVIOUS record; rtp-2 then hits this record's ADDRESS bytes → the tail of _HOME emitted at
+   linker address 0xFFxxxx (an 8MB .min). Guard `rtp-2 >= rtofst`; fallback `ld nb,#tbank` is
+   always correct (RET/RETE restore NB=CB=popped — minimon-verified). rom-smoke missed it: its
+   bcalls are all cross-bank. **The repo patch `s1c88_banked_branch.patch` was regenerated.**
+2. **genSub PAIRPTR guard off-by-one** (emu 02): checked whether the NEXT result byte lands in
+   L/H instead of the bytes ALREADY written — result-low-in-L corrupted the (hl) pointer for the
+   high byte (`ld l,a; inc hl; sbc a,(hl)`). setupPair AOP_PAIRPTR adjusts the cached pointer
+   blindly, so the guard is the only defense; it now checks written bytes (dry-run cost steers).
+3. **genCopy A-in-cycle permutation** (emu 04): the accumulator-cache for register permutations
+   is unsound when A is in the cycle (`ld a,b` destroys old A before `ld b,a` reads it) — latent
+   in the z80 ORIGINAL, but our BA-first argument ABI makes the {B,A}-temp→BA-arg swap routine,
+   and genCopy emitted NOTHING (bytes crossed at the call). Fixed with the native **`ex a,b`**;
+   other cycles through A are UNIMPLEMENTED-flagged. Bonus: shorter code (a push-a/push-sc dance
+   in 20_div collapsed into one `ex a,b`).
+4. **struct-return call frame** (emu 04, two bugs): the hidden-buffer push wassert'd when both BA
+   and HL carry args (no scratch pair) — IY is now preferred for direct calls too, not only PCALL
+   (IY is caller-clobbered, s19); and the four genRet hidden-pointer reads still assumed a 2-byte
+   z80 return frame — max mode is 3-byte CB:PC, the callee read the pointer one byte short
+   (`(_G.omitFramePtr ? 0 : 3)` now, was `: 2`).
+5. **peep.c `bit` operand order** (emu 03): notUsed() scanned after the comma (z80 `bit #n,reg`),
+   but S1C88 is `bit reg,#mask` — peephole 7 deleted the A reload before `bit a,#0x01`, breaking
+   C-compiled `__divuint` for any dividend with bit 15 set (50000/7 wrong, 1234/10 fine).
+   ⚠ Same class as the s15 displacement bug: **retargeted operand ORder vs inherited z80
+   scanners** — if another retargeted mnemonic misbehaves under peepholes, check peep.c first.
+
+Cases: 01 smoke/data-init, 02 ALU/shifts/compares, 03 native MLT/DIV + the divuint chain,
+04 calls/recursion/struct-return/IY args (real 3-byte frames!), 05 pointers/arrays/bitfields/
+block copies, 06 banked function pointers through `__sdcc_fptr`. corpus-check after the fixes:
+14/20 byte-identical, 6 reviewed diffs (the intended fixes), 0 sdas88 errors — baseline
+re-snapshot. All smokes GREEN. **Far-pointer and ISR emu cases are the obvious next additions**
+(need a `--far` link lane in emu-test.sh and an IRQ-poking runner option respectively).
 
 ## Session 22 (2026-06-06) — the polish list closed; the MAX-MODE call-model bug found and fixed
 
