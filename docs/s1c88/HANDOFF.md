@@ -3,7 +3,20 @@
 **This is the single resume entry point.** If the prompt is *"let's pick up where you left off,"* do the
 steps under **NEXT ACTION**. Everything needed to continue is here or linked from here.
 
-_Last updated: 2026-06-06 (session 23: **EXECUTION testing exists — the minimon emulator is now
+_Last updated: 2026-06-07 (session 24: **two new test layers + three reachable codegen bugs
+they found**. (1) `tests/emu/cases/07_far.c` + a `--far` lane in `emu-test.sh` give far
+pointers their first EXECUTION coverage (far ROM reads via EP paging; emu-test 7/7). (2) A
+host-vs-emulator **DIFFERENTIAL harness** — `scripts/diff-test.sh` + `tests/diff/` — compiles the
+same C twice (host `cc` reference vs sdcc88→emulator) and diffs the output; `cases/arith.c` matches
+**5876 integer-arithmetic values**. Its first run found three bugs INVISIBLE to the 20-file
+byte-identical corpus (which stayed 20/20 after the fixes): **`srl l`/`sra l` illegal-operand** in
+genrshOne (z80 shifts any reg; S1C88 only a/b/(hl) — result-in-L shift), **SP-relative
+`ld …,dd(sp)` mis-sized 1 not 3** in `s1c88instructionSize` → `labelInRange` wrongly shortened
+`jp cc`→`jrs` across a stacked-arg call → assembler "Branching Range Exceeded", and
+**`u16 >> var` infinite loop** — genRightShift fell back to A as the loop counter (z80-safe) but
+the S1C88 body routes L/H bytes through A as scratch, clobbering it. **Run `scripts/diff-test.sh`
+with corpus-check + emu-test for codegen changes.** See "Session 24". Earlier: session 23:
+**EXECUTION testing exists — the minimon emulator is now
 the harness** (`scripts/emu-test.sh`, vendored core in `third_party/minimon-core`, 6/6 cases
 PASS), and its FIRST RUN caught **four runtime miscompiles + one linker bug** that 20/20
 corpus-clean assembly never could: the genSub PAIRPTR result-in-L guard (off-by-one), the genCopy
@@ -212,6 +225,60 @@ the broader operand-placement work so the allocator keeps 16-bit operands in BA/
 
 > A from-scratch big-bang reshape was tried and **reset** (unverifiable-red for the whole grind). The dead
 > WIP is in reflog `417bed5` — useful only as a reference for the *end-state* register defs.
+
+## Session 24 (2026-06-07) — far execution coverage + a differential harness; three bugs found
+
+**Two complementary test layers were added, and the differential one found three reachable codegen
+bugs the 20-file byte-identical corpus never exercised** (corpus stayed 20/20 after the fixes;
+emu-test 7/7; branch/rom smokes GREEN). Commits `edb9612` (07_far), `d67424a` (the three fixes),
+`6563614` (the differential harness).
+
+**1. Far-pointer EXECUTION coverage (`edb9612`).** `tests/emu/cases/07_far.c` + a per-case `--far`
+lane in `emu-test.sh`: a case using `__far` links `_FAR` at physical `0x10000` (page 1, disjoint
+from bank-0 code) and romgens that range with `--far`, so the codegen's `(sym>>16)` page byte is
+the address the data bus sees. The emulator resolves `[hl]` as `(ep<<16)|hl` into the cartridge, so
+far ROM **reads** are faithful — but `cpu_write_cart` is a no-op and the PM has no far RAM, so the
+case verifies reads / pointer arithmetic / HLA returns / far bit-fields ONLY (never
+write-then-readback). The nonzero-page assertion is load-bearing: with the page dropped, `*cp` would
+read BIOS at offset 0 instead of the table bytes. Verified `ctbl` lands at physical 0x10000 and reads
+back through EP=1. (Obvious next: an ISR emu case — needs an IRQ-injection runner option.)
+
+**2. Host-vs-emulator DIFFERENTIAL harness (`6563614`).** `scripts/diff-test.sh` + `tests/diff/`:
+each `cases/*.c` defines `diff_run()` emitting `tag:hex\n` per computation; the SAME source is
+compiled by host `cc` (reference) and by sdcc88→minimon, and the streams are `diff`'d — no
+hand-maintained expected values. **Soundness** (host int=32-bit, S1C88 int=16-bit): width-exact
+typedefs (stdint host / native target); every `EMIT_*` truncates to its width (agrees host/target
+for `+ - * / % & | ^ ~ << >>`); operands widened explicitly for wide semantics; **same-typed
+compares only** (mixed rank/signedness diverge by C promotion, not codegen); `volatile` operands (no
+folding); hex text (the char-out mailbox can't carry 0x00). `cases/arith.c` covers all integer
+widths/signedness × the operator set + casts with edge operands, per-iteration work in small helpers
+(keeps loop bodies under the jrs range, exercises the call ABI) — **5876 values match**. The
+16×16→32 widening multiply is noted out of scope (needs the compiler-internal `__mul*int2*long`
+support library, which ships only as per-target hand asm with a fixed support-call ABI).
+
+**3. The three bugs (`d67424a`)** — all reachable from ordinary C, all corpus-invisible:
+- **`srl l`/`sra l` illegal operand** (genrshOne): the "shift in the destination register" arm is a
+  z80-ism (z80 shifts any reg; the S1C88 shifts only `a`/`b`/`(hl)`). A right-shift result landing
+  in L/H (e.g. it feeds an array index via HL) while the operand stays live emitted `srl l`. Fixed:
+  the in-place arm fires only for A/B; L/H + memory shift in A (unsigned via the cheaper rlc-based
+  `AccRsh`, as `shiftR1Left2Result`).
+- **SP-relative `ld …,dd(sp)` mis-sized** (`s1c88instructionSize`): the 16-bit forms
+  `ld {hl,ba,ix,iy},dd(sp)` / `ld dd(sp),{hl,ba}` (all 3 bytes, `CF 7x dd`) fell through to the
+  catch-all `return(1)` (and `ld ix/iy,dd(sp)` to 4). Under-counting `labelInRange()` made
+  `jp cc`→`jrs` shorten across a stacked-arg call, producing an out-of-range short branch the
+  assembler rejects ("Branching Range Exceeded"). Fixed: detect `(sp)` operand → 3. ⚠ Same class as
+  the s15/s23 lessons — *retargeted sizing/operand facts vs inherited z80 tables*.
+- **`u16 >> var` infinite loop** (genRightShift count-register selection): the z80 base fell back
+  to **A** as the loop counter, safe there because z80 shifts any register in place. On the S1C88
+  the multi-byte shift body routes the value's L/H (and memory) bytes through A as scratch
+  (`emit3_shift`), so A-as-counter is clobbered mid-body → the loop never terminates. Fixed: the
+  count is now a dead byte reg disjoint from the value, **never A** (B preferred for `djr nz`, then
+  H/L); over-constrained allocations are steered away via `UNIMPLEMENTED`'s 4000 dry-run cost (a good
+  combo — value in BA — always leaves H/L free).
+
+**Remaining: open-ended peephole/cost tuning, plus growing the suites** (next differential modules:
+control flow, calls/ABI, memory/aggregates; next emu case: ISR via IRQ injection). No open
+correctness tasks.
 
 ## Session 23 (2026-06-06) — the emulator test harness: execution is now the ground truth
 
