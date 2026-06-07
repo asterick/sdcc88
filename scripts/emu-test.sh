@@ -79,18 +79,27 @@ for src in "${EMU}"/cases/*.c; do
     echo "ASSEMBLE-FAIL"; sed 's/^/    /' "${OUT}/err" | head -10; fail=$((fail+1)); continue
   fi
 
+  # __far data lane (task #9): a case using __far gets a _FAR area located at its
+  # PHYSICAL address (page 1 = 0x10000, disjoint from the bank-0 code) and romgen
+  # treats that range as physical, so the codegen's (sym>>16) page byte is the
+  # address the data bus sees. Only far cases pay it (others link byte-identically).
+  FAR_LINK=""; FAR_ROMGEN=""
+  if grep -q '__far' "$src"; then
+    FAR_LINK="-b _FAR=0x10000"; FAR_ROMGEN="--far=0x10000-0x1ffff"
+  fi
+
   # link (crt0 first: fixes the entry at 0x2100 and the area order) -> .min
   # _CODE needs an explicit base: sdas88 implicitly opens _CODE as area 0 of every
   # module, so it is first in link order and would land at 0. _HOME at 0x2100 is
   # followed by the chained _GSINIT/_GSFINAL/_INITIALIZER (must stay under 0x4000);
   # _INITIALIZED chains after _DATA in RAM.
-  if ! "$SDLD" -nwxi -b _CODE=0x4000 -b _HOME=0x2100 -b _DATA=0x1000 \
+  if ! "$SDLD" -nwxi -b _CODE=0x4000 -b _HOME=0x2100 -b _DATA=0x1000 ${FAR_LINK} \
         "${OUT}/${b}.ihx" "${OUT}/crt0.rel" "${OUT}/${b}.rel" ${RT_RELS} > "${OUT}/err" 2>&1 \
      || grep -q "Undefined Global" "${OUT}/err"; then
     echo "LINK-FAIL"; grep -E "Undefined Global|ASlink" "${OUT}/err" | sort -u | sed 's/^/    /'
     fail=$((fail+1)); continue
   fi
-  if ! python3 "${REPO}/scripts/romgen.py" "${OUT}/${b}.ihx" "${OUT}/${b}.min" > "${OUT}/err" 2>&1; then
+  if ! python3 "${REPO}/scripts/romgen.py" "${OUT}/${b}.ihx" "${OUT}/${b}.min" ${FAR_ROMGEN} > "${OUT}/err" 2>&1; then
     echo "ROMGEN-FAIL"; sed 's/^/    /' "${OUT}/err"; fail=$((fail+1)); continue
   fi
 
