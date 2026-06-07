@@ -1361,6 +1361,15 @@ int s1c88instructionSize(lineNode *pl)
          !STRNCASECMP(op2start, "nb", 2) || !STRNCASECMP(op2start, "br", 2)))
         return(2);
 
+      /* S1C88 SP-relative 16-bit load/store: ld {hl,ba,ix,iy}, dd(sp) and
+         ld dd(sp), {hl,ba} are all 3 bytes (CF 7x dd). Must come BEFORE the
+         ix/iy 4-byte rule below (which is for `ld ix,#imm`), and matters for
+         labelInRange() — under-sizing these as 1 wrongly shortened jp->jrs
+         across calls with stacked args, exceeding the jrs range. (8-bit
+         ld a,dd(sp) does not exist on the S1C88 — never emitted.) */
+      if(argCont(op1start, "(sp)") || (op2start && argCont(op2start, "(sp)")))
+        return(3);
+
       /* These 4 are the only cases of 4 byte long ld instructions. */
       if(!STRNCASECMP(op1start, "ix", 2) || !STRNCASECMP(op1start, "iy", 2))
         return(4);

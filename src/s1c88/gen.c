@@ -11759,8 +11759,10 @@ genrshOne (operand *result, operand *left, int shCount, int is_signed, const iCo
       if (!a_dead)
         _pop (PAIR_AF);
     }
-  else if (result->aop->type == AOP_REG) // Can shift in destination for register result.
+  else if (result->aop->type == AOP_REG && (aopInReg (result->aop, 0, A_IDX) || aopInReg (result->aop, 0, B_IDX)))
     {
+      /* S1C88 shifts only a/b/(hl) — shift in the destination register only when
+         it is A or B. (z80 could `srl` any reg; `srl l`/`srl h` are illegal here.) */
       cheapMove (result->aop, 0, left->aop, 0, a_dead);
 
       while (shCount--)
@@ -11768,11 +11770,16 @@ genrshOne (operand *result, operand *left, int shCount, int is_signed, const iCo
     }
   else
     {
+      /* result is L/H or memory: shift in A, then store (unsigned uses the
+         cheaper rlc-based AccRsh, as in shiftR1Left2Result). */
       if (!a_dead)
         _push (PAIR_AF);
       cheapMove (ASMOP_A, 0, left->aop, 0, true);
-      while (shCount--)
-        emit3 (is_signed ? A_SRA : A_SRL, ASMOP_A, 0);
+      if (is_signed)
+        while (shCount--)
+          emit3 (A_SRA, ASMOP_A, 0);
+      else
+        AccRsh (shCount);
       cheapMove (result->aop, 0, ASMOP_A, 0, true);
       if (!a_dead)
         _pop (PAIR_AF);
@@ -11925,22 +11932,40 @@ genRightShift (const iCode * ic)
   aopOp (result, ic, true, false);
   aopOp (left, ic, false, false);
     
-  if (right->aop->type == AOP_REG && !bitVectBitValue (ic->rSurv, right->aop->aopu.aop_reg[0]->rIdx) && right->aop->aopu.aop_reg[0]->rIdx != IYL_IDX && (sameRegs (left->aop, result->aop) || left->aop->type != AOP_REG) &&
-    (result->aop->type != AOP_REG ||
-    result->aop->aopu.aop_reg[0]->rIdx != right->aop->aopu.aop_reg[0]->rIdx &&
-    (result->aop->size < 2 || result->aop->aopu.aop_reg[1]->rIdx != right->aop->aopu.aop_reg[0]->rIdx &&
-    (result->aop->size < 3 || result->aop->aopu.aop_reg[2]->rIdx != right->aop->aopu.aop_reg[0]->rIdx &&
-    (result->aop->size < 4 || result->aop->aopu.aop_reg[3]->rIdx != right->aop->aopu.aop_reg[0]->rIdx)))))
+  /* Count-register selection — an S1C88 divergence from the z80 base. The z80
+     could shift any register in place, so it safely fell back to A as the loop
+     counter. On the S1C88 only a/b/(hl) shift, so the multi-byte shift body
+     routes the value's L/H (and memory) bytes through A as scratch
+     (emit3_shift) — using A as the counter clobbers it mid-body and the loop
+     never terminates. So the count must be a dead byte register the value
+     (left/result) does not occupy, and NEVER A. B is preferred (cheap
+     `djr nz`), then H/L; the count's own dead register is reused when suitable.
+     (B/H/L are always safe: the body's scratch is A — or B only when the value
+     is BA, in which case B is rejected here by the disjoint-from-value test.) */
+  countreg = -1;
+  if (right->aop->type == AOP_REG && !bitVectBitValue (ic->rSurv, right->aop->aopu.aop_reg[0]->rIdx) &&
+      right->aop->aopu.aop_reg[0]->rIdx != IYL_IDX && right->aop->aopu.aop_reg[0]->rIdx != A_IDX &&
+      (sameRegs (left->aop, result->aop) || left->aop->type != AOP_REG) &&
+      left->aop->regs[right->aop->aopu.aop_reg[0]->rIdx] < 0 &&
+      result->aop->regs[right->aop->aopu.aop_reg[0]->rIdx] < 0)
     countreg = right->aop->aopu.aop_reg[0]->rIdx;
-  else if (isRegDead (B_IDX, ic) && (sameRegs (left->aop, result->aop) || left->aop->type != AOP_REG || shift_by_lit) &&
-    (result->aop->type != AOP_REG ||
-    result->aop->aopu.aop_reg[0]->rIdx != B_IDX &&
-    (result->aop->size < 2 || result->aop->aopu.aop_reg[1]->rIdx != B_IDX &&
-    (result->aop->size < 3 || result->aop->aopu.aop_reg[2]->rIdx != B_IDX &&
-    (result->aop->size < 4 || result->aop->aopu.aop_reg[3]->rIdx != B_IDX)))))
-    countreg = B_IDX;
   else
-    countreg = A_IDX;
+    {
+      const int cand[3] = { B_IDX, H_IDX, L_IDX };
+      for (int ci = 0; ci < 3 && countreg < 0; ci++)
+        if (isRegDead (cand[ci], ic) && left->aop->regs[cand[ci]] < 0 && result->aop->regs[cand[ci]] < 0)
+          countreg = cand[ci];
+    }
+  if (countreg < 0)
+    {
+      /* No byte register is free for the count in this allocation (left and
+         result together span B/L/H, leaving only A — which the body needs as
+         scratch). Make this combination prohibitively expensive so the register
+         allocator picks a feasible one (e.g. value in BA, which leaves H/L free
+         for the count); A keeps the dry-run emission well-formed. */
+      UNIMPLEMENTED;
+      countreg = A_IDX;
+    }
 
   
 
