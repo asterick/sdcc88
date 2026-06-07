@@ -63,7 +63,7 @@
                                          if (esp->e_flag) {
 --- a/sdas/linksrc/lkrloc3.c
 +++ b/sdas/linksrc/lkrloc3.c
-@@ -370,6 +370,29 @@
+@@ -370,6 +370,35 @@
                          reli = a[rindex]->a_addr;
                  }
  
@@ -74,13 +74,19 @@
 + * linker address >> 16, code areas placed at (bank<<16)|logic) and a NOP (FF)
 + * into [pad] — yielding `ld nb,#bank ; nop ; <branch>`.  When that bank is 0
 + * (common area) or the current area's bank, NOP the whole `ld nb`+pad instead
-+ * (CE C4 at rtp-2..rtp-1 plus the field) so no bank switch happens. */
++ * (CE C4 at rtp-2..rtp-1 plus the field) so no bank switch happens — but ONLY
++ * when those two bytes are inside THIS T line (rtp-2 >= rtofst): the slot can
++ * be split across T lines, leaving CE C4 at the end of the PREVIOUS (already
++ * emitted) record; rtp-2 would then index this record's ADDRESS bytes,
++ * corrupting its output address to 0xFFxxxx.  The fallback `ld nb,#tbank` is
++ * always semantically correct (branches copy NB->CB, and RET/RETE restore
++ * NB = CB = popped byte) — it merely keeps a redundant bank switch. */
 +                if (mode & 0x800) {
 +                        int tbank = (int) ((reli >> 16) & 0xFF);
 +                        int cbank = (int) (((pc + (rtp - rtofst)) >> 16) & 0xFF);
 +                        /* Leave rtflg set on these bytes so lkout() emits them. */
 +                        rtval[rtp+1] = 0xFF;            /* pad -> nop */
-+                        if (tbank == 0 || tbank == cbank) {
++                        if ((tbank == 0 || tbank == cbank) && rtp - 2 >= (int) rtofst) {
 +                                rtval[rtp-2] = 0xFF;    /* nop (was CE)   */
 +                                rtval[rtp-1] = 0xFF;    /* nop (was C4)   */
 +                                rtval[rtp]   = 0xFF;    /* nop (was bank) */
