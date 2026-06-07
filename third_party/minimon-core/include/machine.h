@@ -22,17 +22,14 @@ OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
 namespace Machine { struct State; };
 
-#include "lcd.h"
 #include "irq.h"
 #include "tim256.h"
 #include "timers.h"
 #include "rtc.h"
-#include "blitter.h"
 #include "control.h"
 #include "input.h"
 #include "eeprom.h"
 #include "gpio.h"
-#include "audio.h"
 #include "tracing.h"
 
 const auto OSC1_SPEED	= 32768;
@@ -126,30 +123,24 @@ namespace Machine {
 	struct State {
 		CPU::State reg;
 		IRQ::State irq;
-		LCD::State lcd;
 		RTC::State rtc;
 		Control::State ctrl;
 		TIM256::State tim256;
-		Blitter::State blitter;
 		Timers::State timers;
 		Input::State input;
 		GPIO::State gpio;
-		Audio::State audio;
 
 		uint8_t bus_cap;
 		int clocks;
 		int osc1_overflow;
 		Status status;
 
-		// The blitter's overlay is a structured view over guest RAM;
-		// both arms are plain byte arrays of identical size (asserted
-		// in blitter.h), so the aliasing is layout-deterministic
-		union {
-			uint8_t ram[0x1000];
-		 	Blitter::Overlay overlay;
-		};
-
-		uint8_t cartridge[0x200000];
+		// Unified guest address space (RAM at 0x1000..0x1FFF, cartridge/far data
+		// from 0x2100 up) as one writable byte array — so far writes to ROM-space
+		// physical addresses stick and can be read back. The BIOS (0x0000..0x0FFF)
+		// is a separate const ROM (machine.cc); register space (0x2000..0x20FF) is
+		// dispatched to the peripherals and never touches this array.
+		uint8_t memory[0x200000];
 	};
 }
 
@@ -165,7 +156,6 @@ extern "C" void cpu_advance(Machine::State& cpu, int ticks);
 // Bridge functions
 extern "C" void cpu_reset(Machine::State& cpu);
 extern "C" void cpu_advance(Machine::State& cpu, int ticks);
-extern "C" void set_sample_rate(Machine::State& cpu, int rate);
 extern "C" void update_inputs(Machine::State& cpu, uint16_t value);
 extern "C" const char* get_version();
 

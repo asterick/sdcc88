@@ -3,10 +3,9 @@
  * __far objects are const ROM tables located by the linker at their PHYSICAL
  * 24-bit address (area _FAR, romgen --far); a far access stages the page into EP
  * and the offset into HL and walks (hl) under the EP=0 invariant. The emulator
- * resolves [hl] as (ep<<16)|hl into the cartridge, so far ROM *reads* are
- * faithful — but the cartridge is read-only (cpu_write_cart is a no-op, and the
- * PM has no far RAM), so this case verifies reads / pointer arithmetic / HLA
- * returns / far bit-fields ONLY, never write-then-readback.
+ * resolves [hl] as (ep<<16)|hl into the unified memory array, so far reads of
+ * the located tables AND far WRITES to scratch far addresses both work (the core
+ * now combines RAM + cartridge into one writable space).
  *
  * crt0 places _FAR at physical 0x10000 (page 1) via -b _FAR / --far, so every
  * pointer here carries a nonzero page byte — the test would pass trivially if
@@ -72,6 +71,24 @@ int main(void)
         CHECK((L >> 16) != 0);
         char __far *r = (char __far *)L;
         CHECK(*r == 11);
+    }
+
+    /* far WRITES then read-back (unified writable memory): a scratch far address
+       above the located _FAR tables, page 1 (0x12000 >> 16 == 1) */
+    {
+        char __far *w = (char __far *)0x12000UL;
+        *w = 0x5a;
+        CHECK(*w == 0x5a);
+        w[1] = (char)0xa5;
+        CHECK((unsigned char)w[1] == 0xa5);
+        w[3] = 0x7e;                 /* constant displacement store */
+        CHECK(w[3] == 0x7e);
+        CHECK((unsigned char)w[1] == 0xa5);   /* earlier write survived */
+    }
+    {
+        int __far *wi = (int __far *)0x12100UL;
+        *wi = 0x1234;
+        CHECK(*wi == 0x1234);        /* 2-byte far write/read within the page */
     }
 
     /* far bit-fields read from a const ROM struct (HL+EP fetch, mask at EP=0) */

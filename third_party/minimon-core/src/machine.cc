@@ -44,22 +44,15 @@ extern "C" void cpu_reset(Machine::State& cpu) {
 
 	Control::reset(cpu.ctrl);
 	IRQ::reset(cpu);
-	LCD::reset(cpu.lcd);
 	RTC::reset(cpu);
 	TIM256::reset(cpu);
-	Blitter::reset(cpu);
 	Timers::reset(cpu);
 	Input::reset(cpu.input);
 	GPIO::reset(cpu.gpio);
-	Audio::reset(cpu.audio);
 }
 
 extern "C" void update_inputs(Machine::State& cpu, uint16_t value) {
 	Input::update(cpu, value);
-}
-
-extern "C" void set_sample_rate(Machine::State& cpu, int rate) {
-	Audio::setSampleRate(cpu.audio, rate);
 }
 
 void cpu_clock(Machine::State& cpu, int cycles) {
@@ -69,9 +62,7 @@ void cpu_clock(Machine::State& cpu, int cycles) {
 	cpu.osc1_overflow += osc3 * OSC1_SPEED;
 
 	if (cpu.status <= Machine::STATUS_HALTED) {
-		LCD::clock(cpu, osc3);
 		Timers::clock(cpu, osc1, osc3);
-		Audio::clock(cpu, osc3);
 
 		if (cpu.osc1_overflow >= OSC3_SPEED) {
 			// Assume we are not going to get more than a couple ticks out of this thing
@@ -128,21 +119,9 @@ static inline uint8_t cpu_read_reg(Machine::State& cpu, uint32_t address) {
 		return Input::read(cpu.input, address);
 	case 0x2060 ... 0x2062:
 		return GPIO::read(cpu.gpio, address);
-	case 0x2070 ... 0x2071:
-		return Audio::read(cpu.audio, address);
 	case 0x2010:
 		// This should be handled properly
 		return 0b010000;
-	case 0x20FE ... 0x20FF:
-		if (cpu.ctrl.lcd_enabled()) {
-			return LCD::read(cpu.lcd, address);
-		} else {
-			return cpu.bus_cap;
-		}
-		break ;
-	case 0x2080 ... 0x208F:
-	case 0x20F0 ... 0x20F8:
-		return Blitter::read(cpu, address);
 	case 0x2018 ... 0x201D:
 	case 0x2030 ... 0x203F:
 	case 0x2048 ... 0x204F:
@@ -173,17 +152,6 @@ static inline void cpu_write_reg(Machine::State& cpu, uint8_t data, uint32_t add
 	case 0x2060 ... 0x2062:
 		GPIO::write(cpu.gpio, data, address);
 		break ;
-	case 0x2070 ... 0x2071:
-		Audio::write(cpu.audio, data, address);
-		break ;
-	case 0x2080 ... 0x208A:
-		Blitter::write(cpu, data, address);
-		break ;
-	case 0x20FE ... 0x20FF:
-		if (cpu.ctrl.lcd_enabled()) {
-			LCD::write(cpu.lcd, data, address);
-		}
-		break ;
 	case 0x2018 ... 0x201D:
 	case 0x2030 ... 0x203F:
 	case 0x2048 ... 0x204F:
@@ -195,48 +163,31 @@ static inline void cpu_write_reg(Machine::State& cpu, uint8_t data, uint32_t add
 	}
 }
 
-static inline uint8_t cpu_read_cart(Machine::State& cpu, uint32_t address) {
-    return cpu.cartridge[address % sizeof(cpu.cartridge)];
-}
-
-static inline void cpu_write_cart(Machine::State& cpu, uint8_t data, uint32_t address) {
-}
-
-
 extern "C" uint8_t cpu_read(Machine::State& cpu, uint32_t address) {
 	switch (address) {
 		case 0x0000 ... 0x0FFF:
 			return cpu.bus_cap = bios[address];
-		case 0x1000 ... 0x1FFF:
-			return cpu.bus_cap = cpu.ram[address & 0xFFF];
 		case 0x2000 ... 0x20FF:
 			return cpu.bus_cap = cpu_read_reg(cpu, address);
 		default:
-			if (cpu.ctrl.cart_enabled()) {
-				return cpu.bus_cap = cpu_read_cart(cpu, address);		
-			} else {
-				return cpu.bus_cap;
-			}
+			// RAM (0x1000..0x1FFF) + cartridge/far data, one unified array
+			return cpu.bus_cap = cpu.memory[address % sizeof(cpu.memory)];
 	}
 }
 
 extern "C" void cpu_write(Machine::State& cpu, uint8_t data, uint32_t address) {
 	cpu.bus_cap = data;
-	
+
 	switch (address) {
 		case 0x0000 ... 0x0FFF:
-			break ;
-		case 0x1000 ... 0x1FFF:
-			cpu.ram[address & 0xFFF] = data;
-			break ;
+			break ;	// BIOS ROM — ignore writes
 		case 0x2000 ... 0x20FF:
 			cpu_write_reg(cpu, data, address);
 			break ;
 		default:
-			if (cpu.ctrl.cart_enabled()) {
-				cpu_write_cart(cpu, data, address);
-			}
-			break ;	
+			// RAM + cartridge/far all writable, so far writes stick
+			cpu.memory[address % sizeof(cpu.memory)] = data;
+			break ;
 	}
 }
 

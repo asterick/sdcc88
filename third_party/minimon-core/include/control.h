@@ -23,20 +23,12 @@ OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 namespace Machine { struct State; };
 
 namespace Control {
-	// data[0] bits
-	const uint8_t CTRL_LCD_ENABLED  = 0x01;
-	const uint8_t CTRL_CART_ENABLED = 0x02;
-
+	// Three plain readable/writable bytes — the hardware enable bits carry no
+	// side effects in this harness (memory is always accessible; there is no LCD
+	// to gate). Kept only so reads of 0x2000..0x2002 return what was written
+	// instead of falling through to the "unhandled register" path.
 	struct State {
 		uint8_t data[3];
-
-		bool lcd_enabled() const {
-			return (data[0] & CTRL_LCD_ENABLED) != 0;
-		}
-
-		bool cart_enabled() const {
-			return (data[0] & CTRL_CART_ENABLED) != 0;
-		}
 	};
 
 	void reset(State&);

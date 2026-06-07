@@ -1,13 +1,14 @@
 // runner.cc — native host runner that wraps the minimon.js emulator core as a codegen
 // test harness for the sdcc88 S1C88 port.
 //
-// The emulator core (~/minimon.js/core/src/*.cc, MINIMON env overrides) is compiled
-// natively and linked with this file, which provides the host glue the core expects
-// (get_machine / debug_print / flip_screen / audio_push) plus a tiny test protocol:
+// The (pruned) emulator core in third_party/minimon-core is compiled natively and
+// linked with this file, which provides the host glue the core expects
+// (get_machine / debug_print) plus a tiny test protocol:
 //
 //   - the .min ROM (romgen.py output; byte 0 = physical 0x2100) is loaded at
-//     cartridge[0x2100], the BIOS is bypassed (cart enabled, PC forced to 0x2100 where
-//     crt0 lives), and the CPU is stepped instruction-by-instruction.
+//     memory[0x2100] (RAM + cartridge are one unified writable array), the BIOS is
+//     bypassed (PC forced to 0x2100 where crt0 lives), and the CPU is stepped
+//     instruction-by-instruction.
 //   - guest mailbox (top of RAM, kept above the 0x1FF0 stack top set by crt0.asm):
 //       0x1FF8       char-out: guest stores a nonzero byte, host prints + clears it
 //                    (host polls between every instruction, so one store per char
@@ -37,17 +38,14 @@ extern "C" void debug_print(const void* data) {
 	fprintf(stderr, "[emu] %s\n", (const char*)data);
 }
 
-extern "C" void flip_screen(void*) {}
-extern "C" void audio_push(float*, int) {}
-
 // ---- test protocol addresses (mirror tests/emu/crt0.asm + emu.h) ----
 static const uint32_t MAILBOX_CHAR = 0x1FF8;
 static const uint32_t MAILBOX_EXIT = 0x1FFA;	// ..0x1FFB, little-endian
 static const uint32_t MAILBOX_MAGIC = 0x1FFC;
 static const uint8_t  MAGIC_DONE = 0xA5;
-static const uint32_t RAM_BASE = 0x1000;
 
-static uint8_t ram_at(Machine::State& m, uint32_t addr) { return m.ram[addr - RAM_BASE]; }
+// RAM and cartridge share one flat array now (m.memory), indexed by address.
+static uint8_t ram_at(Machine::State& m, uint32_t addr) { return m.memory[addr]; }
 
 static void dump_regs(Machine::State& m, uint64_t steps) {
 	CPU::State& r = m.reg;
@@ -79,16 +77,17 @@ int main(int argc, char** argv) {
 	// load the .min image at its physical base (file offset 0 == phys 0x2100)
 	FILE* f = fopen(rom_path, "rb");
 	if (!f) { perror(rom_path); return 2; }
-	memset(m.cartridge, 0xFF, sizeof(m.cartridge));	// unprogrammed ROM reads 0xFF
-	size_t n = fread(m.cartridge + 0x2100, 1, sizeof(m.cartridge) - 0x2100, f);
+	memset(m.memory, 0xFF, sizeof(m.memory));	// unprogrammed ROM reads 0xFF
+	memset(m.memory + 0x1000, 0x00, 0x1000);	// RAM powers on clear (mailbox starts 0)
+	size_t n = fread(m.memory + 0x2100, 1, sizeof(m.memory) - 0x2100, f);
 	fclose(f);
 	if (n == 0) { fprintf(stderr, "%s: empty ROM\n", rom_path); return 2; }
 	if (verbose) fprintf(stderr, "[emu] loaded %zu bytes at phys 0x2100\n", n);
 
-	// reset, then bypass the BIOS: enable the cartridge bus and jump straight to
-	// crt0 at 0x2100 (bank 0, so cb/nb = 0; sc stays 0xC0 = interrupts masked)
+	// reset, then bypass the BIOS: jump straight to crt0 at 0x2100 (bank 0, so
+	// cb/nb = 0; sc stays 0xC0 = interrupts masked). Memory is always accessible
+	// now — control has no enable side effects.
 	cpu_reset(m);
-	m.ctrl.data[0] = Control::CTRL_LCD_ENABLED | Control::CTRL_CART_ENABLED;
 	m.reg.pc = 0x2100;
 	m.reg.cb = 0;
 	m.reg.nb = 0;
@@ -102,7 +101,7 @@ int main(int argc, char** argv) {
 		uint8_t c = ram_at(m, MAILBOX_CHAR);
 		if (c) {
 			putchar(c);
-			m.ram[MAILBOX_CHAR - RAM_BASE] = 0;
+			m.memory[MAILBOX_CHAR] = 0;
 		}
 	}
 	fflush(stdout);
