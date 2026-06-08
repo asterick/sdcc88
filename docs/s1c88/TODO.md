@@ -80,6 +80,17 @@ Legend: **S/M/L** = rough effort. Items are roughly dependency-ordered within ea
     code-size/speed win. Cross-check against `branch-smoke.sh` and re-baseline the corpus afterward.
 15. **[S] `__mul*int2*long` widening differential coverage.** Skipped in the diff harness for lack of the
     support routines; add once those exist (also unblocks `_fsmul` in #8).
+20. **[L] Z80-artifact scrub.** The port was cloned from SDCC's `z80` and still carries z80/eZ80/Rabbit/
+    SM83/Z80N/R800/TLCS90 mnemonics, keywords, symbols, comments, and variable names that are either dead
+    (other-variant code paths gated off by the `IS_*` macros hardcoded in `s1c88.h`) or live-but-misnamed
+    (functions/vars/comments that still read "z80"). Replace each with its S1C88 equivalent, or delete when
+    unused, so the port reads as a native S1C88 backend. **Scope/inventory: see the
+    [z80-scrub scope](#z80-artifact-scrub-scope-20) appendix below.** **Caveat (load-bearing): do NOT touch
+    `TARGET_Z80_LIKE` / `TARGET_IS_Z80` gating in the shared SDCC core** — the core gates real codegen
+    behavior on it and the port depends on being Z80-like (see `CLAUDE.md`); this task is about the *port's
+    own* `src/s1c88/` + `sdas/as88/` artifacts, not the upstream core. Do it in always-green slices
+    (rename/remove → `run-tests.sh` → commit), since corpus is byte-identical and will catch any behavior
+    change.
 
 ---
 
@@ -112,3 +123,61 @@ handler's entry, where N is the cart vector slot; the runner BIOS and `<pm.h>` V
 forwarding permutation, https://www.pokemon-mini.net/documentation/bios/.) See [HANDOFF.md](HANDOFF.md)
 for current state and [building-roms.md](building-roms.md)
 for the end-user guide.
+
+---
+
+## Z80-artifact scrub — scope (#20)
+
+The port was cloned from SDCC's multi-variant `z80` backend. The variant *predicate
+machinery* (`IS_Z80`/`IS_RAB`/…) is already constant-folded away (s1c88.h), so what
+remains is **names, dead per-variant data, and comments** — not live wrong-variant
+branches. Inventory (scan of `src/s1c88/` + `sdas/as88/`), in rough effort order:
+
+**A. The `cost2` 7-variant timing model — the bulk (gen.c).** `cost2()` is declared
+`cost2(bytes, z80_states, z180_states, r2k_clocks, sm83_cycles, tlcs90_states,
+ez80_z80_cycles, r800_cycles)` but the body uses only `bytes` + `z80_states`; the
+other **6 columns are dead** yet passed at **491 call sites**. Collapse to
+`cost2(bytes, cycles)`, strip the 6 dead args everywhere (scriptable), rename
+`z80_states`→`cycles`. High-volume but mechanical. *(Whether the kept numbers are
+S1C88-accurate vs z80 is a separate concern — #12 cost tuning.)*
+
+**B. Port-private identifiers to rename `*z80*`→`*s1c88*` — medium, low risk (build
+catches misses).**
+- `main.c` PORT wiring: `_z80_options`, `_z80_init`, `_z80_genAssemblerStart`,
+  `_z80_builtins`, `_z80LinkCmd`, `_z80AsmCmd`, the asm-dialect/lib config
+  (`_s1c88_z80asm_z80`, `_s1c88_asxxxx_z80`, `_s1c88_gas_z80`, `_libs_z80`).
+- `gen.c`: `genZ80iCode`, `dryZ80Code` (`genS1C88Code` is already done).
+- `peep.c`: `z80MightReadFlag[Condition]`, `z80SurelyWrites[Flag]`, `z80SurelyReturns`,
+  `z80MightBeParmInCallFromCurrentFunction`, `z80UncondJump`, `z80CondJump`,
+  `z80MightRead` (~11 functions).
+- `s1c88.h`: the `Z80_OPTS` struct (→ `S1C88_OPTS`).
+
+**C. Comments / variant notes — high count (~78 in gen.c alone), lowest risk.**
+"the Rabbit has…", "SM83 does…", "eZ80 can…", "gbz80 flag handling…" notes that don't
+apply to a single-variant port — trim/delete. File headers too: `s1c88.h`
+(`z80/z80.h Common definitions for the z80-related ports`), `gen.c` (`code generator
+for Z80 and related`), and `Derived from z80mch.c` in the assembler.
+
+**D. Dead-variant functional toggles — verify, then remove (needs care).**
+- `HAS_IYL_INST` + `IYL_IDX`/`IYH_IDX`: eZ80 byte-addressable index registers; the
+  S1C88 IX/IY are NOT byte-addressable (s1c88.h flags this as the pending #7c removal).
+  Removing collapses several `gen.c` branches.
+- `nmosZ80` / `OPTION_NMOS_Z80` / `allow_undoc_inst`: the z80 undocumented-instruction
+  toggle; confirm it gates nothing meaningful on the S1C88, then drop.
+
+**E. Emitted z80 branch mnemonics `jp`/`jr`/`call` — large, coupled to #14 (DEFER).**
+The codegen emits z80 `jp`/`jr`/`call`; the peephole control-transfer rules translate
+them to S1C88 `jrs`/`jrl`/`cars`/`carl`. Emitting S1C88 directly requires solving
+branch-form selection — that **is** #14 (linker relaxation). So #20 covers only the
+comment/name hygiene around these; the mnemonic emission itself retires with #14.
+(`ld`/`ex` are native S1C88 and stay; spot-check `scf`/`ccf`.)
+
+**F. MUST NOT touch — shared core / external contract.**
+`TARGET_Z80_LIKE`, `TARGET_IS_Z80`, `IS_Z80`, `ASM_TYPE_Z80ASM` (shared SDCC core; the
+port depends on being Z80-like — see CLAUDE.md). `sdldz80` is the ASxxxx z80-family
+linker binary the build scripts invoke; rebranding to `sdld88` is a build-system change,
+out of scope for a code scrub.
+
+**Sequencing:** B + C are the cheap, high-clarity wins — do first in always-green slices
+(`run-tests.sh` after each; corpus is byte-identical and catches behavior drift). A is
+the mechanical bulk. D needs per-toggle verification. E defers to #14. F is off-limits.
