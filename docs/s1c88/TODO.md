@@ -51,10 +51,38 @@ Legend: **S/M/L** = rough effort. Items are roughly dependency-ordered within ea
     required restoring the vendored core's **input module**, pruned earlier; see its README. Note the PM
     sticky-IRQ model: a keypad IRQ's `active` latch stays set until the ISR acks it via 0x2028/0x2029, or
     it refires — the test acks both.)
-11. **[ongoing] Keep mining with the differential suite.** It has found multiple real codegen bugs; more
-    modules (longs, bitfield-heavy, deep call chains) will find more.
-12. **[L, open-ended] Peephole / cost tuning.** The standing "remaining" codegen item — size and speed
-    (codegen is correct-first, not yet tuned).
+11. **[ongoing] Keep mining with the differential suite.** It has found multiple real codegen bugs (latest:
+    the long-long/struct return-ABI off-by-one, #18); more modules will find more. Stays open. **Pointable
+    targets** — each is one new `tests/diff/cases/*.c` (+ `tests/emu/cases/*.c` for ABI-shaped ones); add,
+    run corpus-check + emu-test + diff-test, fix what it surfaces:
+    - **#11-bitfields** — packed-struct bit-fields: read/write, signed vs unsigned, fields crossing byte
+      boundaries, mixed with normal members. High bug-risk, not yet covered.
+    - **#11-structargs** — struct-by-value *arguments* + struct assignment/copy (the return side just bit us;
+      args/copy are the adjacent untested half).
+    - **#11-ptrarith** — pointer arithmetic & array indexing across widths (`p+n`, `p-q`, `a[i]`, multi-dim,
+      struct-array stride), near and `__far`.
+    - **#11-switch** — `switch` lowering (jump-table vs if-chain), dense/sparse/default, wide selectors.
+    - **#11-fnptr2** — function pointers with varied signatures (wide/struct returns, many-arg calls) —
+      extends `06_fnptr`/`08_isr` into the call-ABI corners.
+    - **#11-unions** — unions / type-punning / overlapping member access (endianness-exact).
+    - **#11-libc** — `mem*`/`str*` differential (memcpy/memmove/memset/strcmp/strlen…) run through the lib.
+    - **#11-longshift** — 32-bit shifts/rotates by a *variable* count + long division edge values (beyond
+      `arith.c`'s fixed-count shifts).
+12. **[L, open-ended, ongoing] Peephole / cost tuning.** Codegen is correct-first, not yet size/speed-tuned.
+    Stays open. **Pointable targets:**
+    - **#12-sizeharness** *(do first — enabling)* — a measurement harness: total `.min`/area size for the
+      corpus, with a per-change delta in the corpus report, so every peephole/cost win is visible and
+      monotone (the analogue of #14a for code size).
+    - **#12-peep-audit** — audit `peeph.def` for rules inherited from z80 that are wrong or suboptimal on the
+      S1C88 (z80-cost-based shortenings, dead-variant guards, mnemonic assumptions). Remove/retarget.
+    - **#12-redundant-moves** — eliminate redundant `ld`/pair-move/load-after-store sequences the current
+      rules miss (e.g. `ld a,X ; ld X,a`, reload of a just-stored value, dead pair shuffles).
+    - **#12-flag-reuse** — drop redundant compare-to-zero / `or a,a` when a preceding op already set Z/N
+      (the S1C88 sets Z/C/V/N broadly — more reuse than the z80 model assumes).
+    - **#12-cost-accuracy** — replace the inherited z80 cycle numbers in `cost2(...)` with real S1C88 counts
+      so the allocator's cost-driven decisions match the target (overlaps the #20-A `cost2` collapse).
+    - **#12-far-idiom** — tighten the `__far` EP=0 deref sequences and the `bcall`/`bjump` slots (ties into
+      #14 once relaxation lands).
 13. **[M] Conditional `bjump`/`bcall` via invert-and-skip trampolines — ✅ DONE** (commit `1bbe90c`).
     The long forms (`carl`/`jrl`) and the linker's `bjump`/`bcall` only have the basic conditions
     `c/nc/z/nz`; the signed/flag conditions (`lt/ge/gt/le/v/nv/p/m/f0..nf3`) exist **only** as short
