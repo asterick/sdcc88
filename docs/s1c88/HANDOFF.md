@@ -29,7 +29,7 @@ _Last updated: 2026-06-07._
   the native `DIV`, multiply on native `MLT`, function pointers are 3-byte banked code pointers, and the
   call model is **S1C88 MAXIMUM mode** (3-byte CB:PC frames — `abi-decision.md` "The call model").
 - **All gates green:** corpus 20/20 byte-identical (0 sdas88 errors), emu-test 15/15 (execution),
-  diff-test 6 (host-vs-emulator), plus driver/crt0/rom/branch smokes and the `examples/hello` build.
+  diff-test 7 (host-vs-emulator), plus driver/crt0/rom/branch smokes and the `examples/hello` build.
 - Everything builds + runs **inside the sandbox** — iterate freely, no `! ...`.
 
 ## NEXT ACTION (do this)
