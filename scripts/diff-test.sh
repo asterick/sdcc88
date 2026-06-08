@@ -12,6 +12,7 @@
 #   scripts/diff-test.sh              # overlay+rebuild sdcc, then run all cases
 #   scripts/diff-test.sh arith       # only cases matching 'arith'
 #   EMU_NO_BUILD=1 scripts/diff-test.sh   # skip the compiler rebuild
+#   TAP=1 scripts/diff-test.sh       # emit TAP body lines (for scripts/run-tests.sh)
 set -uo pipefail
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 SDCC="${REPO}/build/sdcc-4.5.0"
@@ -23,24 +24,42 @@ EMU="${REPO}/tests/emu"
 DIFF="${REPO}/tests/diff"
 RUNNER="${REPO}/build/emu/runner"
 FILTER="${1:-}"
+TAP="${TAP:-}"
+
+# In TAP mode, progress/noise goes to stderr so stdout is a clean TAP stream.
+note() { if [ -n "$TAP" ]; then echo "$@" >&2; else echo "$@"; fi; }
+report_pass() {  # $1=name $2=extra-text(pretty only)
+  if [ -n "$TAP" ]; then echo "ok - diff/$1"; else echo "PASS${2:+ $2}"; fi
+  pass=$((pass+1))
+}
+report_fail() {  # $1=name $2=verdict $3=diagfile
+  if [ -n "$TAP" ]; then
+    echo "not ok - diff/$1 # $2"
+    [ -n "${3:-}" ] && [ -s "$3" ] && sed 's/^/#   /' "$3"
+  else
+    echo "$2"
+    [ -n "${3:-}" ] && [ -s "$3" ] && sed 's/^/    /' "$3"
+  fi
+  fail=$((fail+1))
+}
 
 [ -x "$SDAS" ] && [ -x "$SDLD" ] || { echo "!! build sdas88 + sdldz80 first" >&2; exit 2; }
 
 # --- overlay + rebuild the compiler (same as dev.sh / emu-test.sh) ---
 if [ -z "${EMU_NO_BUILD:-}" ]; then
-  [ -f "${SDCC}/config.status" ] || { echo ">> not configured — run ./build.sh first"; exit 2; }
-  echo ">> overlay + build sdcc"
+  [ -f "${SDCC}/config.status" ] || { echo ">> not configured — run ./build.sh first" >&2; exit 2; }
+  note ">> overlay + build sdcc"
   cp "${REPO}"/src/s1c88/*.c "${REPO}"/src/s1c88/*.h "${REPO}"/src/s1c88/*.cc \
      "${REPO}"/src/s1c88/*.i "${REPO}"/src/s1c88/peeph*.def \
      "${REPO}"/src/s1c88/Makefile.in "${SDCC}/src/s1c88/"
   if ! make -C "${SDCC}/src" > /tmp/sdcc88-build.log 2>&1; then
-    echo "!! BUILD FAILED:"; grep -iE "error:|Error [0-9]+" /tmp/sdcc88-build.log | head -20; exit 1
+    echo "!! BUILD FAILED:" >&2; grep -iE "error:|Error [0-9]+" /tmp/sdcc88-build.log | head -20 >&2; exit 1
   fi
 fi
 [ -x "$SDCCBIN" ] || { echo "!! no sdcc at ${SDCCBIN}" >&2; exit 2; }
 
-echo ">> build emulator runner"
-make -s -C "$EMU" || { echo "!! runner build FAILED"; exit 1; }
+note ">> build emulator runner"
+make -s -C "$EMU" >&2 || { echo "!! runner build FAILED" >&2; exit 1; }
 
 OUT="$(mktemp -d)"; trap 'rm -rf "$OUT"' EXIT
 
@@ -59,7 +78,7 @@ for r in $RT_INT $RT_FLOAT; do
         "${SDCC}/device/lib/${r}.c" > "${OUT}/${r}.i" 2>"${OUT}/err" \
      || ! "$SDCCBIN" -ms1c88 --c1mode -o "${OUT}/${r}.asm" < "${OUT}/${r}.i" 2>"${OUT}/err" \
      || ! "$SDAS" -o "${OUT}/${r}.rel" "${OUT}/${r}.asm" > "${OUT}/err" 2>&1; then
-    echo "!! runtime ${r} build FAILED:"; sed 's/^/    /' "${OUT}/err" | head -10; exit 1
+    echo "!! runtime ${r} build FAILED:" >&2; sed 's/^/    /' "${OUT}/err" | head -10 >&2; exit 1
   fi
   echo "$r" >> "${OUT}/rt.lib"
 done
@@ -68,53 +87,52 @@ pass=0; fail=0
 for src in "${DIFF}"/cases/*.c; do
   b="$(basename "$src" .c)"
   case "$b" in *"$FILTER"*) ;; *) continue ;; esac
-  printf "  %-14s " "$b"
+  [ -z "$TAP" ] && printf "  %-14s " "$b"
 
   # one TU = the case + a main() that calls diff_run()
   printf '#include "%s"\nint main(void){diff_run();return 0;}\n' "$src" > "${OUT}/wrap.c"
 
   # --- reference: host build + run -> golden ---
   if ! cc -O2 -w -DDIFF_HOST -I "$DIFF" "${OUT}/wrap.c" -o "${OUT}/host" 2>"${OUT}/err"; then
-    echo "HOST-COMPILE-FAIL"; sed 's/^/    /' "${OUT}/err" | head -10; fail=$((fail+1)); continue
+    head -10 "${OUT}/err" > "${OUT}/diag"; report_fail "$b" "HOST-COMPILE-FAIL" "${OUT}/diag"; continue
   fi
   "${OUT}/host" > "${OUT}/golden" 2>/dev/null
 
   # --- candidate: sdcc88 -> sdas88 -> link -> romgen -> emulator ---
   if ! cc -E -P -I "$DIFF" "${OUT}/wrap.c" > "${OUT}/${b}.i" 2>"${OUT}/err"; then
-    echo "CPP-FAIL"; sed 's/^/    /' "${OUT}/err"; fail=$((fail+1)); continue
+    report_fail "$b" "CPP-FAIL" "${OUT}/err"; continue
   fi
   if ! "$SDCCBIN" -ms1c88 --c1mode -o "${OUT}/${b}.asm" < "${OUT}/${b}.i" 2>"${OUT}/err" \
      || grep -qiE 'Internal Error|backtrace|FATAL' "${OUT}/err"; then
-    echo "COMPILE-FAIL"; sed 's/^/    /' "${OUT}/err" | head -10; fail=$((fail+1)); continue
+    head -10 "${OUT}/err" > "${OUT}/diag"; report_fail "$b" "COMPILE-FAIL" "${OUT}/diag"; continue
   fi
   if ! "$SDAS" -o "${OUT}/${b}.rel" "${OUT}/${b}.asm" > "${OUT}/err" 2>&1; then
-    echo "ASSEMBLE-FAIL"; sed 's/^/    /' "${OUT}/err" | head -10; fail=$((fail+1)); continue
+    head -10 "${OUT}/err" > "${OUT}/diag"; report_fail "$b" "ASSEMBLE-FAIL" "${OUT}/diag"; continue
   fi
   if ! "$SDLD" -nwxi -b _CODE=0x4000 -b _HOME=0x2100 -b _DATA=0x1000 \
         "${OUT}/${b}.ihx" "${OUT}/crt0.rel" "${OUT}/${b}.rel" -k "${OUT}" -l rt > "${OUT}/err" 2>&1 \
      || grep -q "Undefined Global" "${OUT}/err"; then
-    echo "LINK-FAIL"; grep -E "Undefined Global|ASlink" "${OUT}/err" | sort -u | sed 's/^/    /'
-    fail=$((fail+1)); continue
+    grep -E "Undefined Global|ASlink" "${OUT}/err" | sort -u > "${OUT}/diag"
+    report_fail "$b" "LINK-FAIL" "${OUT}/diag"; continue
   fi
   if ! "${SDCC}/bin/romgen" "${OUT}/${b}.ihx" "${OUT}/${b}.min" > "${OUT}/err" 2>&1; then
-    echo "ROMGEN-FAIL"; sed 's/^/    /' "${OUT}/err"; fail=$((fail+1)); continue
+    report_fail "$b" "ROMGEN-FAIL" "${OUT}/err"; continue
   fi
   "$RUNNER" "${OUT}/${b}.min" > "${OUT}/guest" 2>"${OUT}/rerr"; rc=$?
 
   # --- compare ---
   if [ "$rc" -ne 0 ]; then
-    echo "RUN-FAIL (rc=$rc)"; sed 's/^/    /' "${OUT}/rerr" | head -5; fail=$((fail+1)); continue
+    head -5 "${OUT}/rerr" > "${OUT}/diag"; report_fail "$b" "RUN-FAIL (rc=$rc)" "${OUT}/diag"; continue
   fi
   if cmp -s "${OUT}/golden" "${OUT}/guest"; then
     n="$(wc -l < "${OUT}/golden")"
-    echo "PASS ($n values match)"; pass=$((pass+1))
+    report_pass "$b" "($n values match)"
   else
     d="$(diff "${OUT}/golden" "${OUT}/guest" | grep -cE '^[<>]')"
-    echo "DIFF ($d lines: < host  > guest)"
-    diff "${OUT}/golden" "${OUT}/guest" | grep -E '^[<>]' | head -20 | sed 's/^/    /'
-    fail=$((fail+1))
+    diff "${OUT}/golden" "${OUT}/guest" | grep -E '^[<>]' | head -20 > "${OUT}/diag"
+    report_fail "$b" "DIFF ($d lines: < host  > guest)" "${OUT}/diag"
   fi
 done
 
-echo "== diff-test: ${pass} passed, ${fail} failed =="
+if [ -z "$TAP" ]; then echo "== diff-test: ${pass} passed, ${fail} failed =="; fi
 [ "$fail" -eq 0 ]

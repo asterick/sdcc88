@@ -28,14 +28,14 @@ _Last updated: 2026-06-07._
   ABI tasks (#7 register model, #8 IY args, #9 `__far` pointers) are CLOSED, division/modulus runs on
   the native `DIV`, multiply on native `MLT`, function pointers are 3-byte banked code pointers, and the
   call model is **S1C88 MAXIMUM mode** (3-byte CB:PC frames — `abi-decision.md` "The call model").
-- **All gates green:** corpus 20/20 byte-identical (0 sdas88 errors), emu-test 10/10 (execution),
+- **All gates green:** corpus 20/20 byte-identical (0 sdas88 errors), emu-test 11/11 (execution),
   diff-test 5 (host-vs-emulator), plus driver/crt0/rom/branch smokes and the `examples/hello` build.
 - Everything builds + runs **inside the sandbox** — iterate freely, no `! ...`.
 
 ## NEXT ACTION (do this)
 
 1. **Confirm green:** `./scripts/dev.sh` (builds the compiler + codegen smoke) then
-   **`scripts/corpus-check.sh`** (byte-identical, 20/20), **`scripts/emu-test.sh`** (10/10 execution),
+   **`scripts/corpus-check.sh`** (byte-identical, 20/20), **`scripts/emu-test.sh`** (11/11 execution),
    and **`scripts/diff-test.sh`** (host-vs-emulator). corpus-check proves asm is *stable*; emu-test +
    diff-test prove it *computes the right values*. **Run all three for every codegen change**, and add
    an emu/diff case whenever you touch new codegen territory (each new module has found real bugs).
@@ -72,9 +72,12 @@ whenever branch emission or the linker patch changes.
 
 ## Verify / the tools
 
+- **`./scripts/run-tests.sh` — the unified runner: builds once, runs every suite in parallel, emits one
+  TAP version 13 stream (38 points) + summary, exits non-zero on any failure.** Use this as the one-shot
+  gate; the individual suites below are still there for focused runs (and each takes `TAP=1`).
 - `./scripts/dev.sh` — build compiler + codegen smoke test → `GREEN`.
 - `./scripts/corpus-check.sh` — byte-identical codegen + 0-error assembly across `scripts/corpus/` (20/20).
-- `./scripts/emu-test.sh` — RUN `tests/emu/cases/*.c` on the vendored minimon core (10/10). Execution truth.
+- `./scripts/emu-test.sh` — RUN `tests/emu/cases/*.c` on the vendored minimon core (11/11). Execution truth.
 - `./scripts/diff-test.sh` — compile the same C host-vs-emulator and diff the output (5 modules).
 - `./scripts/validate-s1c88.sh <file.asm>` — assemble emitted codegen with `sdas88`; any reject = a z80-ism.
 - `./scripts/branch-smoke.sh` — byte-lock the branch displacement convention (above).

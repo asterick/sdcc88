@@ -26,7 +26,7 @@ and builds the compiler.
 > also the codegen validator), `sdldz80` (assemble→link + **banked `bcall`/`bjump`**, linker-resolved bank
 > switching), `romgen` (C, → flat `.min`) — plus the production `crt0`, `s1c88.lib`, and `<pm.h>` device
 > header are all in place. The codegen retarget is **functionally complete** (corpus 20/20 byte-identical,
-> emu-test 10/10, diff-test 5; all numbered ABI tasks closed; native `DIV`/`MLT`; 3-byte banked function
+> emu-test 11/11, diff-test 5; all numbered ABI tasks closed; native `DIV`/`MLT`; 3-byte banked function
 > pointers; S1C88 **MAXIMUM-mode** call model). The one open correctness bug is the `_fsadd` different-sign
 > miscompile (all float subtraction — TODO #8); what else remains is quality/coverage and peephole tuning.
 > Design/ABI: **`docs/s1c88/abi-decision.md`**; current state + next action: **`docs/s1c88/HANDOFF.md`**;

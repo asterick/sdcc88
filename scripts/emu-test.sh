@@ -12,6 +12,7 @@
 #   scripts/emu-test.sh             # overlay+rebuild sdcc, then run all cases
 #   scripts/emu-test.sh 04          # run only cases matching '04'
 #   EMU_NO_BUILD=1 scripts/emu-test.sh   # skip the compiler rebuild (reuse last build)
+#   TAP=1 scripts/emu-test.sh       # emit TAP body lines (for scripts/run-tests.sh)
 set -uo pipefail
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 SDCC="${REPO}/build/sdcc-4.5.0"
@@ -22,30 +23,49 @@ SDLD="${SDCC}/bin/sdldz80"
 EMU="${REPO}/tests/emu"
 RUNNER="${REPO}/build/emu/runner"
 FILTER="${1:-}"
+TAP="${TAP:-}"
+
+# In TAP mode, progress/noise goes to stderr so stdout is a clean TAP stream.
+note() { if [ -n "$TAP" ]; then echo "$@" >&2; else echo "$@"; fi; }
+# Per-case reporting. report_pass <name>; report_fail <name> <verdict> [<diagfile>]
+report_pass() {
+  if [ -n "$TAP" ]; then echo "ok - emu/$1"; else echo "PASS"; fi
+  pass=$((pass+1))
+}
+report_fail() {
+  if [ -n "$TAP" ]; then
+    echo "not ok - emu/$1 # $2"
+    [ -n "${3:-}" ] && [ -s "$3" ] && sed 's/^/#   /' "$3"
+  else
+    echo "$2"
+    [ -n "${3:-}" ] && [ -s "$3" ] && sed 's/^/    /' "$3"
+  fi
+  fail=$((fail+1))
+}
 
 [ -x "$SDAS" ] && [ -x "$SDLD" ] || { echo "!! build sdas88 + sdldz80 first (scripts/build-sdas.sh / build-sdld.sh)" >&2; exit 2; }
 
 # --- overlay + rebuild the compiler (same as dev.sh / corpus-check.sh) ---
 if [ -z "${EMU_NO_BUILD:-}" ]; then
-  [ -f "${SDCC}/config.status" ] || { echo ">> not configured — run ./build.sh first"; exit 2; }
-  echo ">> overlay + build sdcc"
+  [ -f "${SDCC}/config.status" ] || { echo ">> not configured — run ./build.sh first" >&2; exit 2; }
+  note ">> overlay + build sdcc"
   cp "${REPO}"/src/s1c88/*.c "${REPO}"/src/s1c88/*.h "${REPO}"/src/s1c88/*.cc \
      "${REPO}"/src/s1c88/*.i "${REPO}"/src/s1c88/peeph*.def \
      "${REPO}"/src/s1c88/Makefile.in "${SDCC}/src/s1c88/"
   if ! make -C "${SDCC}/src" > /tmp/sdcc88-build.log 2>&1; then
-    echo "!! BUILD FAILED:"; grep -iE "error:|Error [0-9]+" /tmp/sdcc88-build.log | head -20; exit 1
+    echo "!! BUILD FAILED:" >&2; grep -iE "error:|Error [0-9]+" /tmp/sdcc88-build.log | head -20 >&2; exit 1
   fi
 fi
 [ -x "$SDCCBIN" ] || { echo "!! no sdcc at ${SDCCBIN}" >&2; exit 2; }
 
 # --- build the emulator runner ---
-echo ">> build emulator runner"
-make -s -C "$EMU" || { echo "!! runner build FAILED"; exit 1; }
+note ">> build emulator runner"
+make -s -C "$EMU" >&2 || { echo "!! runner build FAILED" >&2; exit 1; }
 
 OUT="$(mktemp -d)"; trap 'rm -rf "$OUT"' EXIT
 
 # --- assemble crt0 once ---
-"$SDAS" -o "${OUT}/crt0.rel" "${EMU}/crt0.asm" || { echo "!! crt0 assemble FAILED"; exit 1; }
+"$SDAS" -o "${OUT}/crt0.rel" "${EMU}/crt0.asm" >&2 || { echo "!! crt0 assemble FAILED" >&2; exit 1; }
 
 # --- runtime library: SDCC's generic C support routines, compiled by OUR port ---
 # (self-hosting: the runtime exercises the codegen too). Linked into every case;
@@ -57,7 +77,7 @@ for r in $RT_SRCS; do
         "${SDCC}/device/lib/${r}.c" > "${OUT}/${r}.i" 2>"${OUT}/err" \
      || ! "$SDCCBIN" -ms1c88 --c1mode -o "${OUT}/${r}.asm" < "${OUT}/${r}.i" 2>"${OUT}/err" \
      || ! "$SDAS" -o "${OUT}/${r}.rel" "${OUT}/${r}.asm" > "${OUT}/err" 2>&1; then
-    echo "!! runtime ${r} build FAILED:"; sed 's/^/    /' "${OUT}/err" | head -10; exit 1
+    echo "!! runtime ${r} build FAILED:" >&2; sed 's/^/    /' "${OUT}/err" | head -10 >&2; exit 1
   fi
   RT_RELS="${RT_RELS} ${OUT}/${r}.rel"
 done
@@ -66,18 +86,18 @@ pass=0; fail=0
 for src in "${EMU}"/cases/*.c; do
   b="$(basename "$src" .c)"
   case "$b" in *"$FILTER"*) ;; *) continue ;; esac
-  printf "  %-14s " "$b"
+  [ -z "$TAP" ] && printf "  %-14s " "$b"
 
   # host cpp (no sdcpp in this build) -> sdcc -> sdas88
   if ! cc -E -P -x c -I "$EMU" "$src" > "${OUT}/${b}.i" 2>"${OUT}/err"; then
-    echo "CPP-FAIL"; sed 's/^/    /' "${OUT}/err"; fail=$((fail+1)); continue
+    report_fail "$b" "CPP-FAIL" "${OUT}/err"; continue
   fi
   if ! "$SDCCBIN" -ms1c88 --c1mode -o "${OUT}/${b}.asm" < "${OUT}/${b}.i" 2>"${OUT}/err" \
      || grep -qiE 'Internal Error|backtrace|FATAL' "${OUT}/err"; then
-    echo "COMPILE-FAIL"; sed 's/^/    /' "${OUT}/err" | head -10; fail=$((fail+1)); continue
+    head -10 "${OUT}/err" > "${OUT}/diag"; report_fail "$b" "COMPILE-FAIL" "${OUT}/diag"; continue
   fi
   if ! "$SDAS" -o "${OUT}/${b}.rel" "${OUT}/${b}.asm" > "${OUT}/err" 2>&1; then
-    echo "ASSEMBLE-FAIL"; sed 's/^/    /' "${OUT}/err" | head -10; fail=$((fail+1)); continue
+    head -10 "${OUT}/err" > "${OUT}/diag"; report_fail "$b" "ASSEMBLE-FAIL" "${OUT}/diag"; continue
   fi
 
   # __far data lane (task #9): a case using __far gets a _FAR area located at its
@@ -97,29 +117,29 @@ for src in "${EMU}"/cases/*.c; do
   if ! "$SDLD" -nwxi -b _CODE=0x4000 -b _HOME=0x2100 -b _DATA=0x1000 ${FAR_LINK} \
         "${OUT}/${b}.ihx" "${OUT}/crt0.rel" "${OUT}/${b}.rel" ${RT_RELS} > "${OUT}/err" 2>&1 \
      || grep -q "Undefined Global" "${OUT}/err"; then
-    echo "LINK-FAIL"; grep -E "Undefined Global|ASlink" "${OUT}/err" | sort -u | sed 's/^/    /'
-    fail=$((fail+1)); continue
+    grep -E "Undefined Global|ASlink" "${OUT}/err" | sort -u > "${OUT}/diag"
+    report_fail "$b" "LINK-FAIL" "${OUT}/diag"; continue
   fi
   if ! "${SDCC}/bin/romgen" "${OUT}/${b}.ihx" "${OUT}/${b}.min" ${FAR_ROMGEN} > "${OUT}/err" 2>&1; then
-    echo "ROMGEN-FAIL"; sed 's/^/    /' "${OUT}/err"; fail=$((fail+1)); continue
+    report_fail "$b" "ROMGEN-FAIL" "${OUT}/err"; continue
   fi
 
   # run; guest exit code 0 = pass (124 stray-halt / 125 crash / 126 timeout)
   guest_out="$("$RUNNER" "${OUT}/${b}.min" 2>"${OUT}/err")"; rc=$?
   if [ "$rc" -eq 0 ]; then
-    echo "PASS"; pass=$((pass+1))
+    report_pass "$b"
   else
     case "$rc" in
-      124) echo "STRAY-HALT" ;;
-      125) echo "CPU-CRASH" ;;
-      126) echo "TIMEOUT" ;;
-      *)   echo "FAIL (exit $rc)" ;;
+      124) verdict="STRAY-HALT" ;;
+      125) verdict="CPU-CRASH" ;;
+      126) verdict="TIMEOUT" ;;
+      *)   verdict="FAIL (exit $rc)" ;;
     esac
-    [ -n "$guest_out" ] && printf '%s\n' "$guest_out" | sed 's/^/    | /'
-    sed 's/^/    /' "${OUT}/err" | head -5
-    fail=$((fail+1))
+    # guest_out carries the per-assertion CHECK failures ("FAIL: <expr>")
+    { [ -n "$guest_out" ] && printf '%s\n' "$guest_out"; head -5 "${OUT}/err"; } > "${OUT}/diag"
+    report_fail "$b" "$verdict" "${OUT}/diag"
   fi
 done
 
-echo "== emu-test: ${pass} passed, ${fail} failed =="
+if [ -z "$TAP" ]; then echo "== emu-test: ${pass} passed, ${fail} failed =="; fi
 [ "$fail" -eq 0 ]

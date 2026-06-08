@@ -16,6 +16,7 @@
 #   scripts/corpus-check.sh snapshot   # save baseline from current sources
 #   scripts/corpus-check.sh            # rebuild + diff vs baseline + validate
 #   scripts/corpus-check.sh check
+#   TAP=1 scripts/corpus-check.sh      # emit TAP body lines (for scripts/run-tests.sh)
 set -uo pipefail
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 SDCC="${REPO}/build/sdcc-4.5.0"
@@ -24,17 +25,23 @@ CORPUS="${REPO}/scripts/corpus"
 BASE="${CORPUS}/.baseline"
 OUT="$(mktemp -d)"
 MODE="${1:-check}"
+TAP="${TAP:-}"
+note() { if [ -n "$TAP" ]; then echo "$@" >&2; else echo "$@"; fi; }
 
 # --- overlay + build (same as dev.sh) ---
-if [ ! -f "${SDCC}/config.status" ]; then echo ">> not configured — run ./build.sh first"; exit 1; fi
-echo ">> overlay + build"
-cp "${REPO}"/src/s1c88/*.c "${REPO}"/src/s1c88/*.h "${REPO}"/src/s1c88/*.cc \
-   "${REPO}"/src/s1c88/*.i "${REPO}"/src/s1c88/peeph*.def \
-   "${REPO}"/src/s1c88/Makefile.in "${SDCC}/src/s1c88/"
-if ! make -C "${SDCC}/src" > /tmp/sdcc88-build.log 2>&1; then
-  echo "!! BUILD FAILED:"; grep -iE "error:|Error [0-9]+" /tmp/sdcc88-build.log | head -20; exit 1
+if [ ! -f "${SDCC}/config.status" ]; then echo ">> not configured — run ./build.sh first" >&2; exit 1; fi
+if [ -n "${EMU_NO_BUILD:-}" ]; then
+  note ">> reuse existing build (EMU_NO_BUILD)"
+else
+  note ">> overlay + build"
+  cp "${REPO}"/src/s1c88/*.c "${REPO}"/src/s1c88/*.h "${REPO}"/src/s1c88/*.cc \
+     "${REPO}"/src/s1c88/*.i "${REPO}"/src/s1c88/peeph*.def \
+     "${REPO}"/src/s1c88/Makefile.in "${SDCC}/src/s1c88/"
+  if ! make -C "${SDCC}/src" > /tmp/sdcc88-build.log 2>&1; then
+    echo "!! BUILD FAILED:" >&2; grep -iE "error:|Error [0-9]+" /tmp/sdcc88-build.log | head -20 >&2; exit 1
+  fi
+  note ">> build OK"
 fi
-echo ">> build OK"
 
 # Normalize: drop the filename-derived `.module` line and the `;(null)` c1mode debug comments.
 normalize() { grep -vE '^\s*\.module|^;\(null\)' "$1"; }
@@ -60,29 +67,48 @@ if [ "$MODE" = "snapshot" ]; then
 fi
 
 # --- check mode ---
-[ -d "$BASE" ] || { echo "!! no baseline — run: scripts/corpus-check.sh snapshot"; exit 1; }
+[ -d "$BASE" ] || { echo "!! no baseline — run: scripts/corpus-check.sh snapshot" >&2; exit 1; }
 identical=0; diffd=0; aserr=0; fails=0
 for f in "${CORPUS}"/*.c; do
   b="$(basename "$f" .c)"
   cur="${OUT}/${b}.asm"
-  compile "$f" "$cur" || { fails=$((fails+1)); continue; }
+  if ! compile "$f" "$cur" > "${OUT}/cout" 2>&1; then
+    fails=$((fails+1))
+    if [ -n "$TAP" ]; then echo "not ok - corpus/$b # COMPILE-FAIL"; sed 's/^/#   /' "${OUT}/cout" | head -10
+    else cat "${OUT}/cout"; fi
+    continue
+  fi
   # byte-identical vs baseline?
   if [ -f "${BASE}/${b}.asm" ] && diff -q "${BASE}/${b}.asm" "$cur" >/dev/null; then
-    identical=$((identical+1)); tag="IDENTICAL"
+    identical=$((identical+1)); tag="IDENTICAL"; isdiff=0
   else
-    diffd=$((diffd+1)); tag="DIFF     "
+    diffd=$((diffd+1)); tag="DIFF     "; isdiff=1
   fi
   # sdas88 validation (errors only)
   ne="$("${REPO}/scripts/validate-s1c88.sh" "$cur" 2>/dev/null | sed -nE 's/.*assembler errors  : ([0-9]+).*/\1/p')"
   ne="${ne:-?}"
   [ "$ne" != "0" ] && [ "$ne" != "?" ] && aserr=$((aserr+1))
-  printf "  %-14s %s  sdas88_err=%s\n" "$b" "$tag" "$ne"
+  if [ -n "$TAP" ]; then
+    # a corpus case is ok iff byte-identical to the baseline AND assembles 0 errors
+    if [ "$isdiff" -eq 0 ] && [ "$ne" = "0" ]; then
+      echo "ok - corpus/$b"
+    else
+      echo "not ok - corpus/$b # ${tag// /} sdas88_err=$ne"
+      [ "$isdiff" -ne 0 ] && echo "#   codegen differs from baseline (diff ${BASE}/${b}.asm ${OUT}/${b}.asm)"
+    fi
+  else
+    printf "  %-14s %s  sdas88_err=%s\n" "$b" "$tag" "$ne"
+  fi
 done
-echo "-------------------------------------------"
-echo ">> byte-identical: ${identical}  diff: ${diffd}  files-with-asm-errors: ${aserr}  compile-fails: ${fails}"
-if [ "$diffd" -eq 0 ] && [ "$aserr" -eq 0 ] && [ "$fails" -eq 0 ]; then
-  echo ">> GREEN (byte-identical + assembles clean)"
-else
-  echo ">> review the DIFF / error files above (baseline in ${BASE}, current in ${OUT})"
-  echo "   diff e.g.:  diff ${BASE}/<name>.asm ${OUT}/<name>.asm"
+if [ -z "$TAP" ]; then
+  echo "-------------------------------------------"
+  echo ">> byte-identical: ${identical}  diff: ${diffd}  files-with-asm-errors: ${aserr}  compile-fails: ${fails}"
+  if [ "$diffd" -eq 0 ] && [ "$aserr" -eq 0 ] && [ "$fails" -eq 0 ]; then
+    echo ">> GREEN (byte-identical + assembles clean)"
+  else
+    echo ">> review the DIFF / error files above (baseline in ${BASE}, current in ${OUT})"
+    echo "   diff e.g.:  diff ${BASE}/<name>.asm ${OUT}/<name>.asm"
+  fi
 fi
+# exit nonzero if anything is off (so run-tests / CI sees the failure)
+[ "$diffd" -eq 0 ] && [ "$aserr" -eq 0 ] && [ "$fails" -eq 0 ]

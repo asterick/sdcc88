@@ -5,7 +5,7 @@ Status snapshot (2026-06-07): **THE CRITICAL PATH (Section A) IS DONE — the to
 game.ihx game.min` produces a bootable Pokémon Mini ROM, with the production `crt0` (real `"PM"`/
 `"NINTENDO"` header), the auto-linked `s1c88.lib`, the `<pm.h>` device header, and a C `romgen` (no
 Python). `examples/hello/` is a copy-me project; `docs/s1c88/building-roms.md` is the how-to. All gates
-green (corpus 20/20, emu-test 10/10, diff-test 5, driver/crt0/rom/branch smokes, example). **Remaining =
+green (corpus 20/20, emu-test 11/11, diff-test 5, driver/crt0/rom/branch smokes, example). **Remaining =
 Section B (quality/coverage) and Section C (documented limitations).**
 
 Legend: **S/M/L** = rough effort. Items are roughly dependency-ordered within each section.
@@ -81,8 +81,12 @@ Legend: **S/M/L** = rough effort. Items are roughly dependency-ordered within ea
 17. **CPOINTER (code-space `const` data pointers).** 3 bytes but deref'd near-only; fine while const data
     stays in the common bank — document the convention (or lift it).
 18. **float / long long correctness** — float subtraction is the open #8 bug; long long is unverified.
-19. **[optional] Structured test runner** (TAP/parallel/per-assertion). Current bash + exit codes is fine
-    but doesn't scale to many cases.
+19. **Structured test runner — ✅ DONE.** `scripts/run-tests.sh` builds the compiler once, runs every
+    suite (corpus / emu / diff / toolchain smokes) **in parallel**, and emits one **TAP version 13**
+    stream — one test point per case, with per-assertion `#` diagnostics (emu `CHECK` failures), a `1..N`
+    plan, and a summary; exits non-zero on any failure. The case-suites gained an opt-in `TAP=1` mode
+    (clean `ok`/`not ok` body on stdout, build noise to stderr); their default human output is unchanged.
+    38 points green.
 
 ---
 
