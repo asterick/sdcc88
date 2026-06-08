@@ -80,17 +80,25 @@ Legend: **S/M/L** = rough effort. Items are roughly dependency-ordered within ea
     code-size/speed win. Cross-check against `branch-smoke.sh` and re-baseline the corpus afterward.
 15. **[S] `__mul*int2*long` widening differential coverage.** Skipped in the diff harness for lack of the
     support routines; add once those exist (also unblocks `_fsmul` in #8).
-20. **[L] Z80-artifact scrub.** The port was cloned from SDCC's `z80` and still carries z80/eZ80/Rabbit/
-    SM83/Z80N/R800/TLCS90 mnemonics, keywords, symbols, comments, and variable names that are either dead
-    (other-variant code paths gated off by the `IS_*` macros hardcoded in `s1c88.h`) or live-but-misnamed
-    (functions/vars/comments that still read "z80"). Replace each with its S1C88 equivalent, or delete when
-    unused, so the port reads as a native S1C88 backend. **Scope/inventory: see the
-    [z80-scrub scope](#z80-artifact-scrub-scope-20) appendix below.** **Caveat (load-bearing): do NOT touch
-    `TARGET_Z80_LIKE` / `TARGET_IS_Z80` gating in the shared SDCC core** — the core gates real codegen
-    behavior on it and the port depends on being Z80-like (see `CLAUDE.md`); this task is about the *port's
-    own* `src/s1c88/` + `sdas/as88/` artifacts, not the upstream core. Do it in always-green slices
-    (rename/remove → `run-tests.sh` → commit), since corpus is byte-identical and will catch any behavior
-    change.
+20. **[L] Z80-artifact scrub — B+C ✅ DONE; A/D/F deferred.** The port was cloned from SDCC's `z80` and
+    carried z80/eZ80/Rabbit/SM83/Z80N/R800/TLCS90 mnemonics, symbols, comments, and variable names.
+    **Done (scope categories B + C):** all port-private identifiers renamed to `s1c88*` (peep.c's 9
+    flag/jump helpers, `genZ80iCode`/`dryZ80Code`/`z80_init_reg_asmop`, main.c's PORT wiring
+    `_z80_init`/`_z80AsmCmd`/`_z80LinkCmd`/`_z80_options`/`_z80_builtins`/`_z80_genAssemblerStart`/
+    `_libs_z80`, `Z80_OPTS`→`S1C88_OPTS`, `Z80_FLOAT`→`S1C88_FLOAT`, the include guards,
+    `Z80_MAX_REGS`); and **every rephraseable comment** across peep.c/gen.c/main.c/headers/ralloc/support
+    reworded to describe only the S1C88 (z80 + other-variant trivia removed). Done in always-green slices;
+    39/39 throughout, corpus byte-identical.
+    **Still deferred:** **(A)** the `cost2(...)` 7-variant timing params (gen.c) — collapse to
+    `cost2(bytes, cycles)` across 491 call sites; **(D)** dead toggles + machinery — the `nmosZ80` /
+    `--nmos-z80` option, `z80n_de` and its folded branch, the `#pragma portmode z80/z180` handling, and the
+    asm-dialect tables (`mappings.i` `_z80asm`/`_gas_z80`, main.c's `{z80*}` link-command-template variables
+    + the `z80-elf-ld/as` gas-path tool names) — these are coordinated/maybe-dead and want per-unit
+    verification; **(D, sub-unit)** the peephole **flag-token model** (`pf`/`sf`/`hf`/`nf`/`vf`/`lf` — z80
+    flag names) and its documenting comments (peep.c) — rename as one unit; **(F, MUST NOT touch)**
+    `TARGET_Z80_LIKE`/`TARGET_IS_Z80`/`ASM_TYPE_Z80ASM` (shared SDCC core — the port depends on being
+    Z80-like, see `CLAUDE.md`) and `sdldz80` (the ASxxxx linker-binary/build-script contract). Provenance
+    `@file ... derived from the z80 port` header lines are kept as factual lineage.
 
 ---
 
