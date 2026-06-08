@@ -80,15 +80,16 @@ Legend: **S/M/L** = rough effort. Items are roughly dependency-ordered within ea
     - **#11-ptrarith** — ✅ done (`tests/diff/cases/ptrarith.c`, 264 values): indexing across widths,
       `p[-1]`, pointer differences incl. a `/3` struct stride, equality, multi-dim, struct fields, pointer
       walk, `__far` index + diff — all CORRECT. **Surfaced one bug, deferred:**
-      - **#11-ptrcmp-bug** *(open, SILENT miscompile, narrow)* — a relational compare of TWO freshly
-        address-of'd elements with **runtime** indices, e.g. `&a[i] < &a[j]`, is wrong: genCmp's native
-        `cp pair,pair` path materializes the left address but drops the right one (HL is left holding the
-        scaled index, not the 2nd address — a register-allocation/liveness bug, NOT caught by the
-        `UNIMPLEMENTED` cost steering). **Narrow:** pointer subtraction, equality, and the common `p < end`
-        loop are all correct; only this inline double-address-of relational form breaks. Repro +
-        working-pattern guard: `tests/emu/cases/16_ptrcmp.c`. Fix is in genCmp's two-computed-pair operand
-        materialization; add the excluded `lt`/`ge` cases back to `ptrarith.c` + the `lt(1,3)` assertion to
-        `16_ptrcmp.c` once fixed.
+      - **#11-ptrcmp-bug** — ✅ FIXED. A relational compare of TWO freshly address-of'd elements with
+        **runtime** indices, e.g. `&a[i] < &a[j]`, was a SILENT miscompile. Root cause was NOT in genCmp
+        (which correctly emits the native `cp ba, hl` pair compare) but in the **peephole read-analysis**
+        (`peep.c` `s1c88MightRead`): the cp/or handler had cases for `cp a,X`/`cp hl,X`/`cp iy,X` as the
+        first operand but **none for `cp ba, X`**, so it fell through to `argCont`, which stops at the comma
+        and never scanned the `hl` SECOND operand — reads of HL by `cp ba, hl` were invisible, and the
+        peephole then deleted the `add hl, ba` (+ the index shift) that built the right-hand address as
+        "unused result". Fix: a `cp ba, rr` first-operand case in `s1c88MightRead`. Corpus stayed
+        byte-identical (the change only makes the analysis recognize MORE reads → deletes fewer insns);
+        the `lt`/`ge` cases are restored in `ptrarith.c` and asserted in `tests/emu/cases/16_ptrcmp.c`.
     - **#11-switch** — ✅ done (`tests/diff/cases/switch.c`, 620 values): dense-from-zero (real jump table —
       `jp hl` + `.dw` table, swept across in-range/boundary/out-of-range→default), offset-dense, sparse
       (if-chain), signed selector with negative cases, wide 16-bit selector, fall-through / grouped labels,

@@ -53,13 +53,13 @@ void diff_run(void)
             EMIT_I16("d32", (i16)(&a32[kj] - &a32[ki]));    /* /4 (shift) */
             EMIT_I16("drec",(i16)(&recs[kj] - &recs[ki]));  /* /3 (real divide) */
             EMIT_U8 ("eq",  &a32[ki] == &a32[kj]);
-            /* NOTE: a RELATIONAL compare of two freshly address-of'd elements
-               with runtime indices — `&a16[ki] < &a16[kj]` — is a known SILENT
-               miscompile (genCmp native `cp pair,pair` drops the 2nd operand's
-               address computation; see tests/emu/cases/16_ptrcmp.c + TODO #11).
-               Pointer subtraction, equality, and the common `p < end` loop are
-               all correct; only this inline double-address-of relational form is
-               broken. Excluded here until fixed. */
+            /* RELATIONAL compare of two freshly address-of'd elements with
+               runtime indices — `&a16[ki] < &a16[kj]`. Once a SILENT miscompile
+               (the native `cp ba, hl` had its right-address build deleted by a
+               peephole read-analysis gap — see tests/emu/cases/16_ptrcmp.c +
+               TODO #11-ptrcmp-bug); fixed in peep.c. */
+            EMIT_U8 ("lt",  &a16[ki] <  &a16[kj]);
+            EMIT_U8 ("ge",  &a16[ki] >= &a16[kj]);
         }
 
     /* multi-dim: value + flattened offset (= i*4 + j) */

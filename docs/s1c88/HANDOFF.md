@@ -40,9 +40,8 @@ _Last updated: 2026-06-08._
    diff-test prove it *computes the right values*. **Run all three for every codegen change**, and add
    an emu/diff case whenever you touch new codegen territory (each new module has found real bugs).
 2. **Open work — see [`TODO.md`](TODO.md) for the pointable-target menu.** Mining (#11) keeps paying out —
-   this round it found+fixed the long-long/struct **return-ABI off-by-one** and surfaced a narrow
-   **pointer-compare miscompile** (`#11-ptrcmp-bug`, still open). long long, unions, and pointer arithmetic
-   are now verified; **`#11-bitfields` is now verified too** (264 values; found only an implementation-
+   prior rounds found+fixed the long-long/struct **return-ABI off-by-one**; long long, unions, and pointer
+   arithmetic are verified; **`#11-bitfields` is now verified too** (264 values; found only an implementation-
    defined-signedness *test* trap — bare `int:N` is unsigned in sdcc, signed in gcc — not a codegen bug;
    declare bit-fields with explicit `signed`/`unsigned`). **`#11-switch` is now verified too** (620 values;
    jump-table + if-chain lowering, dense/sparse/offset/wide/signed/fall-through/no-default — no codegen bug).
@@ -51,9 +50,11 @@ _Last updated: 2026-06-08._
    register; fix stashes the parked HL/BA pair via IY (the rare two-parked-pairs `f(struct,char,int)` now
    traps loudly, cataloged in abi-decision.md). **`#11-fnptr2` is now verified too** (36 values; the
    INDIRECT PCALL path with wide/struct/bigreturn results, stack-overflow + mixed-width + struct-by-value
-   args, fnptr-returning-fnptr — confirmed real PCALLs via `__sdcc_fptr`, no codegen bug). **The #11
-   pointable-target menu is now exhausted except the open `#11-ptrcmp-bug`** (the narrow `&a[i] < &a[j]`
-   relational miscompile). Code size is now measurable
+   args, fnptr-returning-fnptr — confirmed real PCALLs via `__sdcc_fptr`, no codegen bug). **`#11-ptrcmp-bug`
+   is now FIXED** — the `&a[i] < &a[j]` silent miscompile was a peephole read-analysis gap (`s1c88MightRead`
+   had no `cp ba, X` case, so `argCont` never saw the `hl` operand and the peephole deleted the right-address
+   build); regression in `16_ptrcmp.c` + `ptrarith.c`. **The #11 pointable-target menu is now exhausted with
+   no open mining bugs.** Code size is now measurable
    (`scripts/size-check.sh`, #12-sizeharness done), so the peephole/cost targets (`#12-redundant-moves`,
    `#12-flag-reuse`, …) and the **branch-relaxation lift (#14)** are ready to pick up. **#14a is now done**
    (`scripts/relax-analysis.sh` measured ~53% smaller user-code calls and cleared the 3-pass `fuzz`

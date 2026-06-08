@@ -449,12 +449,20 @@ s1c88MightRead(const lineNode *pl, const char *what)
             return(true);
           arg += 3;
         }
+      else if(!strncmp(arg, "ba", 2) && *(arg + 2) == ',') // S1C88 native 16-bit pair compare `cp ba, rr`
+        {
+          if(!strcmp(what, "a") || !strcmp(what, "b"))
+            return(true);
+          arg += 3;
+        }
       else if(!strncmp(arg, "iy", 2) && *(arg + 2) == ',')
         {
           if(!strcmp(what, "iy"))
             return(true);
           arg += 3;
         }
+      // argCont stops at the comma, so the first operand must be consumed above
+      // for the SECOND operand to be scanned (e.g. `cp ba, hl` reads hl).
       return(argCont(arg, what));
     }
 
