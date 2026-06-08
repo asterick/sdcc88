@@ -3,28 +3,11 @@
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 > **▶ Resuming / "pick up where you left off"?** Go to **[`docs/s1c88/HANDOFF.md`](docs/s1c88/HANDOFF.md)** —
-> it has the current state and the exact next action. TL;DR: `./scripts/dev.sh` (confirms the build is
-> green + runs a codegen smoke test). **ALL numbered tasks are CLOSED** — #7 register-model sweep
-> (s18), #8 IY argument passing (s19), and **#9 3-byte `__far` pointers (s20, end-to-end)**: a far
-> pointer is a 24-bit linear physical address (byte 2 = the EP page), deref via the HL+EP idiom under
-> the **EP=0 invariant**, far objects = const ROM data in area `_FAR` (located at PHYSICAL addresses;
-> `romgen.py --far=start-end`), HLA return ABI (offset HL, page A), ISR EP hygiene, and byte-perfect
-> `(sym>>16)` page relocs after `exprmasks(3)` (XL3) — see HANDOFF "Session 20" + abi-decision.md
-> "Task #9". Plus **native DIV (s21/s22)**: unsigned 8÷8 / 16÷8 / signed 8÷8 on the hardware `DIV`
-> (abi-decision.md "Native DIV"). **The polish list is CLOSED (s22)**: phantom PAIR_BC/DE/C/D/E
-> names deleted, far bit-fields implemented, **banked 3-byte function pointers end-to-end**, and —
-> found en route — **the call model was corrected to S1C88 MAXIMUM mode** (3-byte CB:PC return
-> frames, caller cleanup, PCALL via the `__sdcc_fptr` cell + native `call (hhll)`; the old 2-byte
-> z80 frame assumption was a port-wide latent bug — read abi-decision.md "The call model: MAXIMUM
-> mode" before touching calls). Phase-3 Epson register args: closed as documented divergence.
-> **20/20 corpus files assemble with 0 sdas88 errors; the banked-ROM pipeline (incl. far ROM data
-> and linked fptr bank bytes) is GREEN.** **NEW (s23): EXECUTION testing — `scripts/emu-test.sh`
-> runs `tests/emu/cases/*.c` on the vendored minimon emulator core (`third_party/minimon-core`),
-> 6/6 PASS; its first run caught 4 runtime miscompiles + 1 linker bug that corpus-clean assembly
-> hid (HANDOFF "Session 23").** Remaining = open-ended peephole/cost tuning. Validate each change
-> with `./scripts/corpus-check.sh` (byte-identical + sdas88) **and `scripts/emu-test.sh`
-> (executes on the emulator)** — **always rebuild via the overlay (`dev.sh`/`corpus-check.sh`),
-> never raw `make -C build/.../src` (it compiles a stale copy).** (All work is on **`main`**.)
+> it has the current state and the exact next action. TL;DR: `./scripts/dev.sh` confirms the build is
+> green; `scripts/corpus-check.sh` + `scripts/emu-test.sh` + `scripts/diff-test.sh` are the gates.
+> **Always rebuild via the overlay (`dev.sh`/`corpus-check.sh`), never raw `make -C build/.../src`**
+> (it compiles a stale copy). The forward work list is **[`docs/s1c88/TODO.md`](docs/s1c88/TODO.md)**.
+> All work is on **`main`**.
 
 ## Project Overview
 
@@ -36,77 +19,31 @@ sdcc88 is an **overlay on upstream SDCC, built with SDCC's own autotools build**
 *not* a reimplemented build system. `build.sh` fetches SDCC, drops our port into its tree, registers it,
 and builds the compiler.
 
-> **Status:** the compiler **builds, links, and runs** as a stock SDCC `sdcc` driver with `-ms1c88`
-> selectable. **`src/s1c88` is a clone of SDCC's `z80` port** (re-based from an earlier stm8 clone — the
-> z80 register model fits the S1C88 far better). The **binary toolchain is COMPLETE**: `sdas88` (full ISA,
-> byte-verified — also the codegen validator), `sdldz80` (assemble→link + **banked `bcall`/`bjump`** with
-> linker-resolved bank switching), and `romgen.py` (→ flat `.min`); a multi-bank ROM builds end-to-end.
-> **Codegen is being retargeted** from its z80 origin to the S1C88 ISA, always-green incremental. **Done:**
-> frame setup, branches (`jrs`/`jrl`/`carl`), the full compare cluster (signed/unsigned/literal `<`/`>`/
-> `==` via native `cp ba,hl`/`cp …,#imm` + `jrs LT/GE`), the 16-bit ALU (`sub ba,hl`), `adjustStack`
-> (native SP moves), 8-bit L/H ALU operands incl. AND/OR/XOR (routed through B), shifts (routed through
-> A/B — the S1C88 only shifts A/B/[HL]), accumulator rotates (`rla`→`rl a` etc.), `push af`→`push a;push
-> sc`, the scratch-pair selectors (`getFreePairId`→BA), `cpl a`/`neg a` operand forms, indexed/abs
-> `inc/dec` routed through A (`emit3_incdec`), `cp a,l`/`sub a,l` routed through B, `djnz`→`djr nz`,
-> `bit n,reg`→`bit reg,#mask` (`emitBitTest`), **RES/SET elimination** (no such instruction — bits via
-> `and/or a,#mask`), constant pointer/member offsets via native `add {hl,ix,iy},#imm` (`offsetPair`),
-> **`add hl/iy/ix,sp` fully eliminated** (peephole `ld pair,sp; add pair,#off`), and struct return-by-value
-> no longer SIGSEGVs (clean "Unimplemented"). The **peephole rules were audited for S1C88 validity and
-> collapsed into one file** (`peeph.def`; the z80 `peeph-z80.def` + 5 dead variant files removed) — see
-> `docs/s1c88/HANDOFF.md` "Peephole audit". **`ldir` eliminated from the memcpy/pointer/struct-return
-> paths** (session 5): genBuiltInMemcpy (incl. runtime-count via a borrowed-IX counter + `cp ix,#0` guard) /
-> genPointerSet / genPointerGet / genRet emit the native byte loop (HL=source, IY=dest) — see HANDOFF
-> "Session 5". (Session 14 found `ldir` still emitted for a long global↔global copy — fixed in `8596ef3`.)
-> **Inter-function calls emit `bcall`/`bjump`** (linker picks form + bank switch) + **`.globl` for support
-> routines** (s6); **independent port** linking alongside z80 et al. (s8); **function-pointer calls** via
-> `jp hl`/manufactured-return (s9); **ISR prologue/epilogue** (RETE model, `push ba/hl/iy` save — s10);
-> **struct return-by-value** (copy to the caller's hidden buffer — s11); **`__critical`** via SC
-> interrupt-level masking (`push sc; or sc,#0xc0` / `pop sc` — s12). **The codegen is functionally
-> complete for the verification corpus and the assemble→link→banked-ROM pipeline is GREEN:** the
-> session-14 corpus (`scripts/corpus-check.sh`) exposed reachable z80-isms the earlier narrower corpus
-> missed — all now fixed (s14: `or a,l/h` in `&&`/`||`, bitfield `set/res`+`rld/rrd`, `ld (iy+d),#imm`,
-> `ldir` block copy, STL-address BA; s15: the `genMult` literal path → BA/B + block-scope extern
-> `.globl`, genMultOneChar → native `MLT`, the #10 `jp <signed cc>` invert-and-skip lowering in sdas88,
-> and the **critical relative-branch off-by-one fix** — every branch was one byte short vs the real
-> S1C88 base; `scripts/branch-smoke.sh` now byte-locks the convention); s16: **#7a done — zero variant-
-> macro refs port-wide** (~2,000 dead lines, every `ex (sp),hl`/`ldir` emit gone) + the reachable
-> builtin cluster (`__builtin_memset/strcpy/strncpy/strchr`) retargeted to native byte loops with
-> corpus file `17_builtins.c`. **20/20 corpus files assemble
-> with 0 sdas88 errors.** **Tasks #7, #8 and #9 are ALL CLOSED** (s18/s19/s20): IX is permanently
-> excluded from the argument ABI by the frame prologue; the inert PAIR_BC/PAIR_DE and C/D/E_IDX
-> names are documented optional cosmetics, not debt; and 3-byte `__far` pointers (s20) work
-> end-to-end — codegen (HL+EP idiom, EP=0 invariant, HLA returns, ISR EP hygiene), middle-end
-> (five "pointers-are-2-bytes" miscompiles patched), and toolchain (XL3 byte relocs for the
-> `(sym>>16)` page, physical far areas, `romgen.py --far`).
-> All work is on **`main`**.
-> The design, ABI, and plan live in **`docs/s1c88/abi-decision.md`**; current state + next action in
-> **`docs/s1c88/HANDOFF.md`**; the toolchain in `docs/s1c88/{sdas88-retarget,banked-branch}.md`.
+> **Status:** the full toolchain is **complete and usable** — `sdcc -ms1c88 game.c -o game.ihx &&
+> romgen game.ihx game.min` builds a bootable Pokémon Mini ROM. `src/s1c88` started as a clone of
+> SDCC's `z80` port (the z80 register model fits the S1C88 well) and the codegen has been retargeted to
+> the real S1C88 ISA, always-green incremental. The binary toolchain — `sdas88` (full ISA, byte-verified,
+> also the codegen validator), `sdldz80` (assemble→link + **banked `bcall`/`bjump`**, linker-resolved bank
+> switching), `romgen` (C, → flat `.min`) — plus the production `crt0`, `s1c88.lib`, and `<pm.h>` device
+> header are all in place. The codegen retarget is **functionally complete** (corpus 20/20 byte-identical,
+> emu-test 10/10, diff-test 5; all numbered ABI tasks closed; native `DIV`/`MLT`; 3-byte banked function
+> pointers; S1C88 **MAXIMUM-mode** call model). The one open correctness bug is the `_fsadd` different-sign
+> miscompile (all float subtraction — TODO #8); what else remains is quality/coverage and peephole tuning.
+> Design/ABI: **`docs/s1c88/abi-decision.md`**; current state + next action: **`docs/s1c88/HANDOFF.md`**;
+> end-user guide: **`docs/s1c88/building-roms.md`**; the toolchain: `docs/s1c88/{sdas88-retarget,banked-branch}.md`.
 
-## Current work: the codegen retarget (read `docs/s1c88/abi-decision.md`)
+## The codegen design (read `docs/s1c88/abi-decision.md`)
 
-Decided design:
 - **Register model = Faithful BA+HL:** byte GPRs `A,B,L,H`; pairs `BA`(B:A) and `HL`(H:L); index `IX,IY`
-  (not byte-addressable). Drop the z80 `C,D,E,DE` — S1C88 has no DE, and `A` doubles as BA's low byte.
-- **Asm output = keep SDCC sdas style** (reuse the sdas/sdld assembler+linker family).
-- **Execution = always-green incremental:** keep every register symbol *defined* so the build never
-  breaks; constrain the allocator to A/B/L/H, then rewrite the `DE`/`BC` scratch uses in `gen.c`
-  function-by-function, **building + smoke-testing after each batch**, deleting symbols only once unused.
-  (A from-scratch big-bang reshape was tried and reset — it breaks ~1144 `gen.c` sites at once with no way
-  to verify; the dead WIP is in reflog at `417bed5` as a reference for the end-state register defs.)
-
-**Progress:** the retarget is functionally complete for the verification corpus (assemble→link→ROM
-GREEN; **20/20 corpus files at 0 sdas88 errors**) and **every numbered task is closed**: the
-register-model sweep #7 (s16/s17/s18 — zero variant-macro refs, zero phantom-register emissions),
-IY argument passing #8 (s19), and 3-byte `__far` pointers #9 (s20 — design + idioms in
-`abi-decision.md` "Task #9"; the EP=0 invariant is load-bearing, read it before touching far
-codegen). Division/modulus runs on the native `DIV` (s21/s22 — unsigned 8÷8 + 16÷8 chain + signed
-8÷8 sep-mask fixup; abi-decision.md "Native DIV"). **The s22 polish push closed everything else**:
-the phantom-register names are deleted, far bit-fields work (HL+EP RMW), function pointers are
-3-byte banked code pointers (lo, hi, bank — dispatched via `ld nb` + `call (__sdcc_fptr)`), and
-the **call model is S1C88 MAXIMUM mode** (3-byte CB:PC frames, `call_overhead` 5, caller cleanup —
-a corrected port-wide latent bug; abi-decision.md "The call model: MAXIMUM mode" is load-bearing).
-What remains is open-ended peephole/cost tuning. Runtime contract: programs provide
-`__sdcc_fptr:: .ds 2` in near RAM. See `HANDOFF.md` for per-session commits.
+  (not byte-addressable). The z80 `C,D,E,DE` are dropped — S1C88 has no DE, and `A` doubles as BA's low byte.
+- **Asm output = SDCC sdas style** (reuse the sdas/sdld assembler+linker family).
+- **The retarget was done always-green incremental** — constrain the allocator, rewrite `gen.c`'s `DE`/`BC`
+  scratch uses function-by-function, build + smoke-test after each batch. (It is now complete.)
+- **Load-bearing invariants** (read the named abi-decision.md sections before touching these): the **EP=0
+  invariant** for `__far` deref (HL+EP idiom; "Task #9"), the **MAXIMUM-mode call model** (3-byte CB:PC
+  frames, caller cleanup, PCALL via `__sdcc_fptr`; "The call model"), native `DIV` shapes ("Native DIV"),
+  and the **branch displacement convention** (one byte earlier than z80; HANDOFF.md). Runtime contract:
+  programs provide `__sdcc_fptr:: .ds 2` in near RAM (the production crt0 does).
 
 ## Build
 
@@ -122,8 +59,9 @@ libboost-dev zlib1g-dev`.
 Result: `build/sdcc-4.5.0/src/sdcc` — a normal SDCC compiler driver that knows `-ms1c88`.
 
 **Smoke-testing codegen** — `build.sh` builds the **compiler**, not SDCC's bundled `sdcpp` preprocessor,
-so `sdcc foo.c` can't preprocess. Feed already-preprocessed C via `--c1mode` (reads cpp'd C on stdin,
-emits asm):
+so `sdcc foo.c` can't preprocess in the dev inner-loop. Feed already-preprocessed C via `--c1mode` (reads
+cpp'd C on stdin, emits asm). (For the full SDK — real `sdcpp`, `sdas88`, `sdldz80`, `romgen`, runtime —
+run `scripts/setup-sdk.sh` once; then `sdcc -ms1c88 foo.c` preprocesses + links for real.)
 
 ```bash
 build/sdcc-4.5.0/src/sdcc --version                                    # -> "SDCC : s1c88 ... 4.5.0"
@@ -187,4 +125,4 @@ Start at `docs/s1c88/README.md`; the backend decisions are in `docs/s1c88/abi-de
   label any intentionally-red WIP. Validate each codegen slice with `./scripts/validate-s1c88.sh` before
   committing — the build working in-sandbox means you can (and should) verify every change.
 - Convert the design/strategy in `docs/s1c88/abi-decision.md` into action — keep it current as decisions
-  evolve. Keep the auto-loaded memory (`sdcc88-bringup-status`) accurate; it's the fastest way to resume.
+  evolve, and keep `docs/s1c88/HANDOFF.md` accurate (it's the fastest way to resume).

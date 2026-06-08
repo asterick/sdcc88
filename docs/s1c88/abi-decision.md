@@ -70,24 +70,23 @@ allowed where they simplify the backend, as long as they're documented.
 - **Interrupts:** interrupt functions save clobbered registers and return via **`RETE`**; 2-byte vector
   entries.
 
-## Divergences from the target ABI (progress)
+## Divergences from the target ABI (all resolved)
 
-This section started as the "skeleton divergences" list; it now tracks which have been resolved as the
-codegen retarget proceeds. (See [HANDOFF.md](HANDOFF.md) for the live per-slice state.)
+This section started as the "skeleton divergences" list; the codegen retarget has since closed all of them.
 
-1. **z80 register names & instruction selection** in emitted asm — **largely resolved.** Frame, branches,
-   compares, 16-bit ALU, `adjustStack`, 8-bit L/H ALU operands, and shifts emit native S1C88. Remaining:
-   the `C/D/E` byte regs + `DE`/`BC` scratch pairs (the register-model grind, Step 2 below).
-2. **Pointer sizes:** still z80's 2-byte far/generic pointers, not the Epson 3-byte `_far` pointer
-   (changing `gptr`/`farptr` size touches `gen.c` pointer codegen). **Deferred.**
-3. **Argument/return registers** — **DONE for the byte-addressable set**: returns BA/HL:BA, args use the
-   faithful Epson register-priority order (see *Argument ABI* below); IX/IY/page-reg args are the deferred
-   Phase 2/3.
-4. **`IX`/`IY`** retain z80's allocation behavior rather than the S1C88-correct "index-only, not
-   GP-allocated" treatment. **Deferred** (folds into the register-model grind).
+1. **z80 register names & instruction selection** in emitted asm — **DONE.** Every reachable z80-ism is
+   gone: frame, branches, compares, the 8/16-bit ALU, shifts, the `C/D/E` byte regs and `DE`/`BC` scratch
+   pairs (the register-model grind, Task #7) all emit native S1C88.
+2. **Pointer sizes** — **DONE** (Task #9): the Epson 3-byte `_far` pointer is implemented (24-bit linear
+   physical address, HL+EP deref under the EP=0 invariant); near/generic pointers stay 2 bytes.
+3. **Argument/return registers** — **DONE**: returns BA/HL:BA, args use the faithful Epson register-priority
+   order (see *Argument ABI* below) incl. IY (Task #8). Phase-3 Epson page-register args are closed as a
+   documented divergence (the EP=0 invariant makes them hazardous).
+4. **`IX`/`IY`** — **DONE**: index-only treatment; IX is excluded from the argument ABI by the frame
+   prologue, IY carries arguments (Task #8).
 5. **Single-port cleanup** — **DONE**: the unregistered z80 variant PORT structs were pruned from `main.c`.
 6. **Toolchain handoff** — **DONE**: not the Epson `as88`/`lk88`, but SDCC's own `sdas`/`sdld` retargeted
-   to the S1C88 (`sdas88` + `sdldz80` + `romgen.py`); see the Toolchain section below.
+   to the S1C88 (`sdas88` + `sdldz80` + the C `romgen`); see the Toolchain section below.
 
 ## Codegen milestone — decided design
 
@@ -405,5 +404,5 @@ generates the backend Makefile (`config.status --file=`) and builds `bin/sdasz80
 2nd-page prefixes) is built by `scripts/build-sdas.sh as88` → `bin/sdas88`, covers the full practical ISA
 byte-verified, and is wired into `scripts/validate-s1c88.sh` as the codegen validator. The banked-branch
 extensions (`bcall`/`bjump`, the `R_S1C88_BANK` relocation) live in `s1c88_banked_branch.patch`; the
-linker (`scripts/build-sdld.sh` → `sdldz80`) + `romgen.py` complete the assemble→link→`.min` pipeline. See
+linker (`scripts/build-sdld.sh` → `sdldz80`) + the C `romgen` complete the assemble→link→`.min` pipeline. See
 [sdas88-retarget.md](sdas88-retarget.md) and [banked-branch.md](banked-branch.md).
