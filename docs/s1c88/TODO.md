@@ -67,6 +67,17 @@ A user should be able to: `sdcc -ms1c88 game.c` → assemble → link (banked) �
     relaxation phase over the `R_S1C88_BANK`/PC-relative relocs + address recomputation — large,
     but a big code-size/speed win. Cross-check against `branch-smoke.sh` (the displacement
     convention) and re-baseline the corpus afterward.
+
+    Part of the same task: **conditional `bjump`/`bcall` via invert-and-skip trampolines.** The
+    long forms (`carl`/`jrl`) and the linker's `bjump`/`bcall` only support the basic conditions
+    `c/nc/z/nz`; the signed/flag conditions (`lt/ge/gt/le/v/nv/p/m/f0..nf3`) exist **only** as
+    short relative (`jrs`/`cars`, ±127). So when such a conditional must reach a far / out-of-
+    range / cross-bank target, the linker must synthesize a trampoline: invert the short
+    condition to skip over an unconditional long branch/call —
+    `jrs <inverted-cond>, .+<len> ; bjump/bcall target`. This generalizes the assembler's
+    task-#10 lowering (local `jp <signed cc>` → `jrs <inv>,+4 ; jrl e`) to the linker's
+    bank-switching path, chosen as part of the same size-selection/relaxation pass (a short
+    conditional that fits stays a plain `jrs`; only out-of-range ones grow the trampoline).
 14. **[S] `__mul*int2*long` widening differential coverage.** Skipped in the diff harness for
     lack of the support routines; add once #4 (real lib) exists.
 
