@@ -111,13 +111,20 @@ for src in "${DIFF}"/cases/*.c; do
   if ! "$SDAS" -o "${OUT}/${b}.rel" "${OUT}/${b}.asm" > "${OUT}/err" 2>&1; then
     head -10 "${OUT}/err" > "${OUT}/diag"; report_fail "$b" "ASSEMBLE-FAIL" "${OUT}/diag"; continue
   fi
-  if ! "$SDLD" -nwxi -b _CODE=0x4000 -b _HOME=0x2100 -b _DATA=0x1000 \
+  # __far data lane (task #9, mirrors emu-test.sh): a case using __far gets a
+  # _FAR area at its PHYSICAL address (page 1 = 0x10000), and romgen treats that
+  # range as physical so the codegen's (sym>>16) page byte matches the data bus.
+  FAR_LINK=""; FAR_ROMGEN=""
+  if grep -q '__far' "$src"; then
+    FAR_LINK="-b _FAR=0x10000"; FAR_ROMGEN="--far=0x10000-0x1ffff"
+  fi
+  if ! "$SDLD" -nwxi -b _CODE=0x4000 -b _HOME=0x2100 -b _DATA=0x1000 ${FAR_LINK} \
         "${OUT}/${b}.ihx" "${OUT}/crt0.rel" "${OUT}/${b}.rel" -k "${OUT}" -l rt > "${OUT}/err" 2>&1 \
      || grep -q "Undefined Global" "${OUT}/err"; then
     grep -E "Undefined Global|ASlink" "${OUT}/err" | sort -u > "${OUT}/diag"
     report_fail "$b" "LINK-FAIL" "${OUT}/diag"; continue
   fi
-  if ! "${SDCC}/bin/romgen" "${OUT}/${b}.ihx" "${OUT}/${b}.min" > "${OUT}/err" 2>&1; then
+  if ! "${SDCC}/bin/romgen" "${OUT}/${b}.ihx" "${OUT}/${b}.min" ${FAR_ROMGEN} > "${OUT}/err" 2>&1; then
     report_fail "$b" "ROMGEN-FAIL" "${OUT}/err"; continue
   fi
   "$RUNNER" "${OUT}/${b}.min" > "${OUT}/guest" 2>"${OUT}/rerr"; rc=$?

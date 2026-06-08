@@ -34,6 +34,11 @@
 #ifdef DIFF_HOST
 #include <stdio.h>
 #include <stdint.h>
+/* target-only memory-space keywords: on the host they're plain memory, and since
+   the values + little-endian layout match, far data is differentially equivalent
+   (the host is the reference; the target still exercises its far/near codegen). */
+#define __far
+#define __near
 typedef uint8_t  u8;  typedef int8_t  i8;
 typedef uint16_t u16; typedef int16_t i16;
 typedef uint32_t u32; typedef int32_t i32;

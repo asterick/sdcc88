@@ -5,7 +5,7 @@ Status snapshot (2026-06-07): **THE CRITICAL PATH (Section A) IS DONE — the to
 game.ihx game.min` produces a bootable Pokémon Mini ROM, with the production `crt0` (real `"PM"`/
 `"NINTENDO"` header), the auto-linked `s1c88.lib`, the `<pm.h>` device header, and a C `romgen` (no
 Python). `examples/hello/` is a copy-me project; `docs/s1c88/building-roms.md` is the how-to. All gates
-green (corpus 20/20, emu-test 15/15, diff-test 7, driver/crt0/rom/branch smokes, example). **Remaining =
+green (corpus 20/20, emu-test 16/16, diff-test 8, driver/crt0/rom/branch smokes, example). **Remaining =
 Section B (quality/coverage) and Section C (documented limitations).**
 
 Legend: **S/M/L** = rough effort. Items are roughly dependency-ordered within each section.
@@ -59,8 +59,18 @@ Legend: **S/M/L** = rough effort. Items are roughly dependency-ordered within ea
       boundaries, mixed with normal members. High bug-risk, not yet covered.
     - **#11-structargs** — struct-by-value *arguments* + struct assignment/copy (the return side just bit us;
       args/copy are the adjacent untested half).
-    - **#11-ptrarith** — pointer arithmetic & array indexing across widths (`p+n`, `p-q`, `a[i]`, multi-dim,
-      struct-array stride), near and `__far`.
+    - **#11-ptrarith** — ✅ done (`tests/diff/cases/ptrarith.c`, 264 values): indexing across widths,
+      `p[-1]`, pointer differences incl. a `/3` struct stride, equality, multi-dim, struct fields, pointer
+      walk, `__far` index + diff — all CORRECT. **Surfaced one bug, deferred:**
+      - **#11-ptrcmp-bug** *(open, SILENT miscompile, narrow)* — a relational compare of TWO freshly
+        address-of'd elements with **runtime** indices, e.g. `&a[i] < &a[j]`, is wrong: genCmp's native
+        `cp pair,pair` path materializes the left address but drops the right one (HL is left holding the
+        scaled index, not the 2nd address — a register-allocation/liveness bug, NOT caught by the
+        `UNIMPLEMENTED` cost steering). **Narrow:** pointer subtraction, equality, and the common `p < end`
+        loop are all correct; only this inline double-address-of relational form breaks. Repro +
+        working-pattern guard: `tests/emu/cases/16_ptrcmp.c`. Fix is in genCmp's two-computed-pair operand
+        materialization; add the excluded `lt`/`ge` cases back to `ptrarith.c` + the `lt(1,3)` assertion to
+        `16_ptrcmp.c` once fixed.
     - **#11-switch** — `switch` lowering (jump-table vs if-chain), dense/sparse/default, wide selectors.
     - **#11-fnptr2** — function pointers with varied signatures (wide/struct returns, many-arg calls) —
       extends `06_fnptr`/`08_isr` into the call-ABI corners.
