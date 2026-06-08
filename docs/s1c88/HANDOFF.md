@@ -61,9 +61,13 @@ _Last updated: 2026-06-08._
    `s1c88mch.c` (no `asmain.c` change). Relax-analysis opportunity collapsed 45→2 user slots; corpus ROM
    8460→8452; intra-module calls widely lower to 2-byte `cars`. The remaining lift is **#14c** (linker
    cross-module relaxation — the hard reflow, deferrable) and the **#12 peephole/cost targets**.
-   **#12-peep-audit is now done** — dropped 4 dead z80 rules and enabled BA as a peephole scratch pair
-   (`isRegPair`/`canSplitReg` + the `unusedReg` lists), resurrecting 3 rules that never fired and saving
-   −20 B on the corpus (e.g. `ld a,#x ; ld b,#0` → `ld ba,#x`). Next: `#12-flag-reuse`, `#12-redundant-moves`.
+   **#12-peep-audit + #12-flag-reuse are now done.** peep-audit dropped 4 dead z80 rules and enabled BA as
+   a peephole scratch pair (`isRegPair`/`canSplitReg` + the `unusedReg` lists), resurrecting 3 rules that
+   never fired (−20 B; e.g. `ld a,#x ; ld b,#0` → `ld ba,#x`). flag-reuse corrected the z80 flag-write model
+   in `s1c88SurelyWritesFlag` — **S1C88 16-bit inc/dec set Z V N and 16-bit add/sub set Z C V N** (z80's
+   don't), which was a latent stale-flag-reuse hazard + an optimization blocker (−3 B, and a follow-up
+   peephole for the post-add byte-combine zero-test is noted in TODO). Corpus ROM now 8429.
+   Next: `#12-redundant-moves`, `#12-cost-accuracy`/`#20-A` (cost2 collapse).
    Section C (#16 traps, #17 const-data) is done (documented + guarded). The z80-artifact scrub is B+C done,
    A/D/F deferred (#20).
 3. **Deprioritized — float is low-value for this target.** The one known correctness bug is the `_fsadd`
