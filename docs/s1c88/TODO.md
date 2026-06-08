@@ -5,7 +5,7 @@ Status snapshot (2026-06-08): **THE CRITICAL PATH (Section A) IS DONE — the to
 game.ihx game.min` produces a bootable Pokémon Mini ROM, with the production `crt0` (real `"PM"`/
 `"NINTENDO"` header), the auto-linked `s1c88.lib`, the `<pm.h>` device header, and a C `romgen` (no
 Python). `examples/hello/` is a copy-me project; `docs/s1c88/building-roms.md` is the how-to. All gates
-green (corpus 20/20, emu-test 16/16, diff-test 11, driver/crt0/rom/branch smokes, example). **Remaining =
+green (corpus 20/20, emu-test 16/16, diff-test 12, driver/crt0/rom/branch smokes, example). **Remaining =
 Section B (quality/coverage) and Section C (documented limitations).**
 
 Legend: **S/M/L** = rough effort. Items are roughly dependency-ordered within each section.
@@ -96,8 +96,13 @@ Legend: **S/M/L** = rough effort. Items are roughly dependency-ordered within ea
       genJumpTab path (HL = &table + 2×selector, `jp hl`) executed correctly on the emulator across the full
       0..130 sweep. (Smaller dense blocks fall below the middle-end's table-density threshold and lower to
       if-chains; both paths are now covered.)
-    - **#11-fnptr2** — function pointers with varied signatures (wide/struct returns, many-arg calls) —
-      extends `06_fnptr`/`08_isr` into the call-ABI corners.
+    - **#11-fnptr2** — ✅ done (`tests/diff/cases/fnptr2.c`, 36 values): the INDIRECT call (PCALL through
+      the 3-byte banked pointer + `__sdcc_fptr`) with the rich signatures the direct path tests — wide
+      (u32) returns, struct returns (bigreturn hidden pointer THROUGH a fnptr), small register-struct
+      returns, 7-arg stack-overflow lists, mixed-width args, a struct passed BY VALUE through a fnptr (the
+      genPointerPush register-stash path via PCALL), pointers held in arrays/structs runtime-selected, and a
+      fnptr-returning-fnptr — all CORRECT, no codegen bug. Confirmed via emitted asm that every call site
+      dispatches through `__sdcc_fptr` (24 refs), i.e. real PCALLs, not folded to direct calls.
     - **#11-unions** — unions / type-punning / overlapping member access (endianness-exact).
     - **#11-libc** — `mem*`/`str*` differential (memcpy/memmove/memset/strcmp/strlen…) run through the lib.
     - **#11-longshift** — 32-bit shifts/rotates by a *variable* count + long division edge values (beyond
@@ -237,7 +242,7 @@ Legend: **S/M/L** = rough effort. Items are roughly dependency-ordered within ea
     stream — one test point per case, with per-assertion `#` diagnostics (emu `CHECK` failures), a `1..N`
     plan, and a summary; exits non-zero on any failure. The case-suites gained an opt-in `TAP=1` mode
     (clean `ok`/`not ok` body on stdout, build noise to stderr); their default human output is unchanged.
-    49 points green.
+    50 points green.
 
 ---
 
