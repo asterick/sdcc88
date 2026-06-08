@@ -5,7 +5,7 @@ Status snapshot (2026-06-07): **THE CRITICAL PATH (Section A) IS DONE — the to
 game.ihx game.min` produces a bootable Pokémon Mini ROM, with the production `crt0` (real `"PM"`/
 `"NINTENDO"` header), the auto-linked `s1c88.lib`, the `<pm.h>` device header, and a C `romgen` (no
 Python). `examples/hello/` is a copy-me project; `docs/s1c88/building-roms.md` is the how-to. All gates
-green (corpus 20/20, emu-test 11/11, diff-test 5, driver/crt0/rom/branch smokes, example). **Remaining =
+green (corpus 20/20, emu-test 12/12, diff-test 5, driver/crt0/rom/branch smokes, example). **Remaining =
 Section B (quality/coverage) and Section C (documented limitations).**
 
 Legend: **S/M/L** = rough effort. Items are roughly dependency-ordered within each section.
@@ -28,23 +28,29 @@ Legend: **S/M/L** = rough effort. Items are roughly dependency-ordered within ea
 
 ## B. Quality & coverage
 
-8.  **[M] Float / softfloat — ⚠ OPEN BUG.** `tests/diff/cases/float.c` (bit-exact, exactly-representable
-    operands) covers same-sign add, multiply, divide, compares, and all int↔float casts — all CORRECT.
-    **It found a codegen bug, NOT yet fixed: float SUBTRACTION (and opposite-sign addition) corrupts the
-    low mantissa bits** — `10.0-4.0` → `0x40C00182` not `0x40C00000`. `__fssub` is `-((-a)+b)`, routing
-    through the `_fsadd` *different-sign* path; the algorithm + all isolated 32-bit ops compile correctly
-    (reductions passed), so it's a register-pressure / spill bug in the full `_fsadd` compile, not a
-    library issue. **High impact — all float subtraction.** Re-add the subtract cases to `float.c` (the
-    regression test) once fixed. (Note: `has_mulint2long` is disabled in main.c so int×int→long uses
-    `__mullong` — the port lacks the asm-only `__mul*int2*long` widening routines, which `_fsmul` needs;
-    see #15.)
+8.  **[M] Float / softfloat — ⏸ DEPRIORITIZED (float is low-value for this target).** Known bug, parked.
+    `tests/diff/cases/float.c` (bit-exact, exactly-representable operands) covers same-sign add, multiply,
+    divide, compares, and all int↔float casts — all CORRECT. **The open bug: float SUBTRACTION (and
+    opposite-sign addition) corrupts the low mantissa bits** — `10.0-4.0` → `0x40C00182` not `0x40C00000`.
+    `__fssub` is `-((-a)+b)`, routing through the `_fsadd` *different-sign* path; the algorithm + all
+    isolated 32-bit ops compile correctly (reductions passed), so it's a register-pressure / spill bug in
+    the full `_fsadd` compile, not a library issue. Float arithmetic is rare on the Pokémon Mini, so this
+    is parked behind the integer/pointer correctness and code-size work; if revisited, re-add the subtract
+    cases to `float.c` (the regression test). (Note: `has_mulint2long` is disabled in main.c so int×int→long
+    uses `__mullong` — the port lacks the asm-only `__mul*int2*long` widening routines, which `_fsmul`
+    needs; see #15.)
 9.  **[S] volatile / MMIO coverage — ✅ DONE.** `tests/emu/cases/09_volatile.c` — volatile loads are not
     hoisted (spin re-loads every iteration; volatile RAM round-trip ordering OK).
-10. **[S/M] `__critical` execution coverage — ✅ DONE; nested-IRQ deferred.** `tests/emu/cases/10_critical.c`
+10. **[S/M] `__critical` execution coverage — ✅ DONE; nested-IRQ — ✅ DONE.** `tests/emu/cases/10_critical.c`
     proves SC-level masking (`or sc,#0xc0`) works. **Nested IRQ** (a higher-priority IRQ preempting a
-    lower-priority ISR) is a follow-up — it needs two phase-aligned timers; the emulator preemption path
-    exists (`priority() < next_priority`) but making a second timer underflow reliably during the first
-    ISR was fiddly.
+    lower-priority ISR) is now covered by `tests/emu/cases/12_nested_irq.c`: instead of two fiddly
+    phase-aligned timers it uses **keypad edge IRQs** — K1x (priority group 5) and K0x (group 6) get
+    different priorities, and the host drives each press on demand via the input mailbox
+    (`emu_set_keys`/`update_inputs`), so the low-priority handler can fire a higher-priority one *while it
+    runs* and the event log proves the {low-entry, high-entry, high-exit, low-exit} nesting order. (This
+    required restoring the vendored core's **input module**, pruned earlier; see its README. Note the PM
+    sticky-IRQ model: a keypad IRQ's `active` latch stays set until the ISR acks it via 0x2028/0x2029, or
+    it refires — the test acks both.)
 11. **[ongoing] Keep mining with the differential suite.** It has found multiple real codegen bugs; more
     modules (longs, bitfield-heavy, deep call chains) will find more.
 12. **[L, open-ended] Peephole / cost tuning.** The standing "remaining" codegen item — size and speed
@@ -92,9 +98,11 @@ Legend: **S/M/L** = rough effort. Items are roughly dependency-ordered within ea
 
 ## Suggested sequencing
 
-Section A (the critical path) is **done**. Next: **B8 (the float-subtract bug)** is the highest-value item
-(an open correctness bug). Then nested-IRQ coverage (#10 follow-up), keep mining with the differential
-suite (#11), peephole/cost tuning (#12), and the branch-relaxation lift (#13 → #14).
+Section A (the critical path) is **done**. Float (#8) is **deprioritized** — low-value for this target,
+parked. Next, in priority order: **keep mining with the differential suite (#11)** — it's the highest-value
+correctness work, and **long long is still unverified** (start there, then bitfield-heavy code and deep
+call chains). Then the code-size/speed lift — branch relaxation (#13 → #14) and peephole/cost tuning (#12) —
+plus the Section C limitation audit (#16, #17).
 (`__interrupt(n)` auto-wiring is **done** — `void f(void) __interrupt(VEC_*)` emits `_irq_v<N>` at the
 handler's entry, where N is the cart vector slot; the runner BIOS and `<pm.h>` VEC_* use the real PM
 forwarding permutation, https://www.pokemon-mini.net/documentation/bios/.) See [HANDOFF.md](HANDOFF.md)

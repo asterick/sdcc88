@@ -13,6 +13,20 @@
 
 #define EMU_CHAR_OUT (*(volatile unsigned char *)0x1FF8)
 
+/* Request a keypad-state change from the host. `value` is the 10-bit pad state
+ * (bit N low = key N pressed; bits 0-7 = K00-K07, bits 8-9 = K10-K11). The host
+ * applies it via the emulator's update_inputs() between instructions, raising any
+ * configured K0x/K1x edge interrupt. Calling this from inside an ISR is how the
+ * nested-IRQ case fires a higher-priority handler over a running one. */
+#define EMU_KEYS     (*(volatile unsigned int  *)0x1FF4)
+#define EMU_KEYS_GO  (*(volatile unsigned char *)0x1FF6)
+
+static void emu_set_keys(unsigned int value)
+{
+    EMU_KEYS = value;
+    EMU_KEYS_GO = 1;
+}
+
 static void emu_putc(char c) { EMU_CHAR_OUT = (unsigned char)c; }
 
 static void emu_puts(const char *s)

@@ -28,25 +28,28 @@ _Last updated: 2026-06-07._
   ABI tasks (#7 register model, #8 IY args, #9 `__far` pointers) are CLOSED, division/modulus runs on
   the native `DIV`, multiply on native `MLT`, function pointers are 3-byte banked code pointers, and the
   call model is **S1C88 MAXIMUM mode** (3-byte CB:PC frames — `abi-decision.md` "The call model").
-- **All gates green:** corpus 20/20 byte-identical (0 sdas88 errors), emu-test 11/11 (execution),
+- **All gates green:** corpus 20/20 byte-identical (0 sdas88 errors), emu-test 12/12 (execution, incl. nested IRQ),
   diff-test 5 (host-vs-emulator), plus driver/crt0/rom/branch smokes and the `examples/hello` build.
 - Everything builds + runs **inside the sandbox** — iterate freely, no `! ...`.
 
 ## NEXT ACTION (do this)
 
 1. **Confirm green:** `./scripts/dev.sh` (builds the compiler + codegen smoke) then
-   **`scripts/corpus-check.sh`** (byte-identical, 20/20), **`scripts/emu-test.sh`** (11/11 execution),
+   **`scripts/corpus-check.sh`** (byte-identical, 20/20), **`scripts/emu-test.sh`** (12/12 execution),
    and **`scripts/diff-test.sh`** (host-vs-emulator). corpus-check proves asm is *stable*; emu-test +
    diff-test prove it *computes the right values*. **Run all three for every codegen change**, and add
    an emu/diff case whenever you touch new codegen territory (each new module has found real bugs).
-2. **The one OPEN correctness bug: the `_fsadd` different-sign miscompile (all float subtraction)** —
-   `10.0-4.0` → `0x40C00182` not `0x40C00000`. The algorithm + all isolated 32-bit ops compile
-   correctly, so it's a register-pressure / spill bug in the full `_fsadd` compile, not a library issue.
-   Highest-value next step. Re-add the subtract cases to `tests/diff/cases/float.c` once fixed. See
-   TODO #8.
-3. **Then** the remaining Section B/C items: nested-IRQ coverage (#10 follow-up), keep mining with the
-   differential suite (#11), peephole/cost tuning (#12, open-ended), and the branch-relaxation lift
-   (#13 → #14). Section C is documented limitations to audit.
+2. **Next priority — keep mining with the differential suite (#11).** It has found ~9 real reachable
+   miscompiles that byte-identical assembly never could; the untested integer/pointer territory is where
+   the next correctness bugs live: **long long (currently unverified)**, bitfield-heavy code, and deep
+   call chains. Add a `tests/diff/cases/*.c` module, run corpus-check + emu-test + diff-test, fix what it
+   surfaces. After that, the code-size/speed work — the branch-relaxation lift (#13 → #14) and
+   peephole/cost tuning (#12) — plus the Section C limitation audit (#16, #17).
+3. **Deprioritized — float is low-value for this target.** The one known correctness bug is the `_fsadd`
+   different-sign miscompile (all float subtraction): `10.0-4.0` → `0x40C00182` not `0x40C00000`. It's a
+   register-pressure / spill bug in the full `_fsadd` compile (algorithm + isolated 32-bit ops are
+   correct), not a library issue. Parked unless float becomes relevant; if revisited, re-add the subtract
+   cases to `tests/diff/cases/float.c`. See TODO #8.
 
 ### Watch-outs (load-bearing)
 
@@ -58,6 +61,13 @@ _Last updated: 2026-06-07._
   data stays in the common bank (the current convention). TODO #17.
 - **Runtime contract:** programs provide `__sdcc_fptr:: .ds 2` in near RAM (crt0 does; bare test startups
   must too). Far const data lives in area `_FAR` at PHYSICAL addresses (`romgen --far=start-end`).
+- **Emulator-core header changes need a full rebuild.** Every translation unit in
+  `third_party/minimon-core` compiles against `machine.h`'s shared `Machine::State` layout. The
+  `tests/emu/Makefile` now lists the core headers as a prerequisite, so editing one rebuilds *all*
+  objects — but if you ever build by hand, **`make -C tests/emu clean` after touching a core header**.
+  A stale object keeps the old struct layout and reads/writes fields at the wrong offset (this silently
+  broke `HALT` once when a new struct field shifted `cpu.status` — the symptom was a clean-looking ROM
+  spinning past its `halt`).
 
 ### ⚠ THE BRANCH DISPLACEMENT CONVENTION (read before touching branch emission)
 The S1C88 computes a taken relative branch as **PC ← PC(after full fetch) + disp − 1** (Epson §4.3.3
@@ -73,11 +83,11 @@ whenever branch emission or the linker patch changes.
 ## Verify / the tools
 
 - **`./scripts/run-tests.sh` — the unified runner: builds once, runs every suite in parallel, emits one
-  TAP version 13 stream (38 points) + summary, exits non-zero on any failure.** Use this as the one-shot
+  TAP version 13 stream (39 points) + summary, exits non-zero on any failure.** Use this as the one-shot
   gate; the individual suites below are still there for focused runs (and each takes `TAP=1`).
 - `./scripts/dev.sh` — build compiler + codegen smoke test → `GREEN`.
 - `./scripts/corpus-check.sh` — byte-identical codegen + 0-error assembly across `scripts/corpus/` (20/20).
-- `./scripts/emu-test.sh` — RUN `tests/emu/cases/*.c` on the vendored minimon core (11/11). Execution truth.
+- `./scripts/emu-test.sh` — RUN `tests/emu/cases/*.c` on the vendored minimon core (12/12). Execution truth.
 - `./scripts/diff-test.sh` — compile the same C host-vs-emulator and diff the output (5 modules).
 - `./scripts/validate-s1c88.sh <file.asm>` — assemble emitted codegen with `sdas88`; any reject = a z80-ism.
 - `./scripts/branch-smoke.sh` — byte-lock the branch displacement convention (above).

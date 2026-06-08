@@ -19,7 +19,6 @@ OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 #include <stdint.h>
 
 #include "machine.h"
-#include "debug.h"
 
 extern "C" const char* get_version() {
 	return "0.1.0";
@@ -42,9 +41,13 @@ extern "C" void cpu_reset(Machine::State& cpu) {
 	cpu.status = Machine::STATUS_NORMAL;
 	cpu.osc1_overflow = 0;
 
-	Control::reset(cpu.ctrl);
 	IRQ::reset(cpu);
 	Timers::reset(cpu);
+	Input::reset(cpu.input);
+}
+
+extern "C" void update_inputs(Machine::State& cpu, uint16_t value) {
+	Input::update(cpu, value);
 }
 
 void cpu_clock(Machine::State& cpu, int cycles) {
@@ -91,10 +94,10 @@ extern "C" void cpu_advance(Machine::State& cpu, int ticks) {
 
 static inline uint8_t cpu_read_reg(Machine::State& cpu, uint32_t address) {
 	switch (address) {
-	case 0x2000 ... 0x2002:
-		return Control::read(cpu.ctrl, address);
 	case 0x2020 ... 0x202A:
 		return IRQ::read(cpu, address);
+	case 0x2050 ... 0x2055:
+		return Input::read(cpu.input, address);
 	case 0x2010:
 		// This should be handled properly
 		return 0b010000;
@@ -103,18 +106,18 @@ static inline uint8_t cpu_read_reg(Machine::State& cpu, uint32_t address) {
 	case 0x2048 ... 0x204F:
 		return Timers::read(cpu, address);
 	default:
-		dprintf("Unhandled register read %x", address);
+		// open bus: unhandled register reads return the last bus value
 		return cpu.bus_cap;
 	}
 }
 
 static inline void cpu_write_reg(Machine::State& cpu, uint8_t data, uint32_t address) {
 	switch (address) {
-	case 0x2000 ... 0x2002:
-		Control::write(cpu.ctrl, data, address);
-		break ;
 	case 0x2020 ... 0x202A:
 		IRQ::write(cpu, data, address);
+		break ;
+	case 0x2050 ... 0x2055:
+		Input::write(cpu.input, data, address);
 		break ;
 	case 0x2018 ... 0x201D:
 	case 0x2030 ... 0x203F:
@@ -122,7 +125,7 @@ static inline void cpu_write_reg(Machine::State& cpu, uint8_t data, uint32_t add
 		Timers::write(cpu, data, address);
 		break ;
 	default:
-		dprintf("Unhandled register write %x: %x", address, data);
+		// open bus: unhandled register writes are dropped
 		break ;
 	}
 }

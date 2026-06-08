@@ -3,13 +3,19 @@
 //
 // The (pruned) emulator core in third_party/minimon-core is compiled natively and
 // linked with this file, which provides the host glue the core expects
-// (get_machine / debug_print) plus a tiny test protocol:
+// (get_machine) plus a tiny test protocol:
 //
 //   - the .min ROM (romgen output; byte 0 = physical 0x2100) is loaded at
 //     memory[0x2100] (RAM + cartridge are one unified writable array), the BIOS is
 //     bypassed (PC forced to 0x2100 where crt0 lives), and the CPU is stepped
 //     instruction-by-instruction.
 //   - guest mailbox (top of RAM, kept above the 0x1FF0 stack top set by crt0.asm):
+//       0x1FF4/0x1FF5 key-input request value (little-endian 10-bit keypad state)
+//       0x1FF6       key-input "go" flag: guest stores nonzero, host applies the
+//                    0x1FF4 value via update_inputs() (which raises any K0x/K1x edge
+//                    IRQ) and clears the flag. Polled between every instruction, so
+//                    a press requested from inside an ISR lands on the next step —
+//                    this is how the nested-IRQ case preempts a running handler.
 //       0x1FF8       char-out: guest stores a nonzero byte, host prints + clears it
 //                    (host polls between every instruction, so one store per char
 //                    can never be lost)
@@ -33,12 +39,9 @@ extern "C" Machine::State* const get_machine() {
 	return &machine_state;
 }
 
-extern "C" void debug_print(const void* data) {
-	// the core's dprintf() formats into a C string and hands it here
-	fprintf(stderr, "[emu] %s\n", (const char*)data);
-}
-
 // ---- test protocol addresses (mirror tests/emu/crt0.asm + emu.h) ----
+static const uint32_t MAILBOX_KEYS = 0x1FF4;	// ..0x1FF5, little-endian keypad state
+static const uint32_t MAILBOX_KEYS_GO = 0x1FF6;	// guest sets nonzero -> host applies keys
 static const uint32_t MAILBOX_CHAR = 0x1FF8;
 static const uint32_t MAILBOX_EXIT = 0x1FFA;	// ..0x1FFB, little-endian
 static const uint32_t MAILBOX_MAGIC = 0x1FFC;
@@ -144,6 +147,16 @@ int main(int argc, char** argv) {
 		if (c) {
 			putchar(c);
 			m.memory[MAILBOX_CHAR] = 0;
+		}
+
+		// key-input request: the guest drives a keypad change (and any K0x/K1x edge
+		// IRQ it implies) by writing the 16-bit value + a nonzero go flag. Applying
+		// it here, between instructions, is what lets a press requested from inside a
+		// running ISR preempt it on the next step (nested-IRQ coverage).
+		if (ram_at(m, MAILBOX_KEYS_GO)) {
+			uint16_t keys = ram_at(m, MAILBOX_KEYS) | (ram_at(m, MAILBOX_KEYS + 1) << 8);
+			update_inputs(m, keys);
+			m.memory[MAILBOX_KEYS_GO] = 0;
 		}
 	}
 	fflush(stdout);

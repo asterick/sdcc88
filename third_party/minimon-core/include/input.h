@@ -22,16 +22,29 @@ OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
 namespace Machine { struct State; };
 
-namespace Control {
-	// Three plain readable/writable bytes — the hardware enable bits carry no
-	// side effects in this harness (memory is always accessible; there is no LCD
-	// to gate). Kept only so reads of 0x2000..0x2002 return what was written
-	// instead of falling through to the "unhandled register" path.
+namespace Input {
+	// Register file at 0x2050: bytes 0-1 are the 10-bit interrupt edge
+	// directions, bytes 2-3 the 10-bit pad state (both little-endian),
+	// bytes 4-5 hold the dejitter constants (K00-K03, K04-K07, K10-K11)
 	struct State {
-		uint8_t data[3];
+		uint8_t bytes[6];
+
+		uint16_t interrupt_direction() const {
+			return bytes[0] | ((bytes[1] & 0x03) << 8);
+		}
+
+		uint16_t input_state() const {
+			return bytes[2] | ((bytes[3] & 0x03) << 8);
+		}
+
+		void set_input_state(uint16_t value) {
+			bytes[2] = (uint8_t)value;
+			bytes[3] = (value >> 8) & 0x03;
+		}
 	};
 
-	void reset(State&);
-	uint8_t read(State&, uint32_t address);
-	void write(State&, uint8_t data, uint32_t address);
+	void reset(Input::State&);
+	void update(Machine::State&, uint16_t value);
+	uint8_t read(Input::State&, uint32_t address);
+	void write(Input::State&, uint8_t data, uint32_t address);
 };
