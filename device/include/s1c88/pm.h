@@ -184,9 +184,9 @@
 #define VEC_KEYC              20  /* HW $1A  C key */
 #define VEC_KEYB              21  /* HW $1B  B key */
 #define VEC_KEYA              22  /* HW $1C  A key */
-#define VEC_UNKNOWN3          23  /* HW $1D  (unmapped hardware IRQ) */
-#define VEC_UNKNOWN4          24  /* HW $1E  (unmapped hardware IRQ) */
-#define VEC_CART_EJECT        25  /* HW $13  cartridge ejected */
+#define VEC_UNKNOWN3          23  /* HW $1D  (no cart description on the BIOS page) */
+#define VEC_UNKNOWN4          24  /* HW $1E  (no cart description on the BIOS page) */
+#define VEC_UNKNOWN5          25  /* HW $1F  (no cart description on the BIOS page) */
 #define VEC_CART              26  /* HW $14  cartridge IRQ */
 
 /* ---- Audio ------------------------------------------------------------- */

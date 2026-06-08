@@ -115,8 +115,7 @@ int main(int argc, char** argv) {
 			0x0B, 0x0C, 0x0D, 0x0E,                         // 9..12 32/8/2/1 Hz
 			0x0F, 0x10,                                     // 13,14 IR / shock
 			0x15, 0x16, 0x17, 0x18, 0x19, 0x1A, 0x1B, 0x1C, // 15..22 power/right/left/down/up/C/B/A
-			0x1D, 0x1E,                                     // 23,24 (unknown)
-			0x13,                                           // 25  cartridge ejected
+			0x1D, 0x1E, 0x1F,                               // 23..25 (no cart description on the BIOS page)
 			0x14,                                           // 26  cartridge IRQ
 		};
 		for (int c = 0; c < 27; c++) {
