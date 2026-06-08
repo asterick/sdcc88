@@ -91,6 +91,8 @@ whenever branch emission or the linker patch changes.
   gate; the individual suites below are still there for focused runs (and each takes `TAP=1`).
 - `./scripts/dev.sh` — build compiler + codegen smoke test → `GREEN`.
 - `./scripts/corpus-check.sh` — byte-identical codegen + 0-error assembly across `scripts/corpus/` (20/20).
+- `./scripts/size-check.sh` — corpus ROM-size measurement + delta vs `scripts/corpus/sizes.baseline`
+  (report-only; `snapshot` to re-bless). The yardstick for #12 (peephole/cost) and #14 (relaxation) wins.
 - `./scripts/emu-test.sh` — RUN `tests/emu/cases/*.c` on the vendored minimon core (16/16). Execution truth.
 - `./scripts/diff-test.sh` — compile the same C host-vs-emulator and diff the output (5 modules).
 - `./scripts/validate-s1c88.sh <file.asm>` — assemble emitted codegen with `sdas88`; any reject = a z80-ism.

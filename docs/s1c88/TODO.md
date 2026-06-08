@@ -80,9 +80,12 @@ Legend: **S/M/L** = rough effort. Items are roughly dependency-ordered within ea
       `arith.c`'s fixed-count shifts).
 12. **[L, open-ended, ongoing] Peephole / cost tuning.** Codegen is correct-first, not yet size/speed-tuned.
     Stays open. **Pointable targets:**
-    - **#12-sizeharness** *(do first — enabling)* — a measurement harness: total `.min`/area size for the
-      corpus, with a per-change delta in the corpus report, so every peephole/cost win is visible and
-      monotone (the analogue of #14a for code size).
+    - **#12-sizeharness** — ✅ DONE. `scripts/size-check.sh`: compiles+assembles every `scripts/corpus/*.c`
+      and reports each program's ROM size (sum of non-RAM `.rel` areas) + a per-program/total **delta vs a
+      committed baseline** (`scripts/corpus/sizes.baseline`, 8460 B / 20 programs). Report-only (never
+      gates); `snapshot` re-blesses. Makes every peephole/cost (#12) and relaxation (#14) win visible and
+      monotone — and since the baseline is tracked, size changes show up in git diffs. *Use it: run before
+      a change, make the change, run again, read the delta column.*
     - **#12-peep-audit** — audit `peeph.def` for rules inherited from z80 that are wrong or suboptimal on the
       S1C88 (z80-cost-based shortenings, dead-variant guards, mnemonic assumptions). Remove/retarget.
     - **#12-redundant-moves** — eliminate redundant `ld`/pair-move/load-after-store sequences the current
