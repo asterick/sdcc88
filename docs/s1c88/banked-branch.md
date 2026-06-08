@@ -346,6 +346,56 @@ and — notably — every slot is in `carl` range, so the *simple* stage-(i) shr
 `cars`/trampoline refinement (stages ii–iii) adds nothing for that program. (Patch:
 `third_party/sdcc/s1c88_banked_branch.patch`, applied by `build-sdld.sh`.)
 
+#### Stage (i) — the validated reflow mechanism (design, ahead of implementation)
+
+The investigation behind Stage 0 established that sdld can shrink slots **without new
+output machinery** — the pieces already exist:
+
+1. **Byte removal is native.** `ixx()` (lkout.c) emits each data byte at a *monotonically
+   incrementing* address and **skips any byte whose `rtflg[k]==0` entirely** — it consumes
+   no address. So clearing `rtflg` on the 3 `ld nb` bytes (`CE C4 [bank]`) *removes* them
+   (vs. today's NOP-fill), and everything after them in the same T-record slides down 3
+   automatically. The PDK instruction-fusion path (`relr3`, `rtflg[rtp]=0; rtofst+=3`)
+   already relies on exactly this.
+2. **The displacement self-heals.** The slot carries *two* relocs (`s1c88mch.c` S_PCALL/
+   S_PJUMP): `R_S1C88_BANK` on the bank byte and a real **`R_PCR` on the disp16**. The
+   `carl`/`jrl` opcode + disp16 are *kept*; once `pc` (record base) and the target are both
+   shifted by the reflow, the existing PCR math recomputes the disp16 correctly for the new
+   layout. No disp is hand-patched.
+
+So the reflow is three moves: **(a)** decide which slots shrink and by how much; **(b)**
+shift every area/areax/bank base+size and every symbol address down by the cumulative bytes
+removed before it (`delta(addr)`); **(c)** at emit, reduce each T-record's load address by
+`delta`, clear `rtflg` on the dropped `ld nb` bytes, and let `R_PCR` do the rest.
+
+**The pass structure (chicken-and-egg).** A slot's target bank/displacement is only known
+after relocations are evaluated, which today happens *during* the emit pass (`relr3`). But
+the shrink decision + address shift must happen *before* emit. Resolution: run the existing
+`relr3` logic **twice** — first in a *measure* mode (output suppressed) that populates the
+slot plan, then mutate the address model, then the normal emit pass. The linker already
+re-reads the `.rel` files per output pass, so a measure pass is the natural shape, not new
+parsing.
+
+**Two correctness traps (where a botched reflow goes silently wrong):**
+
+- **Intra-record drop vs. PCR base.** `R_PCR` computes its base as `pc + (rtp − rtofst)`,
+  using the *original* in-record offset. When the 3 `ld nb` bytes are dropped *before* the
+  disp16 in the same record, the disp's true emitted address is 3 lower, so the kept `carl`
+  would land 3 short unless the PCR base subtracts the in-record drop count. The emit pass
+  must thread a "bytes dropped before `rtp` in this record" term into the PCR base (mirroring
+  how PDK adjusts `rtofst`).
+- **The slot can straddle a T-record boundary.** Same caveat the bank-NOP code already
+  guards (`rtp-2 >= rtofst`): if `CE C4` sits at the tail of a prior, already-emitted record,
+  the 3 bytes can't all be dropped from one record. Stage (i) must detect the split slot and
+  either skip it (conservative — leave it at 6 B) or drop across both records. Skipping is
+  safe and loses only those few slots.
+
+**Stage (i) = single-pass + conservative:** decide shrinks once on the *pre-shrink*
+addresses and only shrink slots already in range there (shrinking only pulls targets
+closer, so an in-range slot stays in range — monotone, no iteration needed; that's stage
+ii). Skip split slots. Gate behind `SDLD_RELAX=1`, default off (corpus stays byte-identical
+until it's proven on emu-test + diff-test, then re-baseline).
+
 ### Validation (every step)
 
 `branch-smoke.sh` byte-locks every form; emu-test + diff-test prove correctness;
