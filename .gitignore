@@ -13,4 +13,6 @@
 
 # scratch: raw PDF text extraction
 docs/_extract/
-scripts/corpus/.baseline/
+# NB: scripts/corpus/.baseline/ is TRACKED — it's the golden byte-identity
+# reference the corpus-check gate (and CI) compares against. Re-bless it with
+# `scripts/corpus-check.sh snapshot` when codegen legitimately changes.
