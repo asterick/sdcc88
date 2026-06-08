@@ -62,6 +62,20 @@ for r in $LIB_INT $LIB_LONG $LIB_LIBC; do
   members="${members}${r}"$'\n'
 done
 
+# --- default interrupt vectors --------------------------------------------
+# crt0's header trampolines bjump to _irq_v1.._irq_v26.  Provide a do-nothing
+# (RETE) default for each as a SEPARATE library module, so a program links even
+# if it defines none, and overriding one vector (define `void irq_vN(void)
+# __interrupt`) pulls only the remaining defaults.  (Future: __interrupt(N)
+# auto-wiring so the user doesn't number vectors by hand.)
+echo ">> building default interrupt vectors (irq_v1..irq_v26)"
+for n in $(seq 1 26); do
+  printf '\t.module irq_v%s\n\t.globl _irq_v%s\n\t.area _CODE\n_irq_v%s::\n\trete\n' "$n" "$n" "$n" > "${TMP}/irq_v${n}.s"
+  "$SDAS" -o "${LIBDIR}/irq_v${n}.rel" "${TMP}/irq_v${n}.s" 2>"${TMP}/e" \
+    || { echo "!! irq_v${n} FAILED:"; sed 's/^/    /' "${TMP}/e" | head; exit 1; }
+  members="${members}irq_v${n}"$'\n'
+done
+
 # classic ASxxxx text-index library: one module name per line (sdld appends .rel and
 # searches the lib dir). Only modules that resolve an undefined symbol get pulled in.
 printf '%s' "$members" > "${LIBDIR}/s1c88.lib"

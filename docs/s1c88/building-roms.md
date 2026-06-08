@@ -95,12 +95,34 @@ For **banked** (>32 KiB) ROMs and `__far` ROM data, code/data are placed at
 
 ## 5. Interrupts
 
-The crt0 builds the cartridge IRQ vector table; by default every maskable vector
-points at a do-nothing handler (`_irq_default`, which `RETE`s). To run code on an
-interrupt today, enable it (`IRQ_ENA*`/`IRQ_PRI*` via `<pm.h>`), drop the CPU
-interrupt level, and point the relevant 6-byte slot at your handler. (A higher-level
-`__interrupt`-to-vector auto-wiring is a planned convenience — see TODO.) The
-`VEC_*` constants in `<pm.h>` name the vector numbers.
+The cartridge ROM is read-only, so you do **not** install handlers by writing the
+low-memory vector table. Instead the crt0 header has a `bjump` trampoline per
+vector (`bjump _irq_v<N>` at `0x2102 + 6*N`); the BIOS routes IRQ N there, and it
+jumps to the handler symbol `irq_v<N>`. **To handle vector N, just define
+`irq_v<N>`** as an `__interrupt` function — the symbol overrides the library's
+do-nothing default for that one vector:
+
+```c
+#include <pm.h>
+/* VEC_TIM0 == 8 -> define irq_v8 */
+void irq_v8(void) __interrupt {
+    ...                          /* your work */
+    IRQ_ACT1 = IRQ1_TIM1_LO_UF;  /* acknowledge the source */
+}
+int main(void) {
+    TMR1_CTRL = ...;             /* program the timer        */
+    IRQ_PRI1  = PRI1_TIM1(1);    /* group priority           */
+    IRQ_ENA1  = IRQ1_TIM1_LO_UF; /* enable the source        */
+    __asm and sc, #0x3f __endasm;/* drop the CPU level so IRQs are accepted */
+    for(;;) { }
+}
+```
+
+The `VEC_*` constants in `<pm.h>` give the vector numbers (so `VEC_TIM0` → `irq_v8`).
+Handlers can live in any bank (the trampoline `bjump` resolves it). Vectors you
+don't define keep the library default. (A friendlier `__interrupt(N)` auto-wiring —
+so you don't number vectors by hand — is a planned follow-up.) `scripts/crt0-isr-smoke.sh`
+exercises this end to end.
 
 ## 6. Verifying
 
