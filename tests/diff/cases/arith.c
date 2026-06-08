@@ -95,13 +95,24 @@ static void casts(u8 a8, i8 s8, u16 a16, i16 s16, u32 a32)
     EMIT_I8 ("i16>i8",  (i8)s16);    /* truncate */
 }
 
-/* NOTE: the 16x16->32 widening multiply ((u32)u16 * (u32)u16) is intentionally
- * NOT tested here — the middle end lowers it to the compiler-internal
- * __muluint2ulong/__mulsint2slong support calls, which ship only as per-target
- * hand-written asm (no portable C to compile with our port) and have a fixed
- * support-call ABI. The full 32-bit multiply path IS covered by the u32/i32
- * binop matrices above (a * b -> __mullong). Testing the widening-call path
- * needs the real target support library built, a separate effort. */
+/* 16x16 -> 32 widening multiply: explicitly widen the 16-bit operands to 32-bit
+ * and multiply. Sound for the differential check because both operands are
+ * widened, so the product always fits in 32 bits (host and target agree).
+ *
+ * On this port `has_mulint2long` is off (main.c), so the middle end does NOT
+ * lower these to a __mul*int2*long widening support call — it widens to 32-bit
+ * and calls __mullong. This therefore covers the widen-then-32x32-multiply
+ * codegen (the cast + support-call sequence), distinct from the plain u32*u32
+ * binop matrix. (If the optimized widening-call path is ever enabled — it needs
+ * hand-written __muluint2ulong/__mulsint2slong asm, see TODO #15 — these cases
+ * will then exercise that call instead, still soundly.) */
+static void widemul(u16 a, u16 b, i16 s, i16 t)
+{
+    EMIT_U32("u16*u16>u32", (u32)a * (u32)b);   /* both operands cast */
+    EMIT_I32("i16*i16>i32", (i32)s * (i32)t);   /* both cast, sign-extend */
+    EMIT_U32("u16*Wu16",    a * (u32)b);        /* one cast; the other promotes */
+    EMIT_I32("i16*Wi16",    s * (i32)t);
+}
 
 void diff_run(void)
 {
@@ -115,6 +126,7 @@ void diff_run(void)
             bin_i16(i16v[i], i16v[j]);
             bin_u32(u32v[i], u32v[j]);
             bin_i32(i32v[i], i32v[j]);
+            widemul(u16v[i], u16v[j], i16v[i], i16v[j]);
         }
 
     for (i = 0; i < N; i++) {

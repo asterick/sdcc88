@@ -78,8 +78,15 @@ Legend: **S/M/L** = rough effort. Items are roughly dependency-ordered within ea
     that fit stops fitting. The ASxxxx/sdld model is fixed-size by default, so this means adding a
     relaxation phase over the `R_S1C88_BANK`/PC-relative relocs + address recomputation — large, but a big
     code-size/speed win. Cross-check against `branch-smoke.sh` and re-baseline the corpus afterward.
-15. **[S] `__mul*int2*long` widening differential coverage.** Skipped in the diff harness for lack of the
-    support routines; add once those exist (also unblocks `_fsmul` in #8).
+15. **[S] `__mul*int2*long` widening differential coverage — ✅ DONE.** `tests/diff/cases/arith.c` now has a
+    `widemul` helper covering the 16×16→32 widening multiply (`(u32)u16 * (u32)u16`, signed, and the
+    single-cast/promote forms) — host-vs-emulator clean. The earlier "intentionally not tested" note was
+    stale: with `has_mulint2long` off (main.c) the middle end does NOT emit a `__mul*int2*long` widening
+    call — it widens to 32-bit and calls `__mullong` (verified), which the harness already links. So the
+    widen-then-32×32 codegen is now covered. **Deferred optimization (low priority):** writing the
+    hand-written `__muluint2ulong`/`__mulsint2slong` asm + enabling `has_mulint2long` would give a smaller/
+    faster int×int→long (and was the `_fsmul` unblock for #8) — but float is parked, so this is a code-size
+    nicety, not correctness; the widemul cases will exercise that call path automatically if it's enabled.
 20. **[L] Z80-artifact scrub — B+C ✅ DONE; A/D/F deferred.** The port was cloned from SDCC's `z80` and
     carried z80/eZ80/Rabbit/SM83/Z80N/R800/TLCS90 mnemonics, symbols, comments, and variable names.
     **Done (scope categories B + C):** all port-private identifiers renamed to `s1c88*` (peep.c's 9
