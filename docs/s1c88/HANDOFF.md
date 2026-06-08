@@ -3,6 +3,12 @@
 **This is the single resume entry point.** If the prompt is *"let's pick up where you left off,"* do the
 steps under **NEXT ACTION**. Everything needed to continue is here or linked from here.
 
+> **▶ The forward-looking work list is [`TODO.md`](TODO.md)** — the critical path to a *usable*
+> toolchain (driver wiring, real crt0, target lib, device headers, packaging) plus the
+> quality/coverage backlog (float diff module, `__critical`/nested-IRQ, peephole tuning).
+> Suggested first step: TODO A1+A2 (point the driver at `sdas88` + wire `sdcpp` so
+> `sdcc -ms1c88 foo.c` drives the right tools).
+
 _Last updated: 2026-06-07 (session 25: **emulator pruned to a minimal CPU+memory+IRQ+timers
 harness** (LCD/blitter/audio/RTC/TIM256/input/GPIO/EEPROM removed; control = 3 dumb bytes; RAM
 + cartridge unified into one writable `memory[]` so **far writes work**; BIOS bypassed). **New
