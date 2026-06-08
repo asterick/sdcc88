@@ -55,20 +55,32 @@ A user should be able to: `sdcc -ms1c88 game.c` → assemble → link (banked) �
     more modules (longs, bitfield-heavy, deep call chains) will find more.
 12. **[L, open-ended] Peephole / cost tuning.** The standing "remaining" codegen item — size
     and speed (codegen is correct-first, not yet tuned).
-13. **[S] `__mul*int2*long` widening differential coverage.** Skipped in the diff harness for
+13. **[L, large lift] Linker branch relaxation (shrink `bjump`/`bcall`).** Today the compiler
+    emits `bjump`/`bcall` as the always-long, bank-switching form (the linker picks the bank but
+    not the *size*): worst-case `ld nb,#bank ; nop ; carl/jrl` (~6–7 bytes). When the resolved
+    target is in the **same bank** and within relative range, the linker should shrink it to the
+    smallest legal form — drop the `ld nb` bank-switch entirely, and pick `cars`/`jrs` (8-bit
+    relative) over `carl`/`jrl` (16-bit) when it fits. This is a classic **relaxation** pass:
+    iteratively shrink branches and recompute all addresses to a fixpoint (shrinking one branch
+    moves later addresses, which can let *more* shrink), being careful that no branch that fit
+    stops fitting. The ASxxxx/sdld model is fixed-size by default, so this means adding a
+    relaxation phase over the `R_S1C88_BANK`/PC-relative relocs + address recomputation — large,
+    but a big code-size/speed win. Cross-check against `branch-smoke.sh` (the displacement
+    convention) and re-baseline the corpus afterward.
+14. **[S] `__mul*int2*long` widening differential coverage.** Skipped in the diff harness for
     lack of the support routines; add once #4 (real lib) exists.
 
 ---
 
 ## C. Known limitations — fix or formally document
 
-14. **`UNIMPLEMENTED` traps.** Audit + document the pathological shapes that bail loudly (e.g.
+15. **`UNIMPLEMENTED` traps.** Audit + document the pathological shapes that bail loudly (e.g.
     `--reserve-regs-iy` + >127-byte frame + multi-byte pointer read; shift/cast corners). Loud
     traps today, not silent miscompiles — but users should know the boundaries.
-15. **CPOINTER (code-space `const` data pointers).** 3 bytes but deref'd near-only; fine while
+16. **CPOINTER (code-space `const` data pointers).** 3 bytes but deref'd near-only; fine while
     const data stays in the common bank — document the convention (or lift it).
-16. **float / long long correctness** — unverified until #8 exists.
-17. **[optional] Structured test runner** (TAP/parallel/per-assertion). Current bash + exit
+17. **float / long long correctness** — unverified until #8 exists.
+18. **[optional] Structured test runner** (TAP/parallel/per-assertion). Current bash + exit
     codes is fine but doesn't scale to many cases.
 
 ---
