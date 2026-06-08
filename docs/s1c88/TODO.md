@@ -68,6 +68,12 @@ Workflow: add the case, run the three gates, fix what surfaces, add an emu/diff 
   already covers single-module / common-bank-heavy programs, so this is the harder remaining tail. Gate on
   `branch-smoke.sh` + emu/diff and re-baseline the corpus sizes. (Design: `banked-branch.md` "Relaxation
   plan".)
+  - **✅ Stage 0 (opportunity report) DONE.** `linksrc/lkrloc3.c` tallies every cross-module
+    `R_S1C88_BANK` slot at link time and `lkmain.c` prints the reclaimable-bytes summary; gated behind
+    `SDLD_RELAX_REPORT=1`, read-only (corpus byte-identical). Run: `SDLD_RELAX_REPORT=1 make -C examples/hello`.
+    First data: hello = **87 B reclaimable**, all `carl`-range ⇒ the simple stage-(i) shrink captures it all.
+    Remaining = the reflow itself: **(i)** single-pass shrink + address/symbol/reloc reflow, **(ii)** iterate,
+    **(iii)** trampoline/`cars` refinement. Stage 0 is the inventory those consume.
 
 ---
 

@@ -325,6 +325,27 @@ conservative shrink; (ii) iterate; (iii) conditional-trampoline shrink. This is 
 "large" part and can wait — #14b already covers single-module and common-bank-heavy
 programs.
 
+**Stage 0 — link-time opportunity report (✅ DONE, read-only).** Before building any
+reflow, measure the cross-module residual *at true link time*. Every `R_S1C88_BANK` slot
+that reaches sdld is by construction cross-area/cross-module — same-module slots were
+already relaxed assembler-side (#14b) and carry no such reloc — so the linker's reloc walk
+already has the exact resolved displacement + bank for every #14c candidate. `relt3()` in
+`linksrc/lkrloc3.c` now tallies each slot (same-bank cars-range → reclaim 4 B; same-bank
+carl-range → 3 B; cross-bank → blocked, the bank switch is mandatory) and `lkmain.c` prints
+the summary at end-of-link. It is **gated behind the `SDLD_RELAX_REPORT=1` env var and
+changes no output byte** (corpus stays byte-identical; all gates green). Run it on any link:
+
+```bash
+SDLD_RELAX_REPORT=1 make -C examples/hello      # 29 slots, all same-bank carl-range, 87 B reclaimable
+```
+
+This is the inventory the reflow stages (i–iii) consume, and it answers whether they're
+worth building. First data point: `examples/hello` (498 B ROM) has **87 B reclaimable**,
+and — notably — every slot is in `carl` range, so the *simple* stage-(i) shrink (drop
+`ld nb`, keep the 3-byte relative branch) captures the entire opportunity there; the harder
+`cars`/trampoline refinement (stages ii–iii) adds nothing for that program. (Patch:
+`third_party/sdcc/s1c88_banked_branch.patch`, applied by `build-sdld.sh`.)
+
 ### Validation (every step)
 
 `branch-smoke.sh` byte-locks every form; emu-test + diff-test prove correctness;

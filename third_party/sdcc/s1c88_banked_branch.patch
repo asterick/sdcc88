@@ -116,7 +116,102 @@
   *              expr *  esp             pointer to expr structure
 --- a/sdas/linksrc/lkrloc3.c
 +++ b/sdas/linksrc/lkrloc3.c
-@@ -370,6 +370,33 @@
+@@ -54,6 +54,94 @@
+  *
+  */
+ 
++/*
++ * sdcc88 #14c Stage 0 — link-time relaxation-opportunity report (READ-ONLY).
++ *
++ * Every R_S1C88_BANK slot that reaches the linker is a cross-area/cross-module
++ * banked branch: same-module slots are already relaxed assembler-side (#14b)
++ * and carry NO R_S1C88_BANK reloc, so they never get here.  This pass therefore
++ * tallies exactly the cross-module residual — how many of those slots COULD
++ * shrink if the linker grew a reflow pass (#14c stages 1-3) — without touching
++ * a single output byte.  Enable with env var SDLD_RELAX_REPORT=1; default off
++ * => zero behaviour change (the corpus stays byte-identical).  See
++ * docs/s1c88/banked-branch.md §10.
++ */
++static int  rlxEnabled = -1;            /* -1 = not yet probed                  */
++static long rlxNTotal;                  /* R_S1C88_BANK slots seen              */
++static long rlxNSameJrs;                /* same-bank, fits cars/jrs (reclaim 4) */
++static long rlxNSameJrl;                /* same-bank, fits carl/jrl (reclaim 3) */
++static long rlxNSameFar;                /* same-bank, out of carl range (0)     */
++static long rlxNCross;                  /* cross-bank, ld nb stays (blocked)    */
++static long rlxNCrossShort;             /* ...of which the branch fits cars (1) */
++static long rlxBytes;                   /* estimated reclaimable bytes          */
++
++static int
++rlxOn(void)
++{
++        if (rlxEnabled < 0) {
++                char *e = getenv("SDLD_RELAX_REPORT");
++                rlxEnabled = (e != NULL && *e != '\0' && *e != '0') ? 1 : 0;
++        }
++        return rlxEnabled;
++}
++
++/*
++ * Account one R_S1C88_BANK slot.  tgt = resolved target address; abank =
++ * address of the [bank] byte in the slot `CE C4 [bank] <carl|jrl> <disp16>`.
++ * Pure tally — classification mirrors the relax forms in banked-branch.md §10
++ * using the canonical cars(+-127)/carl(+-32K) windows; the +-1 of the S1C88
++ * displacement convention is immaterial to a bytes-on-the-table estimate.
++ */
++static VOID
++rlxAccount(long tgt, long abank, int tbank, int cbank)
++{
++        long dshort, dlong;
++
++        rlxNTotal++;
++        if (tbank == 0 || tbank == cbank) {
++                /* same bank: drop the 3-byte `ld nb`, keep a relative branch
++                 * starting where CE was (abank-2). */
++                dshort = tgt - abank;            /* cars: opcode@abank-2, +2 */
++                dlong  = tgt - (abank + 1);      /* carl: opcode@abank-2, +3 */
++                if (dshort >= -128 && dshort <= 127) {
++                        rlxNSameJrs++;
++                        rlxBytes += 4;           /* 6B slot -> 2B cars */
++                } else if (dlong >= -32768 && dlong <= 32767) {
++                        rlxNSameJrl++;
++                        rlxBytes += 3;           /* 6B slot -> 3B carl */
++                } else {
++                        rlxNSameFar++;           /* unreachable as relative */
++                }
++        } else {
++                /* cross bank: the bank switch is mandatory (ld nb stays); only
++                 * the branch itself might shrink carl->cars (saves 1). */
++                rlxNCross++;
++                dshort = tgt - (abank + 3);      /* branch opcode@abank+1, +2 */
++                if (dshort >= -128 && dshort <= 127) {
++                        rlxNCrossShort++;
++                        rlxBytes += 1;
++                }
++        }
++}
++
++/*
++ * Print the accumulated report once, at end-of-link (called from lkmain.c).
++ */
++VOID
++s1c88RelaxReport(void)
++{
++        if (!rlxOn())
++                return;
++        fprintf(stderr, "[relax-report] cross-module banked-branch slots (R_S1C88_BANK):\n");
++        fprintf(stderr, "[relax-report]   total seen           : %ld\n", rlxNTotal);
++        fprintf(stderr, "[relax-report]   same-bank, cars range: %ld  (reclaim 4B each)\n", rlxNSameJrs);
++        fprintf(stderr, "[relax-report]   same-bank, carl range: %ld  (reclaim 3B each)\n", rlxNSameJrl);
++        fprintf(stderr, "[relax-report]   same-bank, unreachable: %ld (reclaim 0)\n", rlxNSameFar);
++        fprintf(stderr, "[relax-report]   cross-bank (blocked) : %ld  (%ld branch-shrinkable, 1B each)\n",
++                rlxNCross, rlxNCrossShort);
++        fprintf(stderr, "[relax-report]   est. reclaimable     : %ld bytes  (#14c stages 1-3 upper bound)\n", rlxBytes);
++}
++
+ /*)Function VOID        reloc3(c)
+  *
+  *                      int c           process code
+@@ -370,6 +458,38 @@
                          reli = a[rindex]->a_addr;
                  }
  
@@ -136,6 +231,11 @@
 +                if (mode & 0x800) {
 +                        int tbank = (int) ((reli >> 16) & 0xFF);
 +                        int cbank = (int) (((pc + (rtp - rtofst)) >> 16) & 0xFF);
++                        /* sdcc88 #14c Stage 0: read-only relaxation tally. */
++                        if (rlxOn())
++                                rlxAccount((long) reli,
++                                           (long) (pc + (rtp - rtofst)),
++                                           tbank, cbank);
 +                        /* Leave rtflg set on these bytes so lkout() emits them. */
 +                        if ((tbank == 0 || tbank == cbank) && rtp - 2 >= (int) rtofst) {
 +                                rtval[rtp-2] = 0xFF;    /* nop (was CE)   */
@@ -150,3 +250,19 @@
                  /*
                   * R3_PCR addressing
                   */
+--- a/sdas/linksrc/lkmain.c
++++ b/sdas/linksrc/lkmain.c
+@@ -456,6 +456,13 @@
+                 CreateAOMF51();
+         }
+ 
++        /* sdcc88 #14c Stage 0: print the cross-module relaxation-opportunity
++         * report (no-op unless SDLD_RELAX_REPORT is set). Defined in lkrloc3.c. */
++        {
++                extern VOID s1c88RelaxReport(void);
++                s1c88RelaxReport();
++        }
++
+         lkexit(lkerr ? ER_ERROR : ER_NONE);
+         return(0);
+ }
