@@ -1,0 +1,51 @@
+name: ci
+
+# Gating check for the sdcc88 port. Builds the SDCC overlay + the binary
+# toolchain (sdas88 / sdldz80 / romgen / emulator runner) and runs the unified
+# test suite (scripts/run-tests.sh — corpus byte-identity, emu execution,
+# host-vs-emulator diff, and the toolchain smokes) as one TAP stream.
+#
+# The job name "build & test" is the required status check on main: a PR cannot
+# merge unless this is green.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: build & test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Cache the SDCC build tree (fetch + configure + base compile). build.sh is
+      # incremental: on a cache hit it reuses the configured tree and only the
+      # overlaid s1c88 port is re-made. Keyed on the build recipe + the overlay
+      # patch, NOT on src/s1c88, so the cache is shared across PRs and the port is
+      # always rebuilt fresh from the current sources by build.sh / run-tests.sh.
+      - name: Cache SDCC build tree
+        uses: actions/cache@v4
+        with:
+          path: build
+          key: sdcc-build-${{ hashFiles('build.sh', 'third_party/sdcc/*.patch') }}
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential flex bison m4 gawk libboost-dev zlib1g-dev python3 curl
+
+      - name: Build the compiler (overlay + configure + make)
+        run: ./build.sh
+
+      - name: Run the unified test suite (TAP)
+        run: ./scripts/run-tests.sh

@@ -132,4 +132,9 @@ by exposing reachable z80-isms; then the numbered ABI tasks (#7 register-model s
 (the minimon emulator harness + the host-vs-emulator differential suite), which has found ~9 runtime
 miscompiles that byte-identical assembly never could; and finally the **usable-toolchain critical path**
 (driver wiring, real `sdcpp`, production crt0 + PM header, `s1c88.lib`, `<pm.h>`, C romgen, SDK packaging +
-`examples/hello`). All work is on **`main`**, every checkpoint green.
+`examples/hello`).
+
+**Workflow (since the toolchain went to maintenance):** work goes through **self-contained PRs with
+meaningful names** (one per scope; combine same-scope changes into one PR). **`main` is protected** —
+direct pushes are blocked and a PR can't merge unless the `ci` **build & test** check is green; code reviews
+are not required. So: branch → commit green slices → push → open PR → CI green → merge.

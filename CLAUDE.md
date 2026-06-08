@@ -7,7 +7,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 > green; `scripts/corpus-check.sh` + `scripts/emu-test.sh` + `scripts/diff-test.sh` are the gates.
 > **Always rebuild via the overlay (`dev.sh`/`corpus-check.sh`), never raw `make -C build/.../src`**
 > (it compiles a stale copy). The forward work list is **[`docs/s1c88/TODO.md`](docs/s1c88/TODO.md)**.
-> All work is on **`main`**.
+> Work via self-contained PRs (meaningful names); **`main` is protected** — direct push blocked, the `ci`
+> **build & test** check must be green to merge (reviews not required).
 
 ## Project Overview
 
@@ -126,8 +127,11 @@ Start at `docs/s1c88/README.md`; the backend decisions are in `docs/s1c88/abi-de
 
 ## Conventions
 
-- **All work is on `main`** (the old `s1c88-retarget` branch is gone). Commit green checkpoints; clearly
-  label any intentionally-red WIP. Validate each codegen slice with `./scripts/validate-s1c88.sh` before
-  committing — the build working in-sandbox means you can (and should) verify every change.
+- **Work goes through self-contained PRs with meaningful names** — one PR per scope; if two changes share a
+  scope, combine them into one PR that details the total change. **`main` is protected:** direct pushes are
+  blocked (work via a branch + PR), and a PR cannot merge unless the `ci` check (the **build & test**
+  job: `build.sh` + `scripts/run-tests.sh`) is **green**. Code reviews are not required. Keep each PR green
+  on its own — validate with `./scripts/run-tests.sh` (or `./scripts/validate-s1c88.sh` for a focused codegen
+  slice) before opening it; clearly label any intentionally-red WIP.
 - Convert the design/strategy in `docs/s1c88/abi-decision.md` into action — keep it current as decisions
   evolve, and keep `docs/s1c88/HANDOFF.md` accurate (it's the fastest way to resume).
