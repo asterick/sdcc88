@@ -240,3 +240,58 @@ The linker needs each code area's `a_bank`. Two pieces:
 | 5 | romgen + e2e test | `sdobjcopy` + a 2-bank test | verify slot rewrite, NB present/absent, short/long |
 
 The novel work is steps 2–3 (the rewrite relocation); steps 0/4/5 are plumbing on existing ASlink banking.
+
+---
+
+## 10. Relaxation plan (TODO #14) — shrinking the worst-case slot
+
+The Phase-2 design above deliberately reserves the **worst-case** 6-byte slot
+(`ld nb,#bank ; carl/jrl`; 9 B for a signed-conditional via the #13 trampoline) and
+never reclaims it — the linker only fills unused bytes with `nop`. Relaxation makes
+the slot shrink to the smallest legal form when the target is **same-bank and in
+range**. Most calls are intra-common-bank, so the payoff is large. Two independent
+mechanisms, deliberately split so the easy, high-value half ships without the hard
+half:
+
+### The forms, smallest-first
+
+| Case | Sequence | Bytes |
+|---|---|---|
+| same bank, `jrs`/`cars` range (±127), uncond/basic-cc | `cars`/`jrs [cc,] d8` | 2 |
+| same bank, `jrl`/`carl` range (±32 K), uncond/basic-cc | `carl`/`jrl [cc,] d16` | 3 |
+| same bank, signed-cc, in `jrs` range | `jrs <cc>, d8` (CE-page) | 3 |
+| same bank, signed-cc, out of `jrs` range | `jrs <inv>,+4 ; jrl d16` (#13-style, no `ld nb`) | 6 |
+| cross bank | `ld nb,#bank ; <branch>` | +3 |
+
+### #14b — assembler-side, SAME-MODULE (the practical win, no linker change)
+
+A call to another function in the **same `_CODE` area** (the common intra-module case)
+has a displacement the assembler can compute each pass. ASxxxx already runs a
+**multi-pass `fuzz`** loop (`asmain.c` — `a_fuzz` tracks pass-to-pass address drift, so
+forward refs converge); a relaxing backend emits a size that may change across passes,
+and the loop re-runs until stable. So `machine()`'s `S_PCALL`/`S_PJUMP` path, when
+`expr.e_base.e_ap == dot.s_area` and the symbol is in-area, can emit the minimal form
+directly (no `ld nb` — same area ⇒ same bank; `cars`/`jrs` vs `carl`/`jrl` by the
+fuzz-current displacement). Cross-area/external targets fall through to the existing
+fixed 6/9-byte linker-resolved slot, unchanged. **Feasibility gate (do first in #14a):**
+confirm the sdas88 pass loop actually iterates to a `fuzz==0` fixpoint for a
+variable-length test instruction — some ASxxxx builds cap the pass count. Watch the
+branch-displacement convention (§ HANDOFF: one byte earlier than z80) at *each* form.
+
+### #14c — linker-side, CROSS-MODULE (the hard reflow, deferrable)
+
+A cross-area/cross-module call's displacement is known only at link time, and sdld is
+**fixed-size**: addresses are assigned per area in `lkarea` before relocation, and the
+`.rel` `T` records + symbol addresses bake in fixed offsets. True shrinking needs a new
+pass: model each area's bytes + relocs + symbol positions, iteratively shrink in-range
+same-bank slots, recompute positions to a fixpoint (only ever shrinking ⇒ it converges;
+guard that no branch which fit stops fitting), then re-emit. Stage it: (i) single-pass
+conservative shrink; (ii) iterate; (iii) conditional-trampoline shrink. This is the
+"large" part and can wait — #14b already covers single-module and common-bank-heavy
+programs.
+
+### Validation (every step)
+
+`branch-smoke.sh` byte-locks every form; emu-test + diff-test prove correctness;
+re-baseline the corpus afterward (sizes change). Add a size delta to the corpus report
+so each shrink is visible and provably monotone.

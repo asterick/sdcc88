@@ -67,17 +67,33 @@ Legend: **S/M/L** = rough effort. Items are roughly dependency-ordered within ea
     (execution, taken + skipped), and `rom-smoke.sh` (the cross-bank conditional worst case —
     `bjump lt,_b2fn` → `jrs ge,+7 ; ld nb,#2 ; jrl`). Now #14 has a uniform "every conditional has a
     reachable long form".
-14. **[L, large lift] Linker branch relaxation (shrink `bjump`/`bcall`).** *(Prerequisite #13 is ✅ DONE.)*
-    Today the compiler emits `bjump`/`bcall` as the always-long bank-switching form (the linker picks the
-    bank, not the *size*): worst-case `ld nb,#bank ; carl/jrl` (~6 bytes). When the resolved target is in
-    the **same bank** and within relative range, the linker should shrink it to the smallest legal form —
-    drop the `ld nb` bank-switch, pick `cars`/`jrs` (8-bit) over `carl`/`jrl` (16-bit) when it fits, and
-    for conditionals choose a plain short `jrs <cc>` over the #13 trampoline when in range. This is a
-    classic **relaxation** pass: iteratively shrink branches and recompute addresses to a fixpoint
-    (shrinking one branch moves later addresses, which can let *more* shrink), being careful that no branch
-    that fit stops fitting. The ASxxxx/sdld model is fixed-size by default, so this means adding a
-    relaxation phase over the `R_S1C88_BANK`/PC-relative relocs + address recomputation — large, but a big
-    code-size/speed win. Cross-check against `branch-smoke.sh` and re-baseline the corpus afterward.
+14. **[L] Branch relaxation — shrink `bjump`/`bcall`.** *(Prerequisite #13 ✅.)* Today `bjump`/`bcall` are
+    the always-long bank-switching form (`ld nb,#bank ; carl/jrl`, 6 B; 9 B for a signed conditional). The
+    linker picks the *bank*, not the *size* — same-bank slots are NOP-padded, never shrunk. The win:
+    same-bank, in-range calls drop the `ld nb` and use `cars`/`jrs` (2 B) or `carl`/`jrl` (3 B), and signed
+    conditionals use a plain short `jrs <cc>` instead of the #13 trampoline. Most calls are intra-common-bank,
+    so this is a large code-size win. **Broken into digestible, value-first steps** (full design +
+    grounding in `banked-branch.md` "Relaxation plan"):
+
+    - **#14a [S] — opportunity analysis (zero-risk).** A script over a linked `.map`/`.rel` that counts how
+      many `bjump`/`bcall` slots are same-bank + in `jrs`/`jrl` range and the bytes they'd save. No codegen
+      change — validates the win with a real number and builds the range analysis. Also confirm the sdas88
+      multi-pass `fuzz` loop converges for a variable-length test instruction (the feasibility gate for #14b).
+    - **#14b [M] — assembler same-module relaxation (the big practical win, NO linker reflow).** Most calls
+      are intra-module (same `_CODE` area). When the target is in the current area, the displacement is known
+      each pass, so the assembler can emit the minimal form directly, letting ASxxxx's existing `fuzz`
+      multi-pass loop converge the sizes. Cross-area/external targets keep the fixed 6/9-byte linker slot
+      (unchanged). Sub-steps: (i) unconditional same-area (`carl`/`jrl`, drop `ld nb`); (ii) `cars`/`jrs`
+      short form when in ±range; (iii) basic-cc; (iv) signed-cc (plain short `jrs <cc>` vs the #13
+      trampoline). Mind the branch-displacement convention (one byte earlier than z80) at each form.
+    - **#14c [L] — linker cross-module relaxation (the hard reflow, deferrable).** For cross-area/cross-module
+      calls, add the relaxation pass sdld lacks: after area placement, iteratively shrink in-range same-bank
+      slots and reflow subsequent addresses/symbols/relocs to a fixpoint, then re-emit. Itself staged: (i)
+      single-pass conservative shrink; (ii) iterate to fixpoint; (iii) conditional-trampoline shrink. Can be
+      deferred if #14b captures enough — many programs are single-module or common-bank-heavy.
+
+    Gate every step on `branch-smoke.sh` (byte-lock the forms), emu/diff (correctness), and re-baseline the
+    corpus; add a size-regression check so shrinks are visible and monotone.
 15. **[S] `__mul*int2*long` widening differential coverage — ✅ DONE.** `tests/diff/cases/arith.c` now has a
     `widemul` helper covering the 16×16→32 widening multiply (`(u32)u16 * (u32)u16`, signed, and the
     single-cast/promote forms) — host-vs-emulator clean. The earlier "intentionally not tested" note was
