@@ -130,8 +130,15 @@ Legend: **S/M/L** = rough effort. Items are roughly dependency-ordered within ea
       (emu 16/16, diff 12/12, clean assembly, rom/crt0/driver smokes); corpus + size baselines re-blessed.
       (`unusedReg` accepts only 2–3 candidates — watch that when extending a list.) Follow-ups: `#12-flag-reuse`,
       `#12-redundant-moves`, and pruning the residual dead z80-mnemonic tokens from multi-token `same()` lists.
-    - **#12-redundant-moves** — eliminate redundant `ld`/pair-move/load-after-store sequences the current
-      rules miss (e.g. `ld a,X ; ld X,a`, reload of a just-stored value, dead pair shuffles).
+    - **#12-redundant-moves** — ✅ AUDITED (no safe net win available). Scanned the whole corpus + diff
+      output for the classic redundancies — back-moves (`ld X,Y ; ld Y,X`), store-then-reload of a slot/reg,
+      load-after-store, and the frequent `ld;ld` bigrams. The existing rules (0a, 9/9a/9b, 10, 11, 98) already
+      cover the genuine cases; every remaining candidate is *legitimate*, not redundant: control-flow joins
+      (a reload after a label, reachable by other paths), pointer advancement (`ld (hl),a ; inc hl ;
+      ld a,(hl)` loads a DIFFERENT byte), and aliasing-conservative memory reloads. The codegen's move
+      sequences are tight; forcing a rule on the remaining matches would risk miscompiles. Closed as audited
+      rather than landing a low-value/unsafe rule. (The one residual pair-shuffle — `push b ; ld b,l ;
+      or a,b ; pop b` around a zero test — is the flag-reuse byte-combine follow-up, not a plain move.)
     - **#12-flag-reuse** — ✅ DONE (model fix; one peephole opportunity noted). The peephole flag-WRITE
       analysis (`peep.c` `s1c88SurelyWritesFlag`) carried the z80 model: it claimed 16-bit `inc`/`dec`
       "do not affect flags" and 16-bit `add hl,X` does not set Z/S/P. **On the S1C88, 16-bit INC/DEC set
@@ -147,8 +154,20 @@ Legend: **S/M/L** = rough effort. Items are roughly dependency-ordered within ea
       test — `add hl,X ; ld a,h ; ld b,l ; or a,b ; jr Z` (the `(a+b)?` / function-result-test idiom) — is
       now provably redundant (the `add` set Z), but capturing it needs a dedicated peephole that sees past
       the `push b`/`pop b` register-preservation noise; ~5 insns/site when it fires.
-    - **#12-cost-accuracy** — replace the inherited z80 cycle numbers in `cost2(...)` with real S1C88 counts
-      so the allocator's cost-driven decisions match the target (overlaps the #20-A `cost2` collapse).
+    - **#12-cost-accuracy** — ✅ DONE (the #20-A collapse; per-cycle numeric refinement deferred as
+      low-value, with reasoning). Collapsed `cost2`'s dead 7-variant timing signature
+      (`cost2(bytes, z80_states, z180, r2k, sm83, tlcs90, ez80, r800)`) to **`cost2(bytes, cycles)`** across
+      all 491 call sites (scripted, every site verified to keep only the first two args incl. the computed
+      `3 + iy`/`4 * iy` and `3.5f` forms; the body already used only `bytes` + the 2nd arg, so the corpus
+      stayed **byte-identical** — proving the dropped columns were dead). This removes the z80 cruft and
+      makes the cost function honest (this IS the #20-A item). **Why the numbers themselves were NOT
+      rewritten:** the allocator's final cost is `bytes + cycles·count / divider` with
+      `divider = 8 << (codeSize·3 + !codeSpeed·3)` = **64–512** for the size-focused PM default/`-opt-code-size`,
+      so cycle counts are discounted ~64–512× and **bytes dominate** — replacing the (roughly proportional)
+      z80 cycle estimates with exact S1C88 counts does not change the size-optimized output, and the only
+      affected path (`-opt-code-speed`) can't be validated without a cycle benchmark. The existing numbers
+      are retained as reasonable cycle estimates; a real numeric pass is a speed-focused follow-up, low
+      priority for this size-first target. Verified emu 16/16, diff 12/12, run-tests 50/50, smokes green.
     - **#12-far-idiom** — tighten the `__far` EP=0 deref sequences and the `bcall`/`bjump` slots (ties into
       #14 once relaxation lands).
 13. **[M] Conditional `bjump`/`bcall` via invert-and-skip trampolines — ✅ DONE** (commit `1bbe90c`).
@@ -236,8 +255,9 @@ Legend: **S/M/L** = rough effort. Items are roughly dependency-ordered within ea
     `Z80_MAX_REGS`); and **every rephraseable comment** across peep.c/gen.c/main.c/headers/ralloc/support
     reworded to describe only the S1C88 (z80 + other-variant trivia removed). Done in always-green slices;
     39/39 throughout, corpus byte-identical.
-    **Still deferred:** **(A)** the `cost2(...)` 7-variant timing params (gen.c) — collapse to
-    `cost2(bytes, cycles)` across 491 call sites; **(D)** dead toggles + machinery — the `nmosZ80` /
+    **(A) ✅ DONE** (with #12-cost-accuracy) — collapsed `cost2(...)`'s dead 7-variant timing params to
+    `cost2(bytes, cycles)` across all 491 call sites (scripted; corpus byte-identical, confirming the 6
+    dropped columns were dead). **Still deferred:** **(D)** dead toggles + machinery — the `nmosZ80` /
     `--nmos-z80` option, `z80n_de` and its folded branch, the `#pragma portmode z80/z180` handling, and the
     asm-dialect tables (`mappings.i` `_z80asm`/`_gas_z80`, main.c's `{z80*}` link-command-template variables
     + the `z80-elf-ld/as` gas-path tool names) — these are coordinated/maybe-dead and want per-unit

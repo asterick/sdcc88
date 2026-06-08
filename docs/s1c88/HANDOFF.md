@@ -67,9 +67,13 @@ _Last updated: 2026-06-08._
    in `s1c88SurelyWritesFlag` — **S1C88 16-bit inc/dec set Z V N and 16-bit add/sub set Z C V N** (z80's
    don't), which was a latent stale-flag-reuse hazard + an optimization blocker (−3 B, and a follow-up
    peephole for the post-add byte-combine zero-test is noted in TODO). Corpus ROM now 8429.
-   Next: `#12-redundant-moves`, `#12-cost-accuracy`/`#20-A` (cost2 collapse).
-   Section C (#16 traps, #17 const-data) is done (documented + guarded). The z80-artifact scrub is B+C done,
-   A/D/F deferred (#20).
+   **#12-cost-accuracy + #20-A are now done** — collapsed `cost2`'s dead 7-variant timing signature to
+   `cost2(bytes, cycles)` across all 491 sites (byte-identical; the cost model discounts cycles 64–512× for
+   the size target so the numbers themselves are low-value to refine — see TODO). **#12-redundant-moves
+   audited** — existing rules cover the real cases; remaining candidates are legitimate (control-flow joins,
+   pointer advancement, aliasing reloads), no safe win. Remaining #12: `#12-peep-audit` follow-ups, `#12-far-idiom`,
+   and the deferred flag-reuse byte-combine peephole. Section C (#16 traps, #17 const-data) is done. z80 scrub:
+   B+C+A done, D/F deferred (#20).
 3. **Deprioritized — float is low-value for this target.** The one known correctness bug is the `_fsadd`
    different-sign miscompile (all float subtraction): `10.0-4.0` → `0x40C00182` not `0x40C00000`. It's a
    register-pressure / spill bug in the full `_fsadd` compile (algorithm + isolated 32-bit ops are
