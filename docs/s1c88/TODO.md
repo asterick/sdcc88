@@ -5,7 +5,7 @@ Status snapshot (2026-06-08): **THE CRITICAL PATH (Section A) IS DONE — the to
 game.ihx game.min` produces a bootable Pokémon Mini ROM, with the production `crt0` (real `"PM"`/
 `"NINTENDO"` header), the auto-linked `s1c88.lib`, the `<pm.h>` device header, and a C `romgen` (no
 Python). `examples/hello/` is a copy-me project; `docs/s1c88/building-roms.md` is the how-to. All gates
-green (corpus 20/20, emu-test 16/16, diff-test 9, driver/crt0/rom/branch smokes, example). **Remaining =
+green (corpus 20/20, emu-test 16/16, diff-test 10, driver/crt0/rom/branch smokes, example). **Remaining =
 Section B (quality/coverage) and Section C (documented limitations).**
 
 Legend: **S/M/L** = rough effort. Items are roughly dependency-ordered within each section.
@@ -78,7 +78,13 @@ Legend: **S/M/L** = rough effort. Items are roughly dependency-ordered within ea
         working-pattern guard: `tests/emu/cases/16_ptrcmp.c`. Fix is in genCmp's two-computed-pair operand
         materialization; add the excluded `lt`/`ge` cases back to `ptrarith.c` + the `lt(1,3)` assertion to
         `16_ptrcmp.c` once fixed.
-    - **#11-switch** — `switch` lowering (jump-table vs if-chain), dense/sparse/default, wide selectors.
+    - **#11-switch** — ✅ done (`tests/diff/cases/switch.c`, 620 values): dense-from-zero (real jump table —
+      `jp hl` + `.dw` table, swept across in-range/boundary/out-of-range→default), offset-dense, sparse
+      (if-chain), signed selector with negative cases, wide 16-bit selector, fall-through / grouped labels,
+      and a no-default switch (out-of-range leaves the value untouched) — all CORRECT, no codegen bug. The
+      genJumpTab path (HL = &table + 2×selector, `jp hl`) executed correctly on the emulator across the full
+      0..130 sweep. (Smaller dense blocks fall below the middle-end's table-density threshold and lower to
+      if-chains; both paths are now covered.)
     - **#11-fnptr2** — function pointers with varied signatures (wide/struct returns, many-arg calls) —
       extends `06_fnptr`/`08_isr` into the call-ABI corners.
     - **#11-unions** — unions / type-punning / overlapping member access (endianness-exact).
@@ -220,7 +226,7 @@ Legend: **S/M/L** = rough effort. Items are roughly dependency-ordered within ea
     stream — one test point per case, with per-assertion `#` diagnostics (emu `CHECK` failures), a `1..N`
     plan, and a summary; exits non-zero on any failure. The case-suites gained an opt-in `TAP=1` mode
     (clean `ok`/`not ok` body on stdout, build noise to stderr); their default human output is unchanged.
-    47 points green.
+    48 points green.
 
 ---
 
