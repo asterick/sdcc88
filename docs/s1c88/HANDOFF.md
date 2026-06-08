@@ -29,7 +29,7 @@ _Last updated: 2026-06-08._
   the native `DIV`, multiply on native `MLT`, function pointers are 3-byte banked code pointers, and the
   call model is **S1C88 MAXIMUM mode** (3-byte CB:PC frames — `abi-decision.md` "The call model").
 - **All gates green:** corpus 20/20 byte-identical (0 sdas88 errors), emu-test 16/16 (execution),
-  diff-test 8 (host-vs-emulator), plus driver/crt0/rom/branch smokes and the `examples/hello` build.
+  diff-test 9 (host-vs-emulator), plus driver/crt0/rom/branch smokes and the `examples/hello` build.
 - Everything builds + runs **inside the sandbox** — iterate freely, no `! ...`.
 
 ## NEXT ACTION (do this)
@@ -42,7 +42,10 @@ _Last updated: 2026-06-08._
 2. **Open work — see [`TODO.md`](TODO.md) for the pointable-target menu.** Mining (#11) keeps paying out —
    this round it found+fixed the long-long/struct **return-ABI off-by-one** and surfaced a narrow
    **pointer-compare miscompile** (`#11-ptrcmp-bug`, still open). long long, unions, and pointer arithmetic
-   are now verified; **`#11-bitfields` is the next high-bug-risk module**. Code size is now measurable
+   are now verified; **`#11-bitfields` is now verified too** (264 values; found only an implementation-
+   defined-signedness *test* trap — bare `int:N` is unsigned in sdcc, signed in gcc — not a codegen bug;
+   declare bit-fields with explicit `signed`/`unsigned`). The next untested modules are `#11-structargs`
+   (struct-by-value args/copy), `#11-switch`, and `#11-fnptr2`. Code size is now measurable
    (`scripts/size-check.sh`, #12-sizeharness done), so the peephole/cost targets (`#12-redundant-moves`,
    `#12-flag-reuse`, …) and the **branch-relaxation lift (#14)** are ready to pick up. **#14a is now done**
    (`scripts/relax-analysis.sh` measured ~53% smaller user-code calls and cleared the 3-pass `fuzz`
@@ -101,7 +104,7 @@ whenever branch emission or the linker patch changes.
 ## Verify / the tools
 
 - **`./scripts/run-tests.sh` — the unified runner: builds once, runs every suite in parallel, emits one
-  TAP version 13 stream (46 points) + summary, exits non-zero on any failure.** Use this as the one-shot
+  TAP version 13 stream (47 points) + summary, exits non-zero on any failure.** Use this as the one-shot
   gate; the individual suites below are still there for focused runs (and each takes `TAP=1`).
 - `./scripts/dev.sh` — build compiler + codegen smoke test → `GREEN`.
 - `./scripts/corpus-check.sh` — byte-identical codegen + 0-error assembly across `scripts/corpus/` (20/20).
@@ -111,7 +114,7 @@ whenever branch emission or the linker patch changes.
   fully-linked program's resolved `bcall`/`bjump` slots from the relocated listing and reports the bytes
   #14b/#14c would reclaim. Measured ~53% smaller user-code calls; confirms the 3-pass `fuzz` loop converges.
 - `./scripts/emu-test.sh` — RUN `tests/emu/cases/*.c` on the vendored minimon core (16/16). Execution truth.
-- `./scripts/diff-test.sh` — compile the same C host-vs-emulator and diff the output (8 modules).
+- `./scripts/diff-test.sh` — compile the same C host-vs-emulator and diff the output (9 modules).
 - `./scripts/validate-s1c88.sh <file.asm>` — assemble emitted codegen with `sdas88`; any reject = a z80-ism.
 - `./scripts/branch-smoke.sh` — byte-lock the branch displacement convention (above).
 - `./scripts/setup-sdk.sh` — build the whole toolchain from a clean checkout (compiler → sdcpp → sdas88 →

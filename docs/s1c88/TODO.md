@@ -5,7 +5,7 @@ Status snapshot (2026-06-08): **THE CRITICAL PATH (Section A) IS DONE — the to
 game.ihx game.min` produces a bootable Pokémon Mini ROM, with the production `crt0` (real `"PM"`/
 `"NINTENDO"` header), the auto-linked `s1c88.lib`, the `<pm.h>` device header, and a C `romgen` (no
 Python). `examples/hello/` is a copy-me project; `docs/s1c88/building-roms.md` is the how-to. All gates
-green (corpus 20/20, emu-test 16/16, diff-test 8, driver/crt0/rom/branch smokes, example). **Remaining =
+green (corpus 20/20, emu-test 16/16, diff-test 9, driver/crt0/rom/branch smokes, example). **Remaining =
 Section B (quality/coverage) and Section C (documented limitations).**
 
 Legend: **S/M/L** = rough effort. Items are roughly dependency-ordered within each section.
@@ -55,8 +55,15 @@ Legend: **S/M/L** = rough effort. Items are roughly dependency-ordered within ea
     the long-long/struct return-ABI off-by-one, #18); more modules will find more. Stays open. **Pointable
     targets** — each is one new `tests/diff/cases/*.c` (+ `tests/emu/cases/*.c` for ABI-shaped ones); add,
     run corpus-check + emu-test + diff-test, fix what it surfaces:
-    - **#11-bitfields** — packed-struct bit-fields: read/write, signed vs unsigned, fields crossing byte
-      boundaries, mixed with normal members. High bug-risk, not yet covered.
+    - **#11-bitfields** — ✅ done (`tests/diff/cases/bitfields.c`, 264 values): unsigned/signed fields of
+      assorted widths, a field straddling a byte boundary, RMW that must preserve neighbours + a plain
+      member, compound-assign/`++`/`^=` on a field, and single-bit adjacency masking — all CORRECT, no
+      codegen bug. **Surfaced a soundness trap (not a bug):** the signedness of a *bare* `int x : N`
+      bit-field is implementation-defined (C11 6.7.2/5) — **sdcc treats it as UNSIGNED, gcc as signed** — so
+      a bare-int signed field diverges host-vs-target as IDB, not a miscompile. The test declares every
+      field with explicit `signed`/`unsigned` (both compilers honour that identically); recorded in the
+      case header + harness convention. Signed-field sign-extension codegen (`bit`/`rlc`/`sbc`) verified
+      correct for explicit `signed` fields.
     - **#11-structargs** — struct-by-value *arguments* + struct assignment/copy (the return side just bit us;
       args/copy are the adjacent untested half).
     - **#11-ptrarith** — ✅ done (`tests/diff/cases/ptrarith.c`, 264 values): indexing across widths,
@@ -213,7 +220,7 @@ Legend: **S/M/L** = rough effort. Items are roughly dependency-ordered within ea
     stream — one test point per case, with per-assertion `#` diagnostics (emu `CHECK` failures), a `1..N`
     plan, and a summary; exits non-zero on any failure. The case-suites gained an opt-in `TAP=1` mode
     (clean `ok`/`not ok` body on stdout, build noise to stderr); their default human output is unchanged.
-    46 points green.
+    47 points green.
 
 ---
 
