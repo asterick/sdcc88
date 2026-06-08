@@ -43,6 +43,10 @@ _farrd::
 	ld	a, (hl)
 	ld	ep, #0x00
 	ret
+_ccfn::
+	bjump	lt, _b2fn	; cross-bank CONDITIONAL: short-only signed cc to a
+				; bank-2 target -> invert-and-skip + ld nb,#2 written
+	ret
 EOF
 "$SDAS" -o "$tmp/r.rel" "$tmp/r.asm" >/dev/null 2>&1 || { echo "FAIL: assemble"; exit 1; }
 # _FAR is __far data: located at its PHYSICAL address (bank 3 = phys 0x18000..),
@@ -58,11 +62,13 @@ b1="$(hx $((0x8000-0x2100)) 3)"    # _b1fn  @ physical 0x08000
 b2="$(hx $((0x10000-0x2100)) 3)"   # _b2fn  @ physical 0x10000
 fdata="$(hx $((0x18800-0x2100)) 2)"   # _ftbl @ physical 0x18800 (the __far block)
 farrd="$(hx 13 11)"   # _farrd follows _start (two 6-byte bcall slots + ret = 13 B of _HOME)
+ccfn="$(hx 25 7)"     # _ccfn follows _farrd (12 B): the conditional cross-bank bjump slot
 echo "  _start  (phys 0x02100): $home"
 echo "  _b1fn   (phys 0x08000): $b1"
 echo "  _b2fn   (phys 0x10000): $b2"
 echo "  _ftbl   (phys 0x18800): $fdata"
 echo "  _farrd  (phys 0x0210d): $farrd"
+echo "  _ccfn   (phys 0x02119): $ccfn"
 fail=0
 case "$home" in "ce c4 01 f2"*) echo "  ok  bcall _b1fn -> ld nb,#1 ; carl (6-byte slot)";; *) echo "  FAIL bcall _b1fn bank/slot"; fail=1;; esac
 case "$b1"   in "b0 11 f8")        echo "  ok  _b1fn placed in bank 1 (ld a,#0x11 ; ret)";;  *) echo "  FAIL _b1fn placement"; fail=1;; esac
@@ -70,5 +76,8 @@ case "$b2"   in "b0 22 f8")        echo "  ok  _b2fn placed in bank 2 (ld a,#0x2
 case "$fdata" in "a5 5a")          echo "  ok  __far data at its physical address (0x18800)";; *) echo "  FAIL __far data placement"; fail=1;; esac
 # ld hl,#0x8800 ; ld a,#0x01 (page = 0x18800>>16) ; ld ep,a ; ld a,(hl) ; ld ep,#0 ; ret
 case "$farrd" in "c5 00 88 b0 01 ce cd 45 ce c5 00"*) echo "  ok  __far page byte reloc resolved (ld a,#0x01)";; *) echo "  FAIL __far page byte"; fail=1;; esac
+# bjump lt,_b2fn -> jrs ge,+7 (ce e3 07) ; ld nb,#2 (ce c4 02) ; jrl (f3 ..): the
+# invert-and-skip + cross-bank NB write composed (TODO #13 worst case).
+case "$ccfn" in "ce e3 07 ce c4 02 f3") echo "  ok  bjump lt,_b2fn -> jrs ge,+7 ; ld nb,#2 ; jrl (cross-bank conditional)";; *) echo "  FAIL conditional cross-bank bjump"; fail=1;; esac
 [ "$fail" -eq 0 ] && echo "== banked ROM pipeline GREEN ==" || echo "== ROM pipeline BROKEN =="
 exit "$fail"

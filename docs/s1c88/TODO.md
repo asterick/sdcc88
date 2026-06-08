@@ -55,15 +55,19 @@ Legend: **S/M/L** = rough effort. Items are roughly dependency-ordered within ea
     modules (longs, bitfield-heavy, deep call chains) will find more.
 12. **[L, open-ended] Peephole / cost tuning.** The standing "remaining" codegen item — size and speed
     (codegen is correct-first, not yet tuned).
-13. **[M] Conditional `bjump`/`bcall` via invert-and-skip trampolines.** *(Prerequisite for #14.)*
-    The long forms (`carl`/`jrl`) and the linker's `bjump`/`bcall` only support the basic conditions
+13. **[M] Conditional `bjump`/`bcall` via invert-and-skip trampolines — ✅ DONE** (commit `1bbe90c`).
+    The long forms (`carl`/`jrl`) and the linker's `bjump`/`bcall` only have the basic conditions
     `c/nc/z/nz`; the signed/flag conditions (`lt/ge/gt/le/v/nv/p/m/f0..nf3`) exist **only** as short
-    relative (`jrs`/`cars`, ±127). So a conditional that must reach a far / out-of-range / cross-bank
-    target needs an **invert-and-skip trampoline**: invert the short condition to skip over an
-    unconditional long branch/call — `jrs <inverted-cond>, .+<len> ; bjump/bcall target`. This generalizes
-    the assembler's task-#10 lowering (local `jp <signed cc>` → `jrs <inv>,+4 ; jrl e`) to the linker's
-    bank-switching path. Doing it first gives #14 a uniform "every conditional has a reachable long form".
-14. **[L, large lift] Linker branch relaxation (shrink `bjump`/`bcall`).** *(Depends on #13.)*
+    relative (`jrs`/`cars`, ±127). So `sdas88` lowers a signed-conditional `bjump`/`bcall` to an
+    **invert-and-skip trampoline**: `jrs <inverted-cc>, +7 ; ld nb,#<bank> ; carl|jrl target` (9 bytes) —
+    the inverted short condition hops over the unconditional 6-byte banked branch when the original
+    condition is false. The inversion table (`invcce[]`) covers all 16 CNDE conditions; the inner banked
+    branch reuses the same `R_S1C88_BANK`+`R_PCR` link resolution as the unconditional form, so the linker
+    still writes/elides `ld nb` and the disp. Coverage: `insn-size-check.sh` (9-byte size), `11_bankcc.c`
+    (execution, taken + skipped), and `rom-smoke.sh` (the cross-bank conditional worst case —
+    `bjump lt,_b2fn` → `jrs ge,+7 ; ld nb,#2 ; jrl`). Now #14 has a uniform "every conditional has a
+    reachable long form".
+14. **[L, large lift] Linker branch relaxation (shrink `bjump`/`bcall`).** *(Prerequisite #13 is ✅ DONE.)*
     Today the compiler emits `bjump`/`bcall` as the always-long bank-switching form (the linker picks the
     bank, not the *size*): worst-case `ld nb,#bank ; carl/jrl` (~6 bytes). When the resolved target is in
     the **same bank** and within relative range, the linker should shrink it to the smallest legal form —
@@ -101,7 +105,7 @@ Legend: **S/M/L** = rough effort. Items are roughly dependency-ordered within ea
 Section A (the critical path) is **done**. Float (#8) is **deprioritized** — low-value for this target,
 parked. Next, in priority order: **keep mining with the differential suite (#11)** — it's the highest-value
 correctness work, and **long long is still unverified** (start there, then bitfield-heavy code and deep
-call chains). Then the code-size/speed lift — branch relaxation (#13 → #14) and peephole/cost tuning (#12) —
+call chains). Then the code-size/speed lift — branch relaxation (#14; its #13 prerequisite is done) and peephole/cost tuning (#12) —
 plus the Section C limitation audit (#16, #17).
 (`__interrupt(n)` auto-wiring is **done** — `void f(void) __interrupt(VEC_*)` emits `_irq_v<N>` at the
 handler's entry, where N is the cart vector slot; the runner BIOS and `<pm.h>` VEC_* use the real PM

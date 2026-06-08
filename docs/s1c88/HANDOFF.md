@@ -43,7 +43,7 @@ _Last updated: 2026-06-07._
    miscompiles that byte-identical assembly never could; the untested integer/pointer territory is where
    the next correctness bugs live: **long long (currently unverified)**, bitfield-heavy code, and deep
    call chains. Add a `tests/diff/cases/*.c` module, run corpus-check + emu-test + diff-test, fix what it
-   surfaces. After that, the code-size/speed work — the branch-relaxation lift (#13 → #14) and
+   surfaces. After that, the code-size/speed work — the branch-relaxation lift (#14; #13 prerequisite done) and
    peephole/cost tuning (#12) — plus the Section C limitation audit (#16, #17).
 3. **Deprioritized — float is low-value for this target.** The one known correctness bug is the `_fsadd`
    different-sign miscompile (all float subtraction): `10.0-4.0` → `0x40C00182` not `0x40C00000`. It's a
