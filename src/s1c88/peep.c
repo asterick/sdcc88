@@ -1571,14 +1571,24 @@ int s1c88instructionSize(lineNode *pl)
   if(ISINST(pl->line, "call"))
     return(3);
 
-  /* banked pseudo-ops: the linker resolves them into at most
-     ld nb, #bank + carl/jrl (the 6-byte worst-case slot — basic conditions
-     only; sdas88 emits the NB bank byte as a single in-place reloc).
-     NOTE: this size MUST equal what the assembler actually emits — a mismatch
-     silently corrupts branch-range decisions.  scripts/insn-size-check.sh
-     guards the contract; update both together. */
+  /* banked pseudo-ops.  DYNAMIC size by condition class (matches sdas88):
+       unconditional / basic c,nc,z,nz -> ld nb,#bank ; carl/jrl[cc]      = 6
+       short-only signed/flag cc        -> jrs inv,+7 ; ld nb,#bank ; ...  = 9
+     The codegen only emits the unconditional form; the 9-byte case is for
+     hand-written `bjump/bcall <signed cc>, target`.  NOTE: these sizes MUST
+     equal what the assembler emits — a mismatch silently corrupts branch-range
+     decisions.  scripts/insn-size-check.sh guards the contract. */
   if(ISINST(pl->line, "bcall") || ISINST(pl->line, "bjump"))
-    return(6);
+    {
+      const char *p = pl->line;
+      while(*p && *p != ' ' && *p != '\t') p++;     /* skip mnemonic */
+      while(*p == ' ' || *p == '\t') p++;           /* to operand 1  */
+      if(strchr(p, ',')                              /* a cc is present, and  */
+         && strncmp(p, "c,", 2) && strncmp(p, "nc,", 3)
+         && strncmp(p, "z,", 2) && strncmp(p, "nz,", 3))  /* it's not basic   */
+        return(9);                                   /* short-only -> invert+skip */
+      return(6);
+    }
 
   /* Alias for ld a, (hl+)/(hld) etc */
   

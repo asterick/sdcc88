@@ -21,6 +21,19 @@
 char	*cpu	= "Epson S1C88";
 char	*dsft	= "asm";
 
+/*
+ * Inversion of the extended signed/flag conditions (CNDE index 0..15 -> the
+ * CE-page jrs/cars index of the OPPOSITE condition).  Pairs: lt/ge le/gt v/nv
+ * p/m fN/nfN.  Used by the invert-and-skip lowering of out-of-range / banked
+ * short-only conditionals (jp <signed cc>, and bjump/bcall <signed cc>).
+ */
+static const int invcce[16] = {
+	3, 2, 1, 0,		/* lt le gt ge */
+	5, 4, 7, 6,		/* v nv p m    */
+	12, 13, 14, 15,		/* f0..f3      */
+	8, 9, 10, 11		/* nf0..nf3    */
+};
+
 VOID
 minit()
 {
@@ -55,7 +68,7 @@ VOID
 machine(mp)
 struct mne *mp;
 {
-	int op, rf, t1, t2, v1, v2, cfb, base;
+	int op, rf, t1, t2, v1, v2, cfb, base, scc;
 	struct expr e1, e2;
 
 	clrexpr(&e1);
@@ -385,15 +398,9 @@ struct mne *mp;
 			 * (3 + 3 = 6 bytes; the jrs hops over the jrl when the
 			 * condition is false).  The compiler's peephole emits
 			 * jp cc only when the target is beyond jrs range.
-			 * Inversion pairs: lt/ge le/gt v/nv p/m fN/nfN.
+			 * Inversion table invcce[] is at file scope.
 			 */
-			static const int invcce[16] = {
-				3, 2, 1, 0,		/* lt le gt ge */
-				5, 4, 7, 6,		/* v nv p m    */
-				12, 13, 14, 15,		/* f0..f3      */
-				8, 9, 10, 11		/* nf0..nf3    */
-			};
-			outab(0xCE);
+			outab(0xCE);		/* CE-page jrs <inverted cc> */
 			outab(0xE0 + invcce[v1 & 0x0F]);
 			outab(4);		/* skip the 3-byte jrl below: rr is
 						   relative to this rr byte itself,
@@ -568,10 +575,19 @@ struct mne *mp;
 
 	case S_PCALL:		/* bcall [cc,] target — banked smart call */
 	case S_PJUMP:		/* bjump [cc,] target — banked smart jump  */
-		/* optional basic condition (c/nc/z/nz); the CE-page signed conditions
-		   are short-only and not supported by the always-long slot. */
+		/* Optional condition.  DYNAMIC slot size by condition class:
+		   - none / basic c/nc/z/nz  (have long forms): fold into the branch op ->
+		     6 bytes (ld nb,#bank ; carl/jrl[cc]).
+		   - short-only signed/flag cc (lt/ge/.../fN — no long form): lower via
+		     invert-and-skip over the UNCONDITIONAL 6-byte banked branch ->
+		     3 + 6 = 9 bytes.  Both keep matching peep.c s1c88instructionSize. */
+		scc = -1;
 		if ((v1 = admode(CND)) != 0) {
 			v1 &= 0xFF;
+			comma(1);
+		} else if ((v1 = admode(CNDE)) != 0) {
+			scc = v1 & 0x0F;		/* short-only cc -> invert-and-skip */
+			v1 = -1;			/* the inner banked branch is unconditional */
 			comma(1);
 		} else {
 			v1 = -1;			/* unconditional */
@@ -581,13 +597,20 @@ struct mne *mp;
 			op = (v1 < 0) ? 0xF2 : (0xE8 + v1);	/* carl / carl cc */
 		else
 			op = (v1 < 0) ? 0xF3 : (0xEC + v1);	/* jrl  / jrl cc  */
-		/* Emit the 6-byte slot:  ld nb,#<bank> ; <carl|jrl> target
+		if (scc >= 0) {
+			/* short-only cc: `jrs <inverted cc>, +7` hops over the 6-byte
+			   banked branch below when the condition is FALSE (so the branch
+			   is taken only when the original cc holds).  +7 = the 6-byte
+			   branch's distance past the rr byte (cf. the +4 over a 3-byte
+			   jrl in the jp lowering). */
+			outab(0xCE);
+			outab(0xE0 + invcce[scc]);
+			outab(7);
+		}
+		/* The 6-byte banked branch:  ld nb,#<bank> ; <carl|jrl> target
 		   - the NB byte carries R_S1C88_BANK as a SINGLE in-place byte (outr1be):
 		     the linker writes the target's bank (its address >> 16) there, or NOPs
-		     the whole `ld nb` when the bank is 0 (common) or the current bank.  The
-		     worst case for any unconditional or basic-cc (c/nc/z/nz) banked branch
-		     is exactly these 6 bytes — there is no short-only condition here, so no
-		     larger invert-and-skip form is reachable.
+		     the whole `ld nb` when the bank is 0 (common) or the current bank.
 		   - the displacement carries the standard R_PCR: the 16-bit write masks off
 		     the bank difference, leaving the logic-relative displacement.
 		   The bank reloc runs on a COPY (e2) — outr1be reads the expr but the

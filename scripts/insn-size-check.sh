@@ -29,6 +29,8 @@ CASES=(
   "bjump _x@6"          # ld nb,#bank ; jrl   (banked jump, 6-byte slot)
   "bcall c, _x@6"       # basic-cc banked call
   "bjump nz, _x@6"      # basic-cc banked jump
+  "bjump lt, _x@9"      # short-only signed cc -> invert-and-skip (jrs inv,+7 ; ld nb ; jrl)
+  "bcall ge, _x@9"      # short-only signed cc banked call
   "jrl _x@3"            # 16-bit relative jump
   "jrs _x@2"            # 8-bit relative jump
   "carl _x@3"
