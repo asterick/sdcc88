@@ -42,13 +42,8 @@
 ;--------------------------------------------------------------------------
 	.module crt0
 	.globl	_main
-	; the 26 maskable interrupt service routines (vector 1..26).  Referenced by
-	; the header trampolines; YOU define each.  The runtime lib defaults each one
-	; to its own standalone do-nothing RETE.
-	.globl	_irq_v1,  _irq_v2,  _irq_v3,  _irq_v4,  _irq_v5,  _irq_v6,  _irq_v7
-	.globl	_irq_v8,  _irq_v9,  _irq_v10, _irq_v11, _irq_v12, _irq_v13, _irq_v14
-	.globl	_irq_v15, _irq_v16, _irq_v17, _irq_v18, _irq_v19, _irq_v20, _irq_v21
-	.globl	_irq_v22, _irq_v23, _irq_v24, _irq_v25, _irq_v26
+	; the 26 maskable ISR symbols (_irq_v1.._irq_v26) are declared .globl + bjumped
+	; by the header trampoline loop below (one `.irp`), not enumerated here.
 	; linker-provided area bounds (for gsinit)
 	.globl	s__INITIALIZER
 	.globl	s__INITIALIZED
@@ -91,59 +86,18 @@ __sdcc_fptr::
 	.org	0x2100
 	.ascii	"PM"			; cartridge marker
 	.org	0x2102 + 6 * 0
-	bjump	__start			; vector 0 (reset) -> startup
-	.org	0x2102 + 6 * 1
-	bjump	_irq_v1
-	.org	0x2102 + 6 * 2
-	bjump	_irq_v2
-	.org	0x2102 + 6 * 3
-	bjump	_irq_v3
-	.org	0x2102 + 6 * 4
-	bjump	_irq_v4
-	.org	0x2102 + 6 * 5
-	bjump	_irq_v5
-	.org	0x2102 + 6 * 6
-	bjump	_irq_v6
-	.org	0x2102 + 6 * 7
-	bjump	_irq_v7
-	.org	0x2102 + 6 * 8
-	bjump	_irq_v8
-	.org	0x2102 + 6 * 9
-	bjump	_irq_v9
-	.org	0x2102 + 6 * 10
-	bjump	_irq_v10
-	.org	0x2102 + 6 * 11
-	bjump	_irq_v11
-	.org	0x2102 + 6 * 12
-	bjump	_irq_v12
-	.org	0x2102 + 6 * 13
-	bjump	_irq_v13
-	.org	0x2102 + 6 * 14
-	bjump	_irq_v14
-	.org	0x2102 + 6 * 15
-	bjump	_irq_v15
-	.org	0x2102 + 6 * 16
-	bjump	_irq_v16
-	.org	0x2102 + 6 * 17
-	bjump	_irq_v17
-	.org	0x2102 + 6 * 18
-	bjump	_irq_v18
-	.org	0x2102 + 6 * 19
-	bjump	_irq_v19
-	.org	0x2102 + 6 * 20
-	bjump	_irq_v20
-	.org	0x2102 + 6 * 21
-	bjump	_irq_v21
-	.org	0x2102 + 6 * 22
-	bjump	_irq_v22
-	.org	0x2102 + 6 * 23
-	bjump	_irq_v23
-	.org	0x2102 + 6 * 24
-	bjump	_irq_v24
-	.org	0x2102 + 6 * 25
-	bjump	_irq_v25
-	.org	0x2102 + 6 * 26
-	bjump	_irq_v26
+	bjump	__start			; slot 0 (reset) -> startup
+	; slots 1..26 -> _irq_v1 .. _irq_v26.  The `'n` operator pastes the .irp
+	; value n onto `_irq_v` to build each symbol name (declared + referenced),
+	; so the 26 vectors are never enumerated by hand; the per-slot `.org` keeps
+	; every slot pinned to its exact address (0x2102 + 6*n).  YOU define each
+	; _irq_v<N> (or via `__interrupt(N)`); the runtime lib defaults each one to
+	; its own standalone do-nothing RETE.
+	.irp	n,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26
+	.globl	_irq_v'n
+	.org	0x2102 + 6 * n
+	bjump	_irq_v'n
+	.endm
 	.org	0x2102 + 6 * 27		; = 0x21A4
 	.ascii	"NINTENDO"		; BIOS watermark (required)
 

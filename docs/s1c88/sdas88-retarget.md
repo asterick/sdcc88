@@ -108,3 +108,15 @@ by *opcode* (rare — most differ)**; the authority is App. A.
 A round-trip oracle: hand-assemble a few instructions per App. A, feed them to `sdas88`, and diff the
 `.rel` `T` (text) records against the expected bytes. Once the emitted-codegen subset assembles cleanly,
 `sdas88` becomes the real validator the codegen retarget has been missing.
+
+## Macro idioms (ASxxxx-inherited)
+
+sdas88 keeps the stock ASxxxx macro processor (`asmcro.c`). Two non-obvious features the runtime relies on:
+
+- **`.irp p, a,b,c …` / `.endm`** — repeat the block once per list item, substituting parameter `p`.
+- **`'` (apostrophe) = the token-paste operator** — inside a macro/`.irp` body, `_irq_v'p` pastes the
+  *value* of parameter `p` onto the adjacent identifier (the `'` is consumed), so `.irp p,1,2` →
+  `_irq_v1`, `_irq_v2`. It only substitutes **macro/irp parameters**, not ordinary `.set` symbols, and
+  the operator is `'`, **not** `\` (which sdas leaves literal). This is what lets `device/lib/s1c88/crt0.s`
+  generate the 27-slot cartridge IRQ vector table (`bjump _irq_v'n` + `.globl _irq_v'n`, each `.org`-pinned)
+  from a single `.irp` over `1..26` instead of 54 hand-written lines — byte-identical output.
