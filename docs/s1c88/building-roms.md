@@ -100,8 +100,7 @@ low-memory vector table. Instead the crt0 header has a `bjump` trampoline per
 vector (`bjump _irq_v<N>` at `0x2102 + 6*N`); the BIOS routes IRQ N there, and it
 jumps to the handler symbol `irq_v<N>`. **To handle vector N, just define
 `irq_v<N>`** as an `__interrupt` function — the symbol overrides the library's
-default for that one vector (the default is a redirect to the shared
-`_irq_default` handler, below):
+do-nothing default for that one vector:
 
 ```c
 #include <pm.h>
@@ -121,13 +120,10 @@ int main(void) {
 
 The `VEC_*` constants in `<pm.h>` give the vector numbers (so `VEC_TIM0` → `irq_v8`).
 Handlers can live in any bank (the trampoline `bjump` resolves it). Vectors you
-don't define keep the library default, which redirects (`jrl _irq_default`) to one
-shared **`_irq_default`** stub — a do-nothing `rete`. **Define `irq_default` as an
-`__interrupt` function to catch every otherwise-unhandled vector in one place**
-(e.g. to trap or log a stray IRQ); it overrides only the vectors you haven't given
-a specific `irq_v<N>`. (A friendlier `__interrupt(N)` auto-wiring — so you don't
-number vectors by hand — is a planned follow-up.) `scripts/crt0-isr-smoke.sh`
-exercises this end to end.
+don't define keep the library default — each unresolved vector decomposes to its
+own standalone do-nothing `rete` (there is no shared default handler). (A friendlier
+`__interrupt(N)` auto-wiring — so you don't number vectors by hand — is a planned
+follow-up.) `scripts/crt0-isr-smoke.sh` exercises this end to end.
 
 ## 6. Verifying
 

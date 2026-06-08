@@ -40,9 +40,8 @@
 	.module crt0
 	.globl	_main
 	; the 26 maskable interrupt service routines (vector 1..26).  Referenced by
-	; the header trampolines; YOU define each.  The runtime lib defaults each to a
-	; redirect to _irq_default (a do-nothing RETE you can ALSO override once to
-	; catch every unhandled vector).
+	; the header trampolines; YOU define each.  The runtime lib defaults each one
+	; to its own standalone do-nothing RETE.
 	.globl	_irq_v1,  _irq_v2,  _irq_v3,  _irq_v4,  _irq_v5,  _irq_v6,  _irq_v7
 	.globl	_irq_v8,  _irq_v9,  _irq_v10, _irq_v11, _irq_v12, _irq_v13, _irq_v14
 	.globl	_irq_v15, _irq_v16, _irq_v17, _irq_v18, _irq_v19, _irq_v20, _irq_v21

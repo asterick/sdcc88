@@ -63,22 +63,15 @@ for r in $LIB_INT $LIB_LONG $LIB_LIBC; do
 done
 
 # --- default interrupt vectors --------------------------------------------
-# crt0's header trampolines bjump to _irq_v1.._irq_v26.  Each defaults (in the
-# lib) to a redirect to the SHARED _irq_default handler, so:
-#   * a program that uses no interrupts links fine (every vector -> _irq_default);
-#   * `void irq_default(void) __interrupt` overrides the default for ALL unhandled
-#     vectors at once (e.g. to trap/log a stray IRQ);
-#   * `void irq_vN(void) __interrupt` overrides one vector (its redirect module is
-#     no longer pulled).
-# Each is a SEPARATE module so the linker pulls only what isn't user-defined.
+# crt0's header trampolines bjump to _irq_v1.._irq_v26.  Provide a do-nothing
+# (RETE) default for each as a SEPARATE library module, so a program links even
+# if it defines none, and overriding one vector (define `void irq_vN(void)
+# __interrupt`) pulls only the remaining defaults.  Each unresolved vector
+# decomposes to its OWN standalone RETE (no shared default handler).
 # (Future: __interrupt(N) auto-wiring so the user doesn't number vectors by hand.)
-echo ">> building default interrupt vectors (_irq_default + irq_v1..irq_v26)"
-printf '\t.module irq_default\n\t.globl _irq_default\n\t.area _CODE\n_irq_default::\n\trete\n' > "${TMP}/irq_default.s"
-"$SDAS" -o "${LIBDIR}/irq_default.rel" "${TMP}/irq_default.s" 2>"${TMP}/e" \
-  || { echo "!! irq_default FAILED:"; sed 's/^/    /' "${TMP}/e" | head; exit 1; }
-members="${members}irq_default"$'\n'
+echo ">> building default interrupt vectors (irq_v1..irq_v26)"
 for n in $(seq 1 26); do
-  printf '\t.module irq_v%s\n\t.globl _irq_v%s\n\t.globl _irq_default\n\t.area _CODE\n_irq_v%s::\n\tjrl _irq_default\n' "$n" "$n" "$n" > "${TMP}/irq_v${n}.s"
+  printf '\t.module irq_v%s\n\t.globl _irq_v%s\n\t.area _CODE\n_irq_v%s::\n\trete\n' "$n" "$n" "$n" > "${TMP}/irq_v${n}.s"
   "$SDAS" -o "${LIBDIR}/irq_v${n}.rel" "${TMP}/irq_v${n}.s" 2>"${TMP}/e" \
     || { echo "!! irq_v${n} FAILED:"; sed 's/^/    /' "${TMP}/e" | head; exit 1; }
   members="${members}irq_v${n}"$'\n'
