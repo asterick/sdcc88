@@ -1,31 +1,48 @@
 /* hello.c — a minimal Pokémon Mini ROM built with sdcc88.
  *
- * Demonstrates the device header (<pm.h>) and the C runtime (the support library
- * is auto-linked, e.g. the division below). Build with the Makefile in this dir:
- *
  *     make            -> hello.min   (a flat Pokémon Mini ROM image)
  *     make run        -> build + run on the bundled emulator
  *
- * On real hardware main() would normally loop forever driving the game; here it
- * returns a value so the test harness/emulator sees a clean exit (the production
- * crt0 stores the return value and halts).
+ * It greets the world and prints a number computed with the support library
+ * (the decimal conversion uses the runtime divide/modulo from s1c88.lib).
+ *
+ * Output channel: real Pokémon Mini hardware has no text console — you draw to
+ * the LCD through the PRC (see the PRC registers, OAM and TILEMAP in <pm.h>). The development
+ * emulator instead exposes a debug console at the top of RAM: storing a byte at
+ * 0x1FF8 prints it on the host.  This example uses that so `make run` shows
+ * something; swap in PRC drawing for a real cartridge.
  */
 #include <pm.h>
 
+#define CONSOLE  (*(volatile unsigned char *)0x1FF8)   /* emulator debug console */
+
+static void cputs(const char *s)
+{
+    while (*s)
+        CONSOLE = (unsigned char) *s++;
+}
+
+static void cputu(unsigned int v)          /* print v in decimal */
+{
+    char buf[5];
+    unsigned char i = 0;
+    if (v == 0) { CONSOLE = '0'; return; }
+    while (v) {                            /* %/ are the s1c88.lib divide/modulo */
+        buf[i++] = (char) ('0' + v % 10u);
+        v /= 10u;
+    }
+    while (i)
+        CONSOLE = (unsigned char) buf[--i];
+}
+
 int main(void)
 {
-    /* --- configure the program-rendering chip (display) --- */
-    PRC_RATE = RATE_24FPS;
-    PRC_MODE = MAP_ENABLE | COPY_ENABLE | MAP_24X16;   /* 192x128 tile map */
+    unsigned int n = 1000;
 
-    /* --- read the key pad (active low: a pressed key reads 0) --- */
-    unsigned char keys = (unsigned char) ~KEY_PAD;
+    cputs("Hello, Pokemon Mini!\n");
+    cputs("1000 / 7 = ");
+    cputu(n / 7u);                          /* 142 */
+    CONSOLE = '\n';
 
-    /* --- a little arithmetic to exercise the runtime/support library --- */
-    int score = 1000;
-    int lives = 7;
-    int avg   = score / lives;        /* __divsint from s1c88.lib: 142 */
-
-    /* Return something deterministic so `make run` can check it (== 42). */
-    return (avg - 100) + (keys & 0) ;  /* 142 - 100 = 42 */
+    return 0;                               /* the crt0 halts; exit code 0 = ok */
 }
