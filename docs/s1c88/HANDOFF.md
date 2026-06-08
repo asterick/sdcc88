@@ -55,11 +55,13 @@ _Last updated: 2026-06-08._
    had no `cp ba, X` case, so `argCont` never saw the `hl` operand and the peephole deleted the right-address
    build); regression in `16_ptrcmp.c` + `ptrarith.c`. **The #11 pointable-target menu is now exhausted with
    no open mining bugs.** Code size is now measurable
-   (`scripts/size-check.sh`, #12-sizeharness done), so the peephole/cost targets (`#12-redundant-moves`,
-   `#12-flag-reuse`, …) and the **branch-relaxation lift (#14)** are ready to pick up. **#14a is now done**
-   (`scripts/relax-analysis.sh` measured ~53% smaller user-code calls and cleared the 3-pass `fuzz`
-   feasibility gate) — the next relaxation step is **#14b** (same-area assembler relaxation: a same-area-aware
-   `ls_mode` + ~30-line bit table in `s1c88mch.c`; no `asmain.c` change needed).
+   (`scripts/size-check.sh`, #12-sizeharness done). **#14a + #14b (assembler same-module branch
+   relaxation) are now DONE** — same-area `bcall`/`bjump` drop the `ld nb` and emit a 2-byte `cars`/`jrs`
+   (or 3-byte `carl`/`jrl`) instead of the 6-byte linker slot, chosen via a `setbit`/`getbit` bit table in
+   `s1c88mch.c` (no `asmain.c` change). Relax-analysis opportunity collapsed 45→2 user slots; corpus ROM
+   8460→8452; intra-module calls widely lower to 2-byte `cars`. The remaining lift is **#14c** (linker
+   cross-module relaxation — the hard reflow, deferrable) and the **#12 peephole/cost targets**
+   (`#12-redundant-moves`, `#12-flag-reuse`, `#12-peep-audit`, …).
    Section C (#16 traps, #17 const-data) is done (documented + guarded). The z80-artifact scrub is B+C done,
    A/D/F deferred (#20).
 3. **Deprioritized — float is low-value for this target.** The one known correctness bug is the `_fsadd`

@@ -12,10 +12,16 @@
 # compiler but the assembler emitted 7 (an extra pad byte), so the assembler and
 # linker disagreed on the slot format.
 #
-# The table below pins (asm line -> expected bytes).  EVERY expected value MUST
-# equal what `s1c88instructionSize` returns for that mnemonic — keep them in sync.
-# A relocatable operand is used where the form differs by target distance, so the
-# assembler emits its fixed worst-case slot (what the compiler sizes against).
+# The table below pins (asm line -> expected bytes).  Two contracts:
+#  - WORST-CASE slot (target is the EXTERNAL symbol `_ext`, i.e. cross-area): this
+#    is what the COMPILER sizes against — EVERY such expected value MUST equal what
+#    `s1c88instructionSize` returns for that mnemonic.  The compiler cannot know a
+#    target's area/distance at compile time, so it always sizes the worst case.
+#  - RELAXED form (target is the LOCAL same-area label `_x`, TODO #14b): the
+#    assembler drops `ld nb` and emits the minimal relative form (2/3 B).  These
+#    lock the relaxation so a regression is caught; the compiler's worst-case size
+#    is a safe UPPER BOUND over them.
+# A case ending `:local` references `_x` (same-area); otherwise `_ext` (external).
 set -uo pipefail
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 SDAS="${REPO}/build/sdcc-4.5.0/bin/sdas88"
@@ -23,14 +29,21 @@ SDAS="${REPO}/build/sdcc-4.5.0/bin/sdas88"
 
 OUT="$(mktemp -d)"; trap 'rm -rf "$OUT"' EXIT
 
-# "asm line@expected"  (peep.c s1c88instructionSize must agree)
+# "asm line@expected"  ('_ext' = external worst-case = compiler size; '_x' = same-area relaxed)
 CASES=(
-  "bcall _x@6"          # ld nb,#bank ; carl  (banked call, 6-byte slot)
-  "bjump _x@6"          # ld nb,#bank ; jrl   (banked jump, 6-byte slot)
-  "bcall c, _x@6"       # basic-cc banked call
-  "bjump nz, _x@6"      # basic-cc banked jump
-  "bjump lt, _x@9"      # short-only signed cc -> invert-and-skip (jrs inv,+7 ; ld nb ; jrl)
-  "bcall ge, _x@9"      # short-only signed cc banked call
+  # worst-case linker slots (cross-area) — must match peep.c s1c88instructionSize
+  "bcall _ext@6"        # ld nb,#bank ; carl  (banked call, 6-byte slot)
+  "bjump _ext@6"        # ld nb,#bank ; jrl   (banked jump, 6-byte slot)
+  "bcall c, _ext@6"     # basic-cc banked call
+  "bjump nz, _ext@6"    # basic-cc banked jump
+  "bjump lt, _ext@9"    # short-only signed cc -> invert-and-skip (jrs inv,+7 ; ld nb ; jrl)
+  "bcall ge, _ext@9"    # short-only signed cc banked call
+  # relaxed same-area forms (TODO #14b) — drop ld nb, minimal relative form
+  "bcall _x@2"          # same-area uncond call -> cars d8
+  "bjump _x@2"          # same-area uncond jump -> jrs d8
+  "bcall c, _x@2"       # same-area basic-cc call -> cars c, d8
+  "bjump nz, _x@2"      # same-area basic-cc jump -> jrs nz, d8
+  # fixed relative branches (size-invariant)
   "jrl _x@3"            # 16-bit relative jump
   "jrs _x@2"            # 8-bit relative jump
   "carl _x@3"
@@ -42,7 +55,8 @@ CASES=(
 fail=0
 for c in "${CASES[@]}"; do
   line="${c%@*}"; want="${c##*@}"
-  printf '\t.globl _x\n\t.area _T\n%s\n_x:\n' "$line" > "${OUT}/t.s"
+  # `_x` is defined locally (same area); `_ext` stays external (cross-area worst case).
+  printf '\t.globl _x\n\t.globl _ext\n\t.area _T\n%s\n_x:\n' "$line" > "${OUT}/t.s"
   if ! "$SDAS" -o "${OUT}/t.rel" "${OUT}/t.s" 2>"${OUT}/e"; then
     echo "  FAIL  '$line' did not assemble:"; sed 's/^/        /' "${OUT}/e" | head -3; fail=1; continue
   fi

@@ -34,10 +34,60 @@ static const int invcce[16] = {
 	8, 9, 10, 11		/* nf0..nf3    */
 };
 
+/*
+ * Branch-relaxation bit table (TODO #14b).  sdas runs a FIXED 3-pass sequencer
+ * (asmain.c `for(pass=0;pass<3)`), not an iterate-to-fixpoint loop.  A relaxing
+ * branch must therefore RECORD its short/long choice so the decision is stable
+ * between the sizing pass (1) and the output pass (2).  One bit per relaxed
+ * same-area `bcall`/`bjump` site, consumed in instruction order: pass 1 records
+ * via setbit(), pass 2 replays via getbit().  (Mechanism ported from asstm8 /
+ * asf8.)  The scheme is monotone — pass 0 sizes every slot at its upper bound,
+ * pass 1 only ever shrinks, so a branch that fit can never stop fitting.
+ */
+#define	NB	512
+static unsigned	*bp;		/* current word in the bit table */
+static unsigned	bm;		/* current bit mask within *bp */
+static unsigned	bb[NB];		/* the bit table (NB*32 sites) */
+
+/* record decision b (1 = long); advance.  Table overflow forces long. */
+static unsigned
+setbit(unsigned b)
+{
+	if (bp >= &bb[NB])
+		return(1);
+	if (b)
+		*bp |= bm;
+	bm <<= 1;
+	if (bm == 0) {
+		bm = 1;
+		++bp;
+	}
+	return(b);
+}
+
+/* replay the next recorded decision; advance.  Overflow forces long. */
+static unsigned
+getbit()
+{
+	unsigned f;
+
+	if (bp >= &bb[NB])
+		return(1);
+	f = *bp & bm;
+	bm <<= 1;
+	if (bm == 0) {
+		bm = 1;
+		++bp;
+	}
+	return(f != 0);
+}
+
 VOID
 minit()
 {
 	hilo = 0;		/* S1C88 is little-endian */
+	bp = bb;		/* reset the relaxation bit table for each pass */
+	bm = 1;
 	exprmasks(3);		/* 24-bit address space (XL3) — matches the S1C88 CB:PC/EP:offset
 				   model, and the byte-extraction reloc collapse (R_BYT3/R_HIB —
 				   the __far page byte) is only correct in the 3-byte record format
@@ -593,6 +643,59 @@ struct mne *mp;
 			v1 = -1;			/* unconditional */
 		}
 		expr(&e1, 0);				/* the (link-resolved) target */
+
+		/*
+		 * TODO #14b — SAME-MODULE relaxation.  When the target is in the
+		 * CURRENT area it is in the same code bank, so drop the `ld nb`
+		 * entirely and emit the minimal RELATIVE form (cars/jrs d8 = 2 B,
+		 * or carl/jrl d16 = 3 B) instead of the 6-byte linker slot — the
+		 * intra-area displacement is a link-time constant we compute here.
+		 * Short-vs-long is chosen via the cross-pass bit table.  Only the
+		 * unconditional and basic-cc forms relax (scc < 0); signed-cc
+		 * same-area and every cross-area target fall through to the fixed
+		 * linker-resolved slot below, unchanged.  Watch the displacement
+		 * convention (one byte earlier than z80 — see S_JRS / S_JRL).
+		 */
+		if (scc < 0 && e1.e_flag == 0 && e1.e_base.e_ap == dot.s_area) {
+			int useLong;
+			int disp;
+
+			if (pass == 0) {
+				useLong = 1;		/* pass 0: upper bound */
+			} else if (pass == 1) {
+				struct expr et = e1;
+				if (et.e_addr >= dot.s_addr)
+					et.e_addr -= fuzz;	/* forward-ref fuzz correction */
+				disp = (int) (et.e_addr - dot.s_addr - 1);	/* short-form d8 (rel to disp byte) */
+				useLong = (disp < -128 || disp > 127);
+				setbit(useLong);
+			} else {
+				useLong = getbit();
+			}
+
+			if (!useLong) {
+				/* cars/jrs [cc,] d8 — 2 bytes */
+				if (v1 < 0)
+					outab(rf == S_PCALL ? 0xF0 : 0xF1);
+				else
+					outab((rf == S_PCALL ? 0xE0 : 0xE4) + v1);
+				disp = (int) (e1.e_addr - dot.s_addr);	/* rel to the disp byte itself */
+				if (pass == 2 && (disp < -128 || disp > 127))
+					xerr('a', "Branching Range Exceeded.");
+				outab(disp);
+			} else {
+				/* carl/jrl [cc,] d16 — 3 bytes */
+				if (v1 < 0)
+					outab(rf == S_PCALL ? 0xF2 : 0xF3);
+				else
+					outab((rf == S_PCALL ? 0xE8 : 0xEC) + v1);
+				disp = (int) (e1.e_addr - dot.s_addr - 1);	/* qqrr rel to (first disp byte + 1) */
+				outab(disp & 0xFF);
+				outab((disp >> 8) & 0xFF);
+			}
+			break;
+		}
+
 		if (rf == S_PCALL)
 			op = (v1 < 0) ? 0xF2 : (0xE8 + v1);	/* carl / carl cc */
 		else

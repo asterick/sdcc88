@@ -165,13 +165,26 @@ Legend: **S/M/L** = rough effort. Items are roughly dependency-ordered within ea
       ALL relocatable operands (`e_base.e_ap != 0` → forced long); same-module relaxation must extend it to
       the **same-area** relocatable case (displacement `= e_addr − dot.s_addr`, known each pass) and add the
       ~30-line bit table to `s1c88mch.c`. Run-it: `scripts/relax-analysis.sh [prog.c …]` (report-only).
-    - **#14b [M] — assembler same-module relaxation (the big practical win, NO linker reflow).** Most calls
-      are intra-module (same `_CODE` area). When the target is in the current area, the displacement is known
-      each pass, so the assembler can emit the minimal form directly, letting ASxxxx's existing `fuzz`
-      multi-pass loop converge the sizes. Cross-area/external targets keep the fixed 6/9-byte linker slot
-      (unchanged). Sub-steps: (i) unconditional same-area (`carl`/`jrl`, drop `ld nb`); (ii) `cars`/`jrs`
-      short form when in ±range; (iii) basic-cc; (iv) signed-cc (plain short `jrs <cc>` vs the #13
-      trampoline). Mind the branch-displacement convention (one byte earlier than z80) at each form.
+    - **#14b [M] — assembler same-module relaxation (the big practical win, NO linker reflow). — ✅ DONE.**
+      `s1c88mch.c` `S_PCALL`/`S_PJUMP`: when the target is in the CURRENT area (`e1.e_flag==0 &&
+      e1.e_base.e_ap==dot.s_area`) it is same-bank, so the `ld nb` is dropped and the minimal RELATIVE form
+      is emitted directly — `cars`/`jrs d8` (2 B) when the displacement fits ±127, else `carl`/`jrl d16`
+      (3 B) — vs the 6-byte linker slot. Short-vs-long is chosen via a per-target `setbit`/`getbit` bit table
+      (ported from asstm8/asf8): pass 0 sizes long (upper bound), pass 1 records the fit decision (with the
+      `fuzz` forward-ref correction), pass 2 replays it — so pass-1/pass-2 layouts are identical and the
+      pass-2 displacement is exact (a pass-2 range check loudly catches any wrong short choice). Done:
+      (i) unconditional + (ii) short-form-when-in-range + (iii) basic-cc. **Deferred (low value):** signed-cc
+      same-area (scc≥0) still falls through to the #13 9-byte trampoline (correct, just not shrunk) — rare,
+      and the win is in the unconditional `bcall`. Cross-area/external/signed-cc targets keep the fixed
+      6/9-byte linker slot, unchanged. **Validated:** insn-size-check locks both the worst-case slots
+      (external target → 6/9 B = the compiler's `s1c88instructionSize`) and the relaxed forms (same-area →
+      2 B); emu 16/16 + diff 12/12 (the harness `diff_e*`/`diff_tag` helpers are intra-module calls that now
+      relax to 2-byte `cars`, exercising the multi-pass fuzz convergence under execution); corpus stays
+      byte-identical (compiler output unchanged); rom/crt0/driver smokes green; relax-analysis opportunity
+      collapsed 45→2 user slots (~137 B reclaimed across examples/hello + relax/{fixmath,sprite}); corpus
+      ROM baseline 8460→8452. The compiler keeps sizing `bcall`/`bjump` at the worst case (6/9) — it can't
+      know a target's area at compile time, and over-sizing only makes its own jr-range calc conservative
+      (safe). Mind the branch-displacement convention (one byte earlier than z80) — reused from S_CARS/S_CARL.
     - **#14c [L] — linker cross-module relaxation (the hard reflow, deferrable).** For cross-area/cross-module
       calls, add the relaxation pass sdld lacks: after area placement, iteratively shrink in-range same-bank
       slots and reflow subsequent addresses/symbols/relocs to a fixpoint, then re-emit. Itself staged: (i)

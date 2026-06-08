@@ -263,7 +263,23 @@ half:
 | same bank, signed-cc, out of `jrs` range | `jrs <inv>,+4 ; jrl d16` (#13-style, no `ld nb`) | 6 |
 | cross bank | `ld nb,#bank ; <branch>` | +3 |
 
-### #14b — assembler-side, SAME-MODULE (the practical win, no linker change)
+### #14b — assembler-side, SAME-MODULE (the practical win, no linker change) — ✅ DONE
+
+**Implemented** in `s1c88mch.c` `S_PCALL`/`S_PJUMP`: when `e1.e_flag==0 && e1.e_base.e_ap
+== dot.s_area` (target in the current area ⇒ same bank), drop the `ld nb` and emit the
+minimal relative form — `cars`/`jrs d8` (2 B) if the displacement fits ±127, else
+`carl`/`jrl d16` (3 B). Short/long is chosen via a per-target `setbit`/`getbit` bit table
+(ported from asstm8/asf8; reset in `minit()`): pass 0 sizes long (upper bound), pass 1
+records the decision with the `fuzz` forward-ref correction, pass 2 replays it — so the
+pass-1/pass-2 layouts match and the pass-2 displacement is exact (a pass-2 range check
+loudly catches a wrong short choice). Unconditional + basic-cc relax; signed-cc same-area
+(scc≥0) and all cross-area/external targets fall through to the fixed 6/9-byte slot,
+unchanged. The compiler still sizes the worst case (6/9) in `s1c88instructionSize` — it
+can't know a target's area at compile time, and over-sizing only makes its own jr-range
+calc conservative (safe). Measured: relax-analysis opportunity collapsed 45→2 user slots;
+in real multi-function objects intra-module `bcall` widely lowers to 2-byte `cars`.
+
+The original design notes follow.
 
 A call to another function in the **same `_CODE` area** (the common intra-module case)
 has a displacement the assembler can compute each pass. ASxxxx already runs a
