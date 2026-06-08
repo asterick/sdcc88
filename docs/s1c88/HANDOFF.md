@@ -60,8 +60,10 @@ _Last updated: 2026-06-08._
    (or 3-byte `carl`/`jrl`) instead of the 6-byte linker slot, chosen via a `setbit`/`getbit` bit table in
    `s1c88mch.c` (no `asmain.c` change). Relax-analysis opportunity collapsed 45→2 user slots; corpus ROM
    8460→8452; intra-module calls widely lower to 2-byte `cars`. The remaining lift is **#14c** (linker
-   cross-module relaxation — the hard reflow, deferrable) and the **#12 peephole/cost targets**
-   (`#12-redundant-moves`, `#12-flag-reuse`, `#12-peep-audit`, …).
+   cross-module relaxation — the hard reflow, deferrable) and the **#12 peephole/cost targets**.
+   **#12-peep-audit is now done** — dropped 4 dead z80 rules and enabled BA as a peephole scratch pair
+   (`isRegPair`/`canSplitReg` + the `unusedReg` lists), resurrecting 3 rules that never fired and saving
+   −20 B on the corpus (e.g. `ld a,#x ; ld b,#0` → `ld ba,#x`). Next: `#12-flag-reuse`, `#12-redundant-moves`.
    Section C (#16 traps, #17 const-data) is done (documented + guarded). The z80-artifact scrub is B+C done,
    A/D/F deferred (#20).
 3. **Deprioritized — float is low-value for this target.** The one known correctness bug is the `_fsadd`
