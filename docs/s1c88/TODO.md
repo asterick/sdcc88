@@ -5,7 +5,7 @@ Status snapshot (2026-06-07): **THE CRITICAL PATH (Section A) IS DONE — the to
 game.ihx game.min` produces a bootable Pokémon Mini ROM, with the production `crt0` (real `"PM"`/
 `"NINTENDO"` header), the auto-linked `s1c88.lib`, the `<pm.h>` device header, and a C `romgen` (no
 Python). `examples/hello/` is a copy-me project; `docs/s1c88/building-roms.md` is the how-to. All gates
-green (corpus 20/20, emu-test 13/13, diff-test 5, driver/crt0/rom/branch smokes, example). **Remaining =
+green (corpus 20/20, emu-test 15/15, diff-test 6, driver/crt0/rom/branch smokes, example). **Remaining =
 Section B (quality/coverage) and Section C (documented limitations).**
 
 Legend: **S/M/L** = rough effort. Items are roughly dependency-ordered within each section.
@@ -130,7 +130,12 @@ Legend: **S/M/L** = rough effort. Items are roughly dependency-ordered within ea
     const overflowing the common bank) is now a **loud `romgen` error** on any non-banked content past
     logic `0x7FFF`. (The literal "lift" — page-aware plain const pointers — was rejected: it would regress
     every const pointer to 3-byte/slower to duplicate what `__far const` already does.)
-18. **float / long long correctness** — float subtraction is the open #8 bug; long long is unverified.
+18. **float / long long correctness** — float subtraction is the open #8 bug (deprioritized). **long long
+    is now VERIFIED** (`tests/diff/cases/longlong.c`): binops/shifts/casts/return-ABI host-vs-emulator clean.
+    Mining it found + fixed a real miscompile — struct/long-long **return-by-value** dropped the 3-byte
+    max-mode return frame in the hidden-pointer offset for leaf (frame-ptr-omitted) functions (genRet); the
+    byte-identical corpus never caught it (baseline encoded the bug), only execution did. Regression tests:
+    `14_llret`, `15_structret`.
 19. **Structured test runner — ✅ DONE.** `scripts/run-tests.sh` builds the compiler once, runs every
     suite (corpus / emu / diff / toolchain smokes) **in parallel**, and emits one **TAP version 13**
     stream — one test point per case, with per-assertion `#` diagnostics (emu `CHECK` failures), a `1..N`

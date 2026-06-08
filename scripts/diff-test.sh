@@ -68,12 +68,14 @@ OUT="$(mktemp -d)"; trap 'rm -rf "$OUT"' EXIT
 #     (and their transitive deps) — float pulls ~25 routines, int cases pull none. ---
 "$SDAS" -o "${OUT}/crt0.rel" "${EMU}/crt0.asm" || { echo "!! crt0 assemble FAILED"; exit 1; }
 RT_INT="_mulint _mullong _divuint _divsint _moduint _modsint _divulong _divslong _modulong _modslong"
+RT_LL="_mullonglong _divulonglong _divslonglong _modulonglong _modslonglong \
+       _slulonglong _slslonglong _srulonglong _srslonglong"
 RT_FLOAT="_fsadd _fssub _fsmul _fsdiv _fseq _fslt _fscmp \
           _fsget1arg _fsget2args _fsnormalize _fsreturnval _fsrshift _fsswapargs \
           _fs2schar _fs2sint _fs2slong _fs2uchar _fs2uint _fs2ulong \
           _schar2fs _sint2fs _slong2fs _uchar2fs _uint2fs _ulong2fs"
 : > "${OUT}/rt.lib"
-for r in $RT_INT $RT_FLOAT; do
+for r in $RT_INT $RT_LL $RT_FLOAT; do
   if ! cc -E -P -x c -I "${SDCC}/device/include" -D_SDCC_NO_ASM_LIB_FUNCS \
         "${SDCC}/device/lib/${r}.c" > "${OUT}/${r}.i" 2>"${OUT}/err" \
      || ! "$SDCCBIN" -ms1c88 --c1mode -o "${OUT}/${r}.asm" < "${OUT}/${r}.i" 2>"${OUT}/err" \

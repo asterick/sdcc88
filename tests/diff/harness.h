@@ -37,13 +37,15 @@
 typedef uint8_t  u8;  typedef int8_t  i8;
 typedef uint16_t u16; typedef int16_t i16;
 typedef uint32_t u32; typedef int32_t i32;
+typedef uint64_t u64; typedef int64_t i64;
 typedef float    f32;     /* IEEE 754 binary32 — same layout as the target's float */
 static void diff_putc(char c) { putchar((unsigned char)c); }
 #else
-/* sdcc88: char=8, int=16, long=32 — width-exact to the host typedefs above */
+/* sdcc88: char=8, int=16, long=32, long long=64 — width-exact to the host typedefs */
 typedef unsigned char u8;  typedef signed char i8;
 typedef unsigned int  u16; typedef int          i16;
 typedef unsigned long u32; typedef long         i32;
+typedef unsigned long long u64; typedef long long i64;
 typedef float         f32;
 #define DIFF_CHAR_OUT (*(volatile unsigned char *)0x1FF8)
 static void diff_putc(char c) { DIFF_CHAR_OUT = (unsigned char)c; }
@@ -82,14 +84,26 @@ static void diff_e4(const char *tag, u32 v)
     diff_nl();
 }
 
-/* tag:hh[hh[hhhh]]\n  big-endian hex; each macro truncates to its width (the
-   two's-complement bit pattern), identical on host and target — see SOUNDNESS. */
+/* 8-byte (long long) emitter — one u64 arg only (no char alongside; same ABI
+   caution as the others). Big-endian hex of the 64-bit two's-complement pattern. */
+static void diff_e8(const char *tag, u64 v)
+{
+    diff_tag(tag);
+    diff_hex2((u8)(v >> 56)); diff_hex2((u8)(v >> 48)); diff_hex2((u8)(v >> 40)); diff_hex2((u8)(v >> 32));
+    diff_hex2((u8)(v >> 24)); diff_hex2((u8)(v >> 16)); diff_hex2((u8)(v >> 8));  diff_hex2((u8)v);
+    diff_nl();
+}
+
+/* tag:hh[hh[hhhh[hhhhhhhh]]]\n  big-endian hex; each macro truncates to its width
+   (the two's-complement bit pattern), identical on host and target — see SOUNDNESS. */
 #define EMIT_U8(tag, x)  diff_e1((tag), (u32)(u8)(x))
 #define EMIT_I8(tag, x)  diff_e1((tag), (u32)(u8)(i8)(x))
 #define EMIT_U16(tag, x) diff_e2((tag), (u32)(u16)(x))
 #define EMIT_I16(tag, x) diff_e2((tag), (u32)(u16)(i16)(x))
 #define EMIT_U32(tag, x) diff_e4((tag), (u32)(x))
 #define EMIT_I32(tag, x) diff_e4((tag), (u32)(i32)(x))
+#define EMIT_U64(tag, x) diff_e8((tag), (u64)(x))
+#define EMIT_I64(tag, x) diff_e8((tag), (u64)(i64)(x))
 
 /* EMIT_F32 emits the 32-bit IEEE-754 bit pattern of a float, so the comparison is
    BIT-EXACT. Both sides store binary32 little-endian, so reinterpreting the float

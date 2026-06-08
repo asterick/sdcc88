@@ -6314,7 +6314,7 @@ genRet (const iCode *ic)
                      `(hl)`), so this works for any frame offset.  `off` is
                      computed after the push so it includes the saved word. */
                   _push (PAIR_HL);
-                  off = _G.stack.offset + _G.stack.param_offset + _G.stack.pushed + (_G.omitFramePtr ? 0 : 3) /* S1C88 MAX mode: 3-byte CB:PC return frame */;
+                  off = _G.stack.offset + (_G.stack.param_offset - 2) + _G.stack.pushed + (_G.omitFramePtr ? 0 : 2) + 3 /* hidden return-ptr offset: locals/temps + param shifts MINUS the hidden-ptr's own 2-byte self-shift (added near genFunction for OTHER args) + saved IX (only if !omit) + the always-present 3-byte CB:PC max-mode return frame */;
                   setupPairFromSP (PAIR_HL, off);
                   emit2 ("ld iy, !*hl");
                   cost2 (2, 14, 12, 8, 0, 6, 4, 4);
@@ -6343,7 +6343,7 @@ genRet (const iCode *ic)
   else if (IC_LEFT (ic)->aop->type == AOP_LIT)
     {
       unsigned long long lit = ullFromVal (IC_LEFT (ic)->aop->aopu.aop_lit);
-      setupPairFromSP (PAIR_HL, _G.stack.offset + _G.stack.param_offset + _G.stack.pushed + (_G.omitFramePtr ? 0 : 3) /* S1C88 MAX mode: 3-byte CB:PC return frame */);
+      setupPairFromSP (PAIR_HL, _G.stack.offset + (_G.stack.param_offset - 2) + _G.stack.pushed + (_G.omitFramePtr ? 0 : 2) + 3 /* hidden return-ptr offset: locals/temps + param shifts MINUS the hidden-ptr's own 2-byte self-shift (added near genFunction for OTHER args) + saved IX (only if !omit) + the always-present 3-byte CB:PC max-mode return frame */);
       emit2 ("!ldahli");
       regalloc_dry_run_cost += 6;
       emit2 ("ld h, !*hl");
@@ -6361,7 +6361,7 @@ genRet (const iCode *ic)
     }
   else if (IC_LEFT (ic)->aop->type == AOP_STK || IC_LEFT (ic)->aop->type == AOP_EXSTK || (IC_LEFT (ic)->aop->type == AOP_DIR || IC_LEFT (ic)->aop->type == AOP_IY))
     {
-      setupPairFromSP (PAIR_HL, _G.stack.offset + _G.stack.param_offset + _G.stack.pushed + (_G.omitFramePtr ? 0 : 3) /* S1C88 MAX mode: 3-byte CB:PC return frame */);
+      setupPairFromSP (PAIR_HL, _G.stack.offset + (_G.stack.param_offset - 2) + _G.stack.pushed + (_G.omitFramePtr ? 0 : 2) + 3 /* hidden return-ptr offset: locals/temps + param shifts MINUS the hidden-ptr's own 2-byte self-shift (added near genFunction for OTHER args) + saved IX (only if !omit) + the always-present 3-byte CB:PC max-mode return frame */);
       /* IY = dest (the caller's hidden return-buffer pointer, 2 bytes via [HL]).
          S1C88 has no DE; the 16-bit `ld iy,(hl)` reads the pointer in one go. */
       emit2 ("ld iy, !*hl");
@@ -6406,7 +6406,7 @@ genRet (const iCode *ic)
     {
       /* S1C88: read the caller's hidden buffer pointer in one 16-bit load
          and write through IY. */
-      setupPairFromSP (PAIR_HL, _G.stack.offset + _G.stack.param_offset + _G.stack.pushed + (_G.omitFramePtr ? 0 : 3) /* S1C88 MAX mode: 3-byte CB:PC return frame */);
+      setupPairFromSP (PAIR_HL, _G.stack.offset + (_G.stack.param_offset - 2) + _G.stack.pushed + (_G.omitFramePtr ? 0 : 2) + 3 /* hidden return-ptr offset: locals/temps + param shifts MINUS the hidden-ptr's own 2-byte self-shift (added near genFunction for OTHER args) + saved IX (only if !omit) + the always-present 3-byte CB:PC max-mode return frame */);
       emit2 ("ld iy, !*hl");
       cost2 (2, 0, 0, 0, 0, 0, 0, 0);
       spillPair (PAIR_IY);
