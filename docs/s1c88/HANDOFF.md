@@ -44,7 +44,10 @@ _Last updated: 2026-06-08._
    **pointer-compare miscompile** (`#11-ptrcmp-bug`, still open). long long, unions, and pointer arithmetic
    are now verified; **`#11-bitfields` is the next high-bug-risk module**. Code size is now measurable
    (`scripts/size-check.sh`, #12-sizeharness done), so the peephole/cost targets (`#12-redundant-moves`,
-   `#12-flag-reuse`, …) and the **branch-relaxation lift (#14, broken into #14a/b/c)** are ready to pick up.
+   `#12-flag-reuse`, …) and the **branch-relaxation lift (#14)** are ready to pick up. **#14a is now done**
+   (`scripts/relax-analysis.sh` measured ~53% smaller user-code calls and cleared the 3-pass `fuzz`
+   feasibility gate) — the next relaxation step is **#14b** (same-area assembler relaxation: a same-area-aware
+   `ls_mode` + ~30-line bit table in `s1c88mch.c`; no `asmain.c` change needed).
    Section C (#16 traps, #17 const-data) is done (documented + guarded). The z80-artifact scrub is B+C done,
    A/D/F deferred (#20).
 3. **Deprioritized — float is low-value for this target.** The one known correctness bug is the `_fsadd`
@@ -65,8 +68,17 @@ _Last updated: 2026-06-08._
   `tests/emu/cases/13_farconst.c`). `romgen` now **hard-errors on common-bank overflow** (any non-banked
   content past logic `0x7FFF`), so an oversized near-pointed const can't silently miscompile. (The old
   "3-byte CPOINTER deref'd near" note was inaccurate — plain const pointers are 2-byte near.)
-- **Runtime contract:** programs provide `__sdcc_fptr:: .ds 2` in near RAM (crt0 does; bare test startups
-  must too). Far const data lives in area `_FAR` at PHYSICAL addresses (`romgen --far=start-end`).
+- **Runtime contract:** programs provide `__sdcc_fptr:: .ds 2` in near RAM (the production crt0 does).
+  Far const data lives in area `_FAR` at PHYSICAL addresses (`romgen --far=start-end`).
+- **One crt0 + a test BIOS (no test code in the runtime).** There is a single startup,
+  `device/lib/s1c88/crt0.s`. It trusts the **BIOS reset-state contract** (all CPU regs 0 except BA=0xFFFF /
+  NB=CB=0x01; SP parked; MMIO left in BIOS reset config — IRQs already masked), so it re-inits no MMIO and
+  only pins EP=0. On `main` return it hands off via `int (0x48)`, the BIOS shutdown vector. The emulator
+  runner embeds a tiny **test BIOS** (`tests/emu/bios.s`) that sets that reset state in real S1C88 code,
+  installs the 0x0048 shutdown routine, and enters the cart; the runner reads the exit code off `BA` on
+  halt (no exit mailbox). **emu-test + diff-test boot every case as a real PM cart through this crt0+BIOS**
+  (the old `tests/emu/crt0.asm` shim is retired). If you edit `bios.s`, the runner rebuild regenerates the
+  embedded `build/emu/bios_rom.h` (needs sdas88/sdldz80).
 - **Emulator-core header changes need a full rebuild.** Every translation unit in
   `third_party/minimon-core` compiles against `machine.h`'s shared `Machine::State` layout. The
   `tests/emu/Makefile` now lists the core headers as a prerequisite, so editing one rebuilds *all*
@@ -95,6 +107,9 @@ whenever branch emission or the linker patch changes.
 - `./scripts/corpus-check.sh` — byte-identical codegen + 0-error assembly across `scripts/corpus/` (20/20).
 - `./scripts/size-check.sh` — corpus ROM-size measurement + delta vs `scripts/corpus/sizes.baseline`
   (report-only; `snapshot` to re-bless). The yardstick for #12 (peephole/cost) and #14 (relaxation) wins.
+- `./scripts/relax-analysis.sh` — branch-relaxation opportunity analysis (#14a, report-only): reads each
+  fully-linked program's resolved `bcall`/`bjump` slots from the relocated listing and reports the bytes
+  #14b/#14c would reclaim. Measured ~53% smaller user-code calls; confirms the 3-pass `fuzz` loop converges.
 - `./scripts/emu-test.sh` — RUN `tests/emu/cases/*.c` on the vendored minimon core (16/16). Execution truth.
 - `./scripts/diff-test.sh` — compile the same C host-vs-emulator and diff the output (8 modules).
 - `./scripts/validate-s1c88.sh <file.asm>` — assemble emitted codegen with `sdas88`; any reject = a z80-ism.

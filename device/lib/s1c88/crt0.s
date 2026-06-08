@@ -39,6 +39,16 @@
 ; all near (hl)/(iy) access), __sdcc_fptr cell in near RAM for banked function-pointer
 ; dispatch, _INITIALIZER->_INITIALIZED copy. _DATA zero-init needs no loop: the BIOS
 ; clears all RAM at boot (and the emulator runner clears 0x0000-0x1FFF on load).
+;
+; BIOS RESET-STATE CONTRACT (assume this for any future change here). The Pokémon Mini
+; BIOS enters the cartridge with a known register + peripheral state, so crt0 does NOT
+; re-establish what the BIOS already guarantees:
+;   - CPU registers: every register is 0 EXCEPT BA = 0xFFFF and NB = CB = 0x01.
+;     (So EP=XP=YP=0 already; we still set EP=0 explicitly below as cheap insurance,
+;      because it is the load-bearing near-pointer invariant.)
+;   - SP: the BIOS parks it; crt0 leaves it untouched.
+;   - MMIO: left exactly as the BIOS reset configured it — interrupts arrive masked
+;     (SC=0xC0, IRQ-enable regs 0x2027-0x202A clear), so crt0 re-inits NO MMIO.
 ;--------------------------------------------------------------------------
 	.module crt0
 	.globl	_main
@@ -107,33 +117,27 @@ __sdcc_fptr::
 	;================================================================
 	.area	_CODE
 __start::
-	; SP is left as the BIOS set it on reset — crt0 does not touch the stack.
+	; Per the BIOS reset-state contract (see header): SP is parked by the BIOS
+	; and MMIO is already in its reset configuration (interrupts masked), so crt0
+	; touches neither. The only thing it pins is the load-bearing EP=0 near-pointer
+	; invariant — already 0 from the BIOS, set explicitly as cheap insurance.
 	ld	a, #0x00
 	ld	ep, a			; the EP=0 invariant ...
 	ld	xp, a			; ... near data/index pages all 0
 	ld	yp, a
 
-	; mask all maskable interrupts at boot (IRQ enable regs 0x2027-0x202A)
-	ld	a, #0x00
-	ld	(0x2027), a
-	ld	(0x2028), a
-	ld	(0x2029), a
-	ld	(0x202A), a
-
 	bcall	gsinit			; copy _INITIALIZER -> _INITIALIZED (RAM is already 0)
 	bcall	_main			; C entry; exit code returns in BA
 
-	; emu-test exit protocol (harmless RAM writes on real hardware):
-	; store the BA return value + the 0xA5 done-magic, then halt.
-	ld	hl, #0x1FFA
-	ld	(hl), a
-	inc	hl
-	ld	(hl), b
-	inc	hl
-	ld	(hl), #0xA5
+	; main returned — hand off to the BIOS shutdown service via the software
+	; interrupt vector at 0x0048 (the BIOS installs it). BA still holds main's
+	; return value; the shutdown routine decides what to do with it (power down
+	; on hardware; on the dev-emulator it halts and the host reads BA). This
+	; keeps ALL exit/test plumbing in the BIOS, never in the production runtime.
+	int	(0x48)
 1$:
-	halt
-	jrs	1$			; stay halted if a wake event resumes us
+	halt				; defensive: shutdown should not return
+	jrs	1$
 
 	;================================================================
 	; Static initialization: copy _INITIALIZER (ROM) -> _INITIALIZED

@@ -66,7 +66,9 @@ OUT="$(mktemp -d)"; trap 'rm -rf "$OUT"' EXIT
 # --- crt0 + runtime support library, via OUR port (self-hosting). Built into a
 #     text-index library (rt.lib) so each case pulls only the modules it references
 #     (and their transitive deps) — float pulls ~25 routines, int cases pull none. ---
-"$SDAS" -o "${OUT}/crt0.rel" "${EMU}/crt0.asm" || { echo "!! crt0 assemble FAILED"; exit 1; }
+LIBDIR="${SDCC}/share/sdcc/lib/s1c88"
+[ -f "${LIBDIR}/s1c88.lib" ] || "${REPO}/scripts/build-runtime.sh" >&2 || { echo "!! runtime build FAILED" >&2; exit 1; }
+"$SDAS" -o "${OUT}/crt0.rel" "${REPO}/device/lib/s1c88/crt0.s" || { echo "!! crt0 assemble FAILED"; exit 1; }
 RT_INT="_mulint _mullong _divuint _divsint _moduint _modsint _divulong _divslong _modulong _modslong"
 RT_LL="_mullonglong _divulonglong _divslonglong _modulonglong _modslonglong \
        _slulonglong _slslonglong _srulonglong _srslonglong"
@@ -118,8 +120,8 @@ for src in "${DIFF}"/cases/*.c; do
   if grep -q '__far' "$src"; then
     FAR_LINK="-b _FAR=0x10000"; FAR_ROMGEN="--far=0x10000-0x1ffff"
   fi
-  if ! "$SDLD" -nwxi -b _CODE=0x4000 -b _HOME=0x2100 -b _DATA=0x1000 ${FAR_LINK} \
-        "${OUT}/${b}.ihx" "${OUT}/crt0.rel" "${OUT}/${b}.rel" -k "${OUT}" -l rt > "${OUT}/err" 2>&1 \
+  if ! "$SDLD" -nwxi -b _CODE=0x21D0 -b _DATA=0x1000 ${FAR_LINK} \
+        "${OUT}/${b}.ihx" "${OUT}/crt0.rel" "${OUT}/${b}.rel" -k "${OUT}" -l rt -k "$LIBDIR" -l s1c88 > "${OUT}/err" 2>&1 \
      || grep -q "Undefined Global" "${OUT}/err"; then
     grep -E "Undefined Global|ASlink" "${OUT}/err" | sort -u > "${OUT}/diag"
     report_fail "$b" "LINK-FAIL" "${OUT}/diag"; continue

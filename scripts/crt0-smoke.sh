@@ -3,12 +3,12 @@
 # crt0-smoke.sh — prove the PRODUCTION crt0 (device/lib/s1c88/crt0.s) boots a C
 # program end to end through the real Pokémon Mini cartridge header.
 #
-# Unlike tests/emu/crt0.asm (the bare test startup with code at 0x2100), this links
-# the production crt0: "PM" header @ 0x2100, 6-byte IRQ vector slots, "NINTENDO" @
-# 0x21A4, reset-vector entry. The emulator runner's mini-BIOS (auto-detected via the
-# "PM" marker) synthesizes the low vector table and enters via the reset slot, exactly
-# as real hardware does. A global initializer exercises gsinit (_INITIALIZER copy);
-# main()'s return value is the verdict.
+# Links the production crt0: "PM" header @ 0x2100, 6-byte IRQ vector slots, "NINTENDO"
+# @ 0x21A4, reset-vector entry. The emulator runner loads its embedded test BIOS
+# (tests/emu/bios.s) and enters through it — synthesizing the low vector table, setting
+# the documented reset state, and jumping to the cart reset slot, exactly as real
+# hardware does. A global initializer exercises gsinit (_INITIALIZER copy); main()'s
+# return value is handed to the BIOS shutdown vector and read off BA — the verdict.
 set -euo pipefail
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 SDCC="${REPO}/build/sdcc-4.5.0"

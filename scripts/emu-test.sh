@@ -5,9 +5,11 @@
 #
 # Where corpus-check.sh proves the asm is stable + assembles, this proves it RUNS:
 # each tests/emu/cases/*.c is compiled (host cpp -> sdcc -ms1c88 --c1mode), assembled
-# (sdas88), linked with tests/emu/crt0.asm (sdldz80, _HOME=0x2100 _DATA=0x1000),
-# romgen'd to a flat .min, and executed in the emulator. The guest's main() return
-# value (0 = pass; CHECK() failures print + count) becomes the verdict.
+# (sdas88), linked with the PRODUCTION crt0 (device/lib/s1c88/crt0.s) as a real PM cart
+# (sdldz80, _CODE=0x21D0 _DATA=0x1000 + s1c88.lib for the default IRQ vectors), romgen'd
+# to a flat .min, and executed in the emulator — booting through the test BIOS exactly
+# like a shipped ROM. The guest's main() return value (0 = pass; CHECK() failures print +
+# count) is left in BA and read by the runner on halt. There is no separate test crt0.
 #
 #   scripts/emu-test.sh             # overlay+rebuild sdcc, then run all cases
 #   scripts/emu-test.sh 04          # run only cases matching '04'
@@ -64,8 +66,11 @@ make -s -C "$EMU" >&2 || { echo "!! runner build FAILED" >&2; exit 1; }
 
 OUT="$(mktemp -d)"; trap 'rm -rf "$OUT"' EXIT
 
-# --- assemble crt0 once ---
-"$SDAS" -o "${OUT}/crt0.rel" "${EMU}/crt0.asm" >&2 || { echo "!! crt0 assemble FAILED" >&2; exit 1; }
+# --- assemble the PRODUCTION crt0 once (no special test crt0 — cases boot as PM carts
+# through the runner's test BIOS, identical to a shipped ROM) ---
+LIBDIR="${SDCC}/share/sdcc/lib/s1c88"
+[ -f "${LIBDIR}/s1c88.lib" ] || "${REPO}/scripts/build-runtime.sh" >&2 || { echo "!! runtime build FAILED" >&2; exit 1; }
+"$SDAS" -o "${OUT}/crt0.rel" "${REPO}/device/lib/s1c88/crt0.s" >&2 || { echo "!! crt0 assemble FAILED" >&2; exit 1; }
 
 # --- runtime library: SDCC's generic C support routines, compiled by OUR port ---
 # (self-hosting: the runtime exercises the codegen too). Linked into every case;
@@ -109,12 +114,11 @@ for src in "${EMU}"/cases/*.c; do
     FAR_LINK="-b _FAR=0x10000"; FAR_ROMGEN="--far=0x10000-0x1ffff"
   fi
 
-  # link (crt0 first: fixes the entry at 0x2100 and the area order) -> .min
-  # _CODE needs an explicit base: sdas88 implicitly opens _CODE as area 0 of every
-  # module, so it is first in link order and would land at 0. _HOME at 0x2100 is
-  # followed by the chained _GSINIT/_GSFINAL/_INITIALIZER (must stay under 0x4000);
-  # _INITIALIZED chains after _DATA in RAM.
-  if ! "$SDLD" -nwxi -b _CODE=0x4000 -b _HOME=0x2100 -b _DATA=0x1000 ${FAR_LINK} \
+  # link as a PM cart (crt0 first): the header is a fixed ABS area @ 0x2100, _CODE
+  # follows @ 0x21D0, RAM @ 0x1000. s1c88.lib resolves the crt0 header's default IRQ
+  # vectors (_irq_v1..26) for cases that don't define their own. RT_RELS keep the
+  # self-hosted div/mod/mul (already-defined, so the lib copies aren't pulled).
+  if ! "$SDLD" -nwxi -b _CODE=0x21D0 -b _DATA=0x1000 ${FAR_LINK} -k "$LIBDIR" -l s1c88 \
         "${OUT}/${b}.ihx" "${OUT}/crt0.rel" "${OUT}/${b}.rel" ${RT_RELS} > "${OUT}/err" 2>&1 \
      || grep -q "Undefined Global" "${OUT}/err"; then
     grep -E "Undefined Global|ASlink" "${OUT}/err" | sort -u > "${OUT}/diag"

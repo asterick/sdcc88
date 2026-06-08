@@ -3,9 +3,10 @@
  * Cases are preprocessed with the HOST cpp (cc -E -P, same as corpus-check.sh)
  * before being fed to sdcc --c1mode, so #include/#define work normally.
  *
- * Protocol (mirrors runner.cc + crt0.asm): a store to 0x1FF8 prints one char on
- * the host (the runner polls between every instruction, so back-to-back stores
- * are never lost); main()'s return value becomes the host process exit code,
+ * Protocol (mirrors runner.cc): a store to 0x1FF8 prints one char on the host (the
+ * runner polls between every instruction, so back-to-back stores are never lost);
+ * main()'s return value becomes the host process exit code (the production crt0
+ * hands it to the BIOS shutdown vector; the runner reads it off BA on halt),
  * 0 = pass. CHECK() prints the failing expression and counts it.
  */
 #ifndef EMU_H

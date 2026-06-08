@@ -18,7 +18,7 @@ Legend: **S/M/L** = rough effort. Items are roughly dependency-ordered within ea
 
 1. **Driver tool wiring** — `main.c` `_z80AsmCmd`→`sdas88`, `_libs`→`s1c88`; integrated driver emits valid XL3 `.rel`.
 2. **Preprocessor** — `scripts/build-sdcpp.sh` builds the real SDCC cpp (libiberty + `support/cpp`); `sdcc -ms1c88 foo.c` preprocesses for real (no `--c1mode`).
-3. **Production crt0** — `device/lib/s1c88/crt0.s`: the real PM cartridge header (`"PM"` @ 0x2100, 27 × 6-byte vector slots, `"NINTENDO"` @ 0x21A4) + C runtime (EP=XP=YP=0, IRQ mask, gsinit, `__sdcc_fptr`, `bcall _main`). SP is left as the BIOS sets it. The emulator runner has a minimal BIOS (auto-detected via `"PM"`) that synthesizes the low vector table and enters via the reset vector.
+3. **Production crt0** — `device/lib/s1c88/crt0.s`: the real PM cartridge header (`"PM"` @ 0x2100, 27 × 6-byte vector slots, `"NINTENDO"` @ 0x21A4) + C runtime (EP=0, gsinit, `__sdcc_fptr`, `bcall _main`). It trusts the **BIOS reset-state contract** (all CPU regs 0 except BA=0xFFFF / NB=CB=0x01; SP parked; MMIO left in BIOS reset config — interrupts already masked), so it re-inits NO MMIO and only pins EP=0 defensively. When `main` returns it hands off via the **software-interrupt shutdown vector `int (0x48)`** (the BIOS installs it) — no test/exit code in the runtime. The emulator runner loads an embedded **test BIOS** (`tests/emu/bios.s`) that establishes that reset state in real S1C88 code, installs the 0x0048 shutdown routine, and enters the cart; the runner reads the exit code off `BA` on halt. There is ONE crt0 (the old `tests/emu/crt0.asm` is retired; emu/diff cases boot as real PM carts).
 4. **Target C runtime library** — `s1c88.lib` (ASxxxx text-index; the 10 codegen-emitted div/mod/mul routines + a mem*/str* libc subset, compiled through our own port) + the 26 per-vector default `rete` modules. Built/installed by `scripts/build-runtime.sh`.
 5. **Device headers** — `device/include/s1c88/pm.h`: full PM MMIO map in Epson/SDK names + `VEC_*` vector numbers, cross-checked vs minimon-core.
 6. **romgen integration** — `tools/romgen.c` (C, no Python; `romgen.py` removed), byte-identical on the banked + `--far` paths; built by `scripts/build-romgen.sh`.
@@ -116,10 +116,25 @@ Legend: **S/M/L** = rough effort. Items are roughly dependency-ordered within ea
     so this is a large code-size win. **Broken into digestible, value-first steps** (full design +
     grounding in `banked-branch.md` "Relaxation plan"):
 
-    - **#14a [S] — opportunity analysis (zero-risk).** A script over a linked `.map`/`.rel` that counts how
-      many `bjump`/`bcall` slots are same-bank + in `jrs`/`jrl` range and the bytes they'd save. No codegen
-      change — validates the win with a real number and builds the range analysis. Also confirm the sdas88
-      multi-pass `fuzz` loop converges for a variable-length test instruction (the feasibility gate for #14b).
+    - **#14a [S] — opportunity analysis (zero-risk). — ✅ DONE.** `scripts/relax-analysis.sh` compiles each
+      fully-linkable program, assembles with `-l` and links with `-u`, and reads every `bcall`/`bjump`
+      slot's FINAL resolved bytes from the relocated listing (`.rst`) — authoritative, no binary-scan
+      heuristics (and complete, since `s1c88.lib` carries **zero** slots; only crt0 + user code do). For
+      each slot it recovers same-bank-vs-cross-bank, the branch form, and the displacement, then computes
+      the minimal legal form and bytes saved. **Result (examples/hello + `scripts/relax/{fixmath,sprite}.c`):
+      user-code call sites shrink ~53% — 270 → 127 B, 143 B saved across 45 slots, every one same-bank
+      (intra-common-bank, exactly the #14b target); crt0's 27 reset/IRQ vector slots are hardware-fixed and
+      correctly excluded.** Two findings fell out: (1) **all sampled programs are single common-bank**, so
+      the cross-bank win (branch-form only, `ld nb` stays — smaller, #14c territory) isn't exercised here;
+      (2) **20 bank-0 slots still carry `ld nb,#0`** — the linker NOPs the `ld nb` for *some* bank-0 targets
+      but not others (an existing inconsistency; relaxation removes the field entirely). **Feasibility gate
+      (the #14b precondition):** sdas runs a FIXED **3-pass** sequencer (`asxxsrc/asmain.c`
+      `for(pass=0;pass<3)`), not iterate-to-fixpoint. The STM8 + F8 backends prove this 3-pass +
+      per-target `setbit`/`getbit` bit-table + `fuzz` scheme **converges** for monotonic (start-long,
+      shrink-only) relaxation — no `asmain.c` change needed. **Catch for #14b:** STM8/F8 `ls_mode` bails on
+      ALL relocatable operands (`e_base.e_ap != 0` → forced long); same-module relaxation must extend it to
+      the **same-area** relocatable case (displacement `= e_addr − dot.s_addr`, known each pass) and add the
+      ~30-line bit table to `s1c88mch.c`. Run-it: `scripts/relax-analysis.sh [prog.c …]` (report-only).
     - **#14b [M] — assembler same-module relaxation (the big practical win, NO linker reflow).** Most calls
       are intra-module (same `_CODE` area). When the target is in the current area, the displacement is known
       each pass, so the assembler can emit the minimal form directly, letting ASxxxx's existing `fuzz`

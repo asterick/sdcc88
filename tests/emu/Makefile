@@ -15,12 +15,34 @@ OBJECTS  := $(patsubst $(CORE)/src/%.cc,$(BUILD)/%.o,$(SOURCES)) $(BUILD)/runner
 # offset). See HANDOFF.md.
 HEADERS  := $(wildcard $(CORE)/include/*.h) $(CORE)/table.h
 CXX      ?= g++
-CXXFLAGS := -std=c++17 -O2 -Wall -I$(CORE)/include
+CXXFLAGS := -std=c++17 -O2 -Wall -I$(CORE)/include -I$(BUILD)
+
+# The test BIOS (tests/emu/bios.s) is assembled + linked at a fixed low-ROM
+# address and embedded into the runner as a byte array (bios_rom.h, generated in
+# $(BUILD)). It establishes the documented reset state + the 0x0048 shutdown
+# vector so the runner pokes no CPU registers and every cart boots like hardware.
+SDAS     := $(abspath $(CURDIR)/../../build/sdcc-4.5.0/bin/sdas88)
+SDLD     := $(abspath $(CURDIR)/../../build/sdcc-4.5.0/bin/sdldz80)
+BIOS_LOAD := 0x0050
+BIOS_ROM := $(BUILD)/bios_rom.h
 
 all: $(RUNNER)
 
 $(BUILD):
 	mkdir -p $(BUILD)
+
+# assemble + link the BIOS, then turn the Intel-hex into a C byte array.
+$(BIOS_ROM): bios.s | $(BUILD)
+	$(SDAS) -o $(BUILD)/bios.rel bios.s
+	$(SDLD) -nwxi -b _BIOS=$(BIOS_LOAD) $(BUILD)/bios.ihx $(BUILD)/bios.rel
+	awk 'BEGIN{lo=-1;hi=0} /^:/{ \
+	      ll=strtonum("0x" substr($$0,2,2)); a=strtonum("0x" substr($$0,4,4)); \
+	      t=substr($$0,8,2); if(t!="00")next; if(lo<0||a<lo)lo=a; \
+	      for(i=0;i<ll;i++){b[a+i]=substr($$0,10+i*2,2); if(a+i>=hi)hi=a+i+1} } \
+	    END{ printf "static const unsigned BIOS_LOAD = 0x%04X;\n", lo; \
+	         printf "static const unsigned char bios_rom[] = {"; \
+	         for(x=lo;x<hi;x++) printf "0x%s,", (x in b)?b[x]:"00"; \
+	         printf "};\n" }' $(BUILD)/bios.ihx > $@
 
 # the opcode dispatch table (included as "../table.h" by operations.cc) is
 # GENERATED but checked in, pinned at the vendored version — regenerate with
@@ -29,7 +51,7 @@ $(BUILD):
 $(BUILD)/%.o: $(CORE)/src/%.cc $(HEADERS) | $(BUILD)
 	$(CXX) $(CXXFLAGS) -c -o $@ $<
 
-$(BUILD)/runner.o: runner.cc $(HEADERS) | $(BUILD)
+$(BUILD)/runner.o: runner.cc $(HEADERS) $(BIOS_ROM) | $(BUILD)
 	$(CXX) $(CXXFLAGS) -c -o $@ $<
 
 $(RUNNER): $(OBJECTS)

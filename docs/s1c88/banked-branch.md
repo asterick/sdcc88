@@ -273,10 +273,29 @@ and the loop re-runs until stable. So `machine()`'s `S_PCALL`/`S_PJUMP` path, wh
 `expr.e_base.e_ap == dot.s_area` and the symbol is in-area, can emit the minimal form
 directly (no `ld nb` — same area ⇒ same bank; `cars`/`jrs` vs `carl`/`jrl` by the
 fuzz-current displacement). Cross-area/external targets fall through to the existing
-fixed 6/9-byte linker-resolved slot, unchanged. **Feasibility gate (do first in #14a):**
-confirm the sdas88 pass loop actually iterates to a `fuzz==0` fixpoint for a
-variable-length test instruction — some ASxxxx builds cap the pass count. Watch the
-branch-displacement convention (§ HANDOFF: one byte earlier than z80) at *each* form.
+fixed 6/9-byte linker-resolved slot, unchanged.
+
+**Feasibility gate — ✅ ANSWERED by #14a (`scripts/relax-analysis.sh`).** sdas does NOT
+iterate to a `fuzz==0` fixpoint — it runs a FIXED 3-pass sequencer
+(`asxxsrc/asmain.c` `for(pass=0;pass<3)`). But it does not need to: the STM8 and F8
+backends already relax short/long *inside* this same 3-pass loop, via a per-target
+`setbit`/`getbit` bit table + the shared `fuzz` correction. It converges because the
+scheme is **monotonic** — pass 0 sizes everything LONG (upper bound), pass 1 shrinks
+only what fits and records the choice, pass 2 replays it; shrinking only pulls targets
+closer, so a branch that fit can never stop fitting. So #14b adds NO `asmain.c` change.
+**The one catch:** STM8/F8 `ls_mode` forces long for *any* relocatable operand
+(`e_base.e_ap != 0`); #14b must instead relax the **same-area** relocatable case, where
+the displacement is `e_addr − dot.s_addr` (known each pass). Port the ~30-line bit table
+from `asstm8`/`asf8` into `s1c88mch.c`. Watch the branch-displacement convention
+(§ HANDOFF: one byte earlier than z80) at *each* form.
+
+**Opportunity measured (#14a):** on real fully-linked programs (examples/hello +
+`scripts/relax/{fixmath,sprite}.c`), **user-code call sites shrink ~53% — 143 B saved of
+270 across 45 slots, every one same-bank** (intra-common-bank — exactly this #14b path);
+crt0's 27 reset/IRQ vector slots are hardware-fixed and excluded. The analysis also
+flagged that the linker currently NOPs the `ld nb` for only *some* bank-0 targets (20 of
+the sampled slots still carry a live `ld nb,#0` — an existing inconsistency that
+relaxation makes moot). Re-run anytime: `scripts/relax-analysis.sh` (report-only).
 
 ### #14c — linker-side, CROSS-MODULE (the hard reflow, deferrable)
 

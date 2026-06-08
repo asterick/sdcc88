@@ -6,10 +6,12 @@
 // (get_machine) plus a tiny test protocol:
 //
 //   - the .min ROM (romgen output; byte 0 = physical 0x2100) is loaded at
-//     memory[0x2100] (RAM + cartridge are one unified writable array), the BIOS is
-//     bypassed (PC forced to 0x2100 where crt0 lives), and the CPU is stepped
-//     instruction-by-instruction.
-//   - guest mailbox (top of RAM, kept above the 0x1FF0 stack top set by crt0.asm):
+//     memory[0x2100] (RAM + cartridge are one unified writable array). The real
+//     peripheral BIOS is pruned, so a tiny embedded test BIOS (tests/emu/bios.s) is
+//     loaded into low ROM; PC is forced to it. It sets the documented reset register
+//     state, installs the 0x0048 shutdown vector, and enters the cart — like hardware.
+//   - host I/O mailbox (top of RAM, above the 0x1FF0 stack the BIOS parks): the test
+//     CASES use these via emu.h; they are not runtime/crt0 code:
 //       0x1FF4/0x1FF5 key-input request value (little-endian 10-bit keypad state)
 //       0x1FF6       key-input "go" flag: guest stores nonzero, host applies the
 //                    0x1FF4 value via update_inputs() (which raises any K0x/K1x edge
@@ -19,11 +21,11 @@
 //       0x1FF8       char-out: guest stores a nonzero byte, host prints + clears it
 //                    (host polls between every instruction, so one store per char
 //                    can never be lost)
-//       0x1FFA/0x1FFB exit code (little-endian BA, stored by crt0 from main's return)
-//       0x1FFC       0xA5 magic: crt0 sets it right before `halt`, so a halt without
-//                    it is a stray halt, not a clean exit
-//   - `halt` (STATUS_HALTED) + magic -> process exit code = guest exit code.
-//     Crash / stray halt / step-budget timeout -> distinct exit codes 124..126.
+//   - exit: the production crt0 calls the BIOS shutdown vector (`int (0x48)`) when
+//     main returns; the shutdown routine halts with main's return value still in BA.
+//     The host reads the exit code off BA on halt — there is NO exit RAM mailbox, so
+//     no test/exit plumbing lives in the runtime. (There is one crt0 for everything.)
+//   Crash / stray halt / step-budget timeout -> distinct exit codes 124..126.
 //
 // usage: runner rom.min [--max-steps=N] [--verbose]
 #include <cstdio>
@@ -32,6 +34,7 @@
 #include <cstdint>
 
 #include "machine.h"
+#include "bios_rom.h"	// generated: the test BIOS blob + BIOS_LOAD (see Makefile + bios.s)
 
 // ---- host glue the core links against ----
 extern "C" Machine::State* const get_machine() {
@@ -39,13 +42,13 @@ extern "C" Machine::State* const get_machine() {
 	return &machine_state;
 }
 
-// ---- test protocol addresses (mirror tests/emu/crt0.asm + emu.h) ----
+// ---- host I/O mailbox addresses (mirror emu.h) ----
+// These are host-polled RAM cells the test CASES use (via emu.h); they are not
+// runtime/crt0 code. The exit code is NOT a mailbox: it is main's return value,
+// left in BA, read off the register file on halt (see below).
 static const uint32_t MAILBOX_KEYS = 0x1FF4;	// ..0x1FF5, little-endian keypad state
 static const uint32_t MAILBOX_KEYS_GO = 0x1FF6;	// guest sets nonzero -> host applies keys
 static const uint32_t MAILBOX_CHAR = 0x1FF8;
-static const uint32_t MAILBOX_EXIT = 0x1FFA;	// ..0x1FFB, little-endian
-static const uint32_t MAILBOX_MAGIC = 0x1FFC;
-static const uint8_t  MAGIC_DONE = 0xA5;
 
 // RAM and cartridge share one flat array now (m.memory), indexed by address.
 static uint8_t ram_at(Machine::State& m, uint32_t addr) { return m.memory[addr]; }
@@ -87,24 +90,18 @@ int main(int argc, char** argv) {
 	if (n == 0) { fprintf(stderr, "%s: empty ROM\n", rom_path); return 2; }
 	if (verbose) fprintf(stderr, "[emu] loaded %zu bytes at phys 0x2100\n", n);
 
-	// reset, then bypass the real (pruned) BIOS. Two boot conventions, auto-detected:
-	//
-	//  (a) Production crt0: a real Pokémon Mini cartridge header with the "PM" marker
-	//      at 0x2100. We act as a minimal BIOS — synthesize the 0x0000-0x00FF interrupt
-	//      vector table from the cart's 6-byte jump slots (vector N's handler address =
-	//      slot N at 0x2102 + 6*N), then enter via the reset vector (word at 0x0000 =
-	//      the reset slot 0x2102, which runs `ld nb,#0 ; jrl __start`). This is what the
-	//      real BIOS does after validating the cart, so the production startup + ISR
-	//      dispatch run exactly as on hardware.
-	//
-	//  (b) Test crt0 (tests/emu/crt0.asm): code lives directly at 0x2100 (no "PM"
-	//      marker). PC is forced there. Kept for the existing emu cases.
+	// reset, then bypass the real (pruned) BIOS. A real Pokémon Mini cartridge has
+	// the "PM" marker at 0x2100; we act as the BIOS for it (below). We synthesize the
+	// 0x0000-0x00FF interrupt vector table from the cart's 6-byte jump slots (vector
+	// N's handler address = slot N at 0x2102 + 6*N) — this is the BIOS IRQ routing,
+	// not register state — then hand off to the embedded test BIOS, which sets the
+	// CPU/boot state and enters the cart. (A non-"PM" image is booted bare at 0x2100
+	// as a fallback; nothing we build produces one anymore.)
 	//
 	// Memory is always accessible (control has no enable side effects).
 	cpu_reset(m);
-	m.reg.cb = 0;
-	m.reg.nb = 0;
-	if (m.memory[0x2100] == 'P' && m.memory[0x2101] == 'M') {
+	const bool is_pm = (m.memory[0x2100] == 'P' && m.memory[0x2101] == 'M');
+	if (is_pm) {
 		// The PM BIOS does NOT identity-map hardware IRQs to cart vector slots: it
 		// forwards a permuted subset (gaps where a hardware IRQ has no cart vector:
 		// $01/$02 NMI, $11/$12 unused, $13 cart-eject = BIOS-handled). cart2hw[c] is
@@ -127,14 +124,22 @@ int main(int argc, char** argv) {
 			m.memory[2 * hw]     = slot & 0xFF;
 			m.memory[2 * hw + 1] = (slot >> 8) & 0xFF;
 		}
-		// The S1C88 leaves SP undefined at reset; on real hardware the BIOS sets it
-		// before entering the cart, and the production crt0 deliberately does NOT touch
-		// SP. Mimic the BIOS here: park the stack just below the test mailbox (0x1FF8).
-		m.reg.sp = 0x1FF0;
-		m.reg.pc = m.memory[0] | (m.memory[1] << 8);	// reset vector (= 0x2102)
-		if (verbose) fprintf(stderr, "[emu] PM cart: SP=0x%04X, vectors synthesized, entry via reset slot 0x%04X\n", m.reg.sp, m.reg.pc);
+		// Boot through the embedded TEST BIOS (tests/emu/bios.s) instead of
+		// poking CPU registers here. Loaded into low ROM, it establishes the
+		// documented reset state in real S1C88 code (BA=0xFFFF, EP=XP=YP=0,
+		// NB=0x01, SP parked), installs the 0x0048 shutdown vector, and enters
+		// the cart via its reset trampoline (0x2102) — exactly like hardware. MMIO
+		// is left in the cpu_reset config (interrupts masked: SC=0xC0 + enables 0),
+		// which the production crt0 trusts. Forced PC = the BIOS entry.
+		memcpy(m.memory + BIOS_LOAD, bios_rom, sizeof(bios_rom));
+		m.reg.pc = BIOS_LOAD;
+		if (verbose) fprintf(stderr, "[emu] PM cart: entering via test BIOS @0x%04X, vectors synthesized\n", BIOS_LOAD);
 	} else {
-		m.reg.pc = 0x2100;	// test crt0: code at the cartridge base
+		// Fallback: a non-"PM" image — boot bare at the cartridge base with the plain
+		// reset bank state. (Unused by our suites now that every case is a PM cart.)
+		m.reg.cb = 0;
+		m.reg.nb = 0;
+		m.reg.pc = 0x2100;
 	}
 
 	uint64_t steps = 0;
@@ -161,13 +166,15 @@ int main(int argc, char** argv) {
 	}
 	fflush(stdout);
 
-	if (m.status == Machine::STATUS_HALTED && ram_at(m, MAILBOX_MAGIC) == MAGIC_DONE) {
-		int code = ram_at(m, MAILBOX_EXIT) | (ram_at(m, MAILBOX_EXIT + 1) << 8);
-		if (verbose) { fprintf(stderr, "[emu] clean exit, code=%d\n", code); dump_regs(m, steps); }
-		return code > 123 ? 123 : code;	// keep clear of the harness codes below
-	}
 	if (m.status == Machine::STATUS_HALTED) {
-		fprintf(stderr, "[emu] STRAY HALT (no exit magic)\n"); dump_regs(m, steps); return 124;
+		// The production crt0 calls the BIOS shutdown vector (`int (0x48)`) when main
+		// returns; the BIOS shutdown routine halts with main's return value still in
+		// BA (the ABI return register). Read the exit code straight off BA — there is
+		// no RAM exit mailbox, so no test/exit plumbing lives in the runtime.
+		(void)is_pm;
+		int code = m.reg.ba();
+		if (verbose) { fprintf(stderr, "[emu] clean exit (BA), code=%d\n", code); dump_regs(m, steps); }
+		return code > 123 ? 123 : code;	// keep clear of the harness codes below
 	}
 	if (m.status != Machine::STATUS_NORMAL) {
 		fprintf(stderr, "[emu] CPU CRASHED (undefined op?)\n"); dump_regs(m, steps); return 125;
