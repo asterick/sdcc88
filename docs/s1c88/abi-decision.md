@@ -447,6 +447,7 @@ cost steering wins); they bite only under extreme register/pointer pressure.
 | **Permutation cycle through A** | `genMove_o` | a register-shuffle cycle that routes through A but isn't the plain `A<->B` swap (the only one with a native `ex a,b`) |
 | **Giant struct return** | `genReceive` (struct-by-value) | returning a struct **> 255 bytes** — the byte-copy loop counter is 8-bit |
 | **HL-restore vs return-in-HL conflict** | `genRet` | a callee that must both restore a saved HL *and* return its result in HL |
+| **Struct-by-value arg parks BOTH HL and BA** | `genPointerPush` | a call that passes a struct by value followed by register args occupying *both* HL and BA, e.g. `f(struct, char, int)` — the struct push needs HL (walk pointer) + A/B (vehicle), and only the single dead IY is available to stash one parked pair. The common `f(struct, int)`/`f(struct, ptr)`/`f(u8, struct, int)` forms (one parked pair) compile correctly — they stash that pair via IY |
 
 **Status: documented (this table). The "lift" is a future target** — systematically construct a
 triggering C snippet for each, classify reachable-vs-cost-avoided, *fix* the cheap reachable ones

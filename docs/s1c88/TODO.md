@@ -5,7 +5,7 @@ Status snapshot (2026-06-08): **THE CRITICAL PATH (Section A) IS DONE — the to
 game.ihx game.min` produces a bootable Pokémon Mini ROM, with the production `crt0` (real `"PM"`/
 `"NINTENDO"` header), the auto-linked `s1c88.lib`, the `<pm.h>` device header, and a C `romgen` (no
 Python). `examples/hello/` is a copy-me project; `docs/s1c88/building-roms.md` is the how-to. All gates
-green (corpus 20/20, emu-test 16/16, diff-test 10, driver/crt0/rom/branch smokes, example). **Remaining =
+green (corpus 20/20, emu-test 16/16, diff-test 11, driver/crt0/rom/branch smokes, example). **Remaining =
 Section B (quality/coverage) and Section C (documented limitations).**
 
 Legend: **S/M/L** = rough effort. Items are roughly dependency-ordered within each section.
@@ -64,8 +64,19 @@ Legend: **S/M/L** = rough effort. Items are roughly dependency-ordered within ea
       field with explicit `signed`/`unsigned` (both compilers honour that identically); recorded in the
       case header + harness convention. Signed-field sign-extension codegen (`bit`/`rlc`/`sbc`) verified
       correct for explicit `signed` fields.
-    - **#11-structargs** — struct-by-value *arguments* + struct assignment/copy (the return side just bit us;
-      args/copy are the adjacent untested half).
+    - **#11-structargs** — ✅ done (`tests/diff/cases/structargs.c`, 96 values): struct-by-value args of
+      sizes 1–8 + nested/array structs, by-value copy-in semantics, whole-struct assignment (ldir copy),
+      struct-arg + struct-return together, and structs mixed with scalar args in every position. **Found +
+      FIXED a real SILENT miscompile:** when a struct-by-value arg precedes a register arg, e.g.
+      `f(struct, int)` or `f(u8, struct, int)`, the trailing register arg was **dropped entirely** — the
+      struct push (`genPointerPush`) walks the struct through HL and pushes via A/B, clobbering the
+      already-`send`-ed register arg, and a literal SEND "creates no live range" so `isRegDead` reported the
+      register free and it was never stashed. Fix: `genPointerPush` now scans preceding SENDs (as `genIpush`
+      already did) and stashes whichever pair (HL or BA) holds a sent arg into the dead IY across the push,
+      restoring it before the call. The rare two-parked-pairs form `f(struct, char, int)` (needs to stash
+      BOTH HL and BA, only one IY slot) now traps loudly (UNIMPLEMENTED) instead of miscompiling — cataloged
+      as a boundary in `abi-decision.md`. Corpus stayed byte-identical (the path isn't in the corpus);
+      diff/emu caught it.
     - **#11-ptrarith** — ✅ done (`tests/diff/cases/ptrarith.c`, 264 values): indexing across widths,
       `p[-1]`, pointer differences incl. a `/3` struct stride, equality, multi-dim, struct fields, pointer
       walk, `__far` index + diff — all CORRECT. **Surfaced one bug, deferred:**
@@ -226,7 +237,7 @@ Legend: **S/M/L** = rough effort. Items are roughly dependency-ordered within ea
     stream — one test point per case, with per-assertion `#` diagnostics (emu `CHECK` failures), a `1..N`
     plan, and a summary; exits non-zero on any failure. The case-suites gained an opt-in `TAP=1` mode
     (clean `ok`/`not ok` body on stdout, build noise to stderr); their default human output is unchanged.
-    48 points green.
+    49 points green.
 
 ---
 

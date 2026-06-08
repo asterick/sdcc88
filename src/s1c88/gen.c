@@ -5257,24 +5257,62 @@ genPointerPush (const iCode *ic)
   wassert (!offset);
   wassert (!smallc);
 
-  if (!isRegDead (A_IDX, ic))
+  /* A preceding SEND for this same call may have already loaded an argument
+     into a register we are about to clobber (the walk pointer HL, the A/B push
+     vehicles). A literal/immediate SEND creates no live range, so isRegDead()
+     reports the register free here — scan the preceding SENDs explicitly (as
+     genIpush does) and treat those registers as occupied so the struct push
+     does not destroy an already-sent register argument. This happens when a
+     struct-by-value argument precedes a register argument in the parameter
+     list, e.g. f(struct s, int y): y is sent to HL, then this push walks the
+     struct through HL. */
+  bool send_a = false, send_b = false, send_h = false, send_l = false, send_iyl = false, send_iyh = false;
+  for (iCode *walk2 = ic->prev; walk2 && (walk2->op == SEND || walk2->op == IPUSH); walk2 = walk2->prev)
+    {
+      if (walk2->op != SEND)
+        continue;
+      asmop *warg = aopArg (ftype, walk2->argreg);
+      if (!warg)
+        continue;
+      send_a   |= (warg->regs[A_IDX]   >= 0);
+      send_b   |= (warg->regs[B_IDX]   >= 0);
+      send_h   |= (warg->regs[H_IDX]   >= 0);
+      send_l   |= (warg->regs[L_IDX]   >= 0);
+      send_iyl |= (warg->regs[IYL_IDX] >= 0);
+      send_iyh |= (warg->regs[IYH_IDX] >= 0);
+    }
+
+  /* The push needs HL as the walk pointer and A/B as the byte/word vehicle. A
+     preceding SEND may have parked an argument in either pair (HL for the int/
+     pointer overflow regs, BA when the struct is the FIRST argument so the next
+     int arg takes BA). Save whichever pair holds a sent value into the dead IY
+     across the push, then restore it before the call. Only one IY slot exists,
+     so a call that parked sent args in BOTH pairs (e.g. f(struct, int, int))
+     traps loudly rather than miscompiling. */
+  bool stash_hl = !isRegDead (HL_IDX, ic) || send_h || send_l;
+  bool stash_ba = send_a || send_b;
+
+  if (stash_hl && stash_ba)
     UNIMPLEMENTED;
 
-  /* S1C88: HL is the only walk pointer; a live HL is stashed in a dead IY
-    . */
-  bool stash_hl = !isRegDead (HL_IDX, ic);
-  if (stash_hl)
+  /* A live A that is NOT a saved sent-arg can't be clobbered by the vehicle. */
+  if (!isRegDead (A_IDX, ic) && !stash_ba)
+    UNIMPLEMENTED;
+
+  asmop *stashed = stash_hl ? ASMOP_HL : stash_ba ? ASMOP_BA : 0;
+  if (stashed)
     {
-      if (!isRegDead (IY_IDX, ic))
+      if (!isRegDead (IY_IDX, ic) || send_iyl || send_iyh)
         UNIMPLEMENTED;
-      emit2 ("ld iy, hl");
+      emit2 ("ld iy, %s", stash_hl ? "hl" : "ba");
       cost2 (2, 0, 0, 0, 0, 0, 0, 0);
     }
 
-  genMove (ASMOP_HL, IC_LEFT (ic)->aop, true, true, stash_hl ? false : isRegDead (IY_IDX, ic));
+  genMove (ASMOP_HL, IC_LEFT (ic)->aop, true, true, stashed ? false : isRegDead (IY_IDX, ic));
 
   int size = getSize (operandType (ic->left)->next);
-  bool b_free = isRegDead (B_IDX, ic);
+  /* With BA's sent value saved in IY, the physical A/B are free as the vehicle. */
+  bool b_free = stash_ba ? true : (isRegDead (B_IDX, ic) && !send_b);
   if (size > 3)
     {
       emit2 ("add hl, !immed%d", size - 1);   /* native 16-bit immediate add */
@@ -5318,11 +5356,13 @@ genPointerPush (const iCode *ic)
         }
     }
 
-  if (stash_hl)
+  if (stashed)
     {
-      emit2 ("ld hl, iy");
+      emit2 ("ld %s, iy", stash_hl ? "hl" : "ba");
       cost2 (2, 0, 0, 0, 0, 0, 0, 0);
       spillPair (PAIR_IY);
+      if (stash_ba)
+        spillPair (PAIR_BA);
     }
   spillPair (PAIR_HL);
 
