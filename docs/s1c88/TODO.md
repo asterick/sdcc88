@@ -1,13 +1,13 @@
 # sdcc88 TODO — toward a usable toolchain
 
-Status snapshot (2026-06-07, session 26): **A1+A2+A3 done** — the integrated driver now
-preprocesses (real sdcpp built), compiles, and assembles via `sdas88`, and a production
-`crt0.s` (real PM `"PM"`/`"NINTENDO"` header + vector table + C runtime) is built and boots a C
-`main()` end to end through a new mini-BIOS in the emulator runner. **The one remaining gap to
-`sdcc -ms1c88 game.c` linking cleanly is the `s1c88` support library (#4).** The four core tools
-(`sdcc -ms1c88`, `sdas88`, `sdldz80` + banked branches, `romgen.py`) all **work**. Codegen is
-functionally complete + verified (corpus 20/20, emu-test 8/8, diff-test 4 modules); 5 reachable
-codegen bugs found+fixed via the test layers.
+Status snapshot (2026-06-07, session 26): **THE CRITICAL PATH (A.#1–#7) IS DONE — the toolchain
+is usable.** `scripts/setup-sdk.sh` builds everything in one command; `sdcc -ms1c88 game.c -o
+game.ihx && romgen game.ihx game.min` produces a bootable Pokémon Mini ROM, with the production
+`crt0` (real `"PM"`/`"NINTENDO"` header), the auto-linked `s1c88.lib`, the `<pm.h>` device header,
+and a C `romgen` (no Python). `examples/hello/` is a copy-me project (`make` → `.min`, boots), and
+`docs/s1c88/building-roms.md` is the how-to. All gates green (corpus 20/20, emu-test 8/8, diff-test
+4, driver/crt0/rom/branch smokes, example). **Remaining = Section B (quality/coverage: float diff
+module #8, volatile/MMIO #9, peephole tuning #12, branch relaxation #13/#14) and Section C.**
 
 Legend: **S/M/L** = rough effort. Items are roughly dependency-ordered within each section.
 
@@ -40,19 +40,42 @@ A user should be able to: `sdcc -ms1c88 game.c` → assemble → link (banked) �
    cart's slots and enters via the reset vector, exactly as hardware does. `scripts/crt0-smoke.sh`
    boots a C `main()` through it end to end (header bytes verified, gsinit ran, `main()`=42); the 8
    existing emu cases (bare test crt0) still pass.
-4. **[M] Target C runtime library.** Today each test compiles `_divuint`/`_mullong`/… ad-hoc.
-   Build SDCC's `device/lib` for s1c88 into an **`s1c88.lib`** (div/mul + the `__mul*int2*long`
-   widening helpers, native byte-loop memcpy/memset/strcpy/…, float/longlong support) and
-   package it so the driver auto-links it.
-5. **[M] Device headers.** A Pokémon Mini hardware header (MMIO map at `0x20xx`, IRQ vector
-   numbers, timer/IRQ/PRC register bits) so users don't hand-write magic addresses (cf. the
-   `0x2018/0x2027/0x10` constants in `tests/emu/cases/08_isr.c`).
-6. **[S/M] romgen integration.** Fold `scripts/romgen.py` into the build as the documented
-   final `.ihx`→`.min` step (driver post-link hook or a Makefile rule), incl. the `--far` /
-   bank-range declaration story.
-7. **[M] Packaging + example + docs.** An install/SDK layout (tools + `s1c88.lib` + headers +
-   `crt0.rel` together), a minimal example project with a Makefile, and a "how to build a ROM"
-   doc. This is what turns "works in our scripts" into "someone else can use it."
+4. **[M] Target C runtime library. ✅ DONE (session 26).** `scripts/build-runtime.sh` now
+   builds **`s1c88.lib`** and installs it (+ `crt0.rel`) in the driver's lib dir. It's the classic
+   ASxxxx **text-index** format (one module name per line + the matching `<module>.rel` alongside)
+   — sdldz80 reads it directly, no `sdar`/binutils needed. Members are SDCC's generic support
+   routines **compiled through our own port** (self-hosting): the 10 the codegen actually emits
+   implicit bcalls to — `__{div,mod,mul}{sint,uint}` (16-bit) + `__{div,mod,mul}{slong,ulong}`
+   (32-bit); char ops use native DIV/MLT and shifts/widening are inline, so they need no library —
+   plus a libc `mem*/str*` subset for user code. (Float/longlong deferred to #8/#18.) The driver
+   was finished to match: `code_loc`/`data_loc` defaulted to the PM map (`_CODE`=0x2100 with the
+   header at its front, `_DATA`=0x1000), and crt0 declares `_HOME` so library code chains into ROM.
+   The **stack is left as the BIOS sets it on reset** (crt0 doesn't touch SP; the emulator runner's
+   mini-BIOS parks SP below the test mailbox). **`sdcc -ms1c88 game.c` now builds a bootable PM ROM
+   end to end** — `scripts/driver-smoke.sh` compiles a div-using program through the integrated
+   driver, romgens, and runs it (header OK, `main()`=42).
+5. **[M] Device headers. ✅ DONE (session 26).** `device/include/s1c88/pm.h` — the full PM MMIO
+   map in Epson/official-SDK register names (SYS_/SEC_/TMR1-3_/TMR256_/IRQ_/AUD_/PRC_/LCD_/KEY_/
+   IO_), with bit-field macros, the IRQ priority/enable/active flags, and the hardware **vector
+   numbers** (`VEC_*`). Adapted to SDCC C from the EPSON/TASKING `c88-pokemini` header; addresses
+   cross-checked against minimon-core. `build-runtime.sh` installs it to the driver's
+   `include/s1c88` path; `#include <pm.h>` compiles + boots (verified: `PRC_MODE` write lands at
+   0x2080, key-bit macros correct). *(Field names still worth a spot-check against the owner's
+   wiki, which is JS-rendered and couldn't be fetched.)*
+6. **[S/M] romgen integration. ✅ DONE (session 26).** `scripts/romgen.py` rewritten in C as
+   `tools/romgen.c` (**no Python dependency in the shipped toolchain**, per the owner);
+   `scripts/build-romgen.sh` builds it into the toolchain `bin/`. Byte-identical to the old Python
+   on both the banked and `--far` paths. All harness scripts (emu-test, diff-test, rom-smoke,
+   crt0-smoke, driver-smoke) now invoke `bin/romgen`; `romgen.py` removed. (The documented
+   `.ihx`→`.min` final step is wired into the example Makefile under #7.)
+7. **[M] Packaging + example + docs. ✅ DONE (session 26).** `scripts/setup-sdk.sh` builds the
+   whole toolchain from a clean checkout in one command (compiler → sdcpp → sdas88 → sdldz80 →
+   romgen → runtime), leaving `build/sdcc-4.5.0/` as a usable SDK (`bin/` tools, `src/sdcc`,
+   `share/sdcc/{lib,include}/s1c88/`). **`examples/hello/`** is a copy-me project — `hello.c`
+   (`#include <pm.h>` + a div from the lib), a `Makefile` (`make` → `.min`, `make run` → emulator),
+   and a README; it builds and boots (exit 42). **`docs/s1c88/building-roms.md`** is the end-user
+   guide (setup, the two-step `sdcc`→`romgen` build, the header, the memory map, interrupts,
+   verification). This turns "works in our scripts" into "someone else can use it."
 
 ---
 
@@ -110,6 +133,10 @@ A user should be able to: `sdcc -ms1c88 game.c` → assemble → link (banked) �
 ---
 
 ## Suggested sequencing
-A1+A2 first (tiny, unblocks the real driver) → A3→A4→A5 (crt0/lib/headers — the substance of
-"usable") → A6/A7 (package it). Run **B8 (float)** in parallel as the highest-value quality
-item (biggest untested surface). See [HANDOFF.md](HANDOFF.md) for current state + per-session log.
+~~Section A (the critical path) is **done** (session 26).~~ Next: **B8 (float diff module)** is the
+highest-value quality item (biggest untested surface — the integer modules each found real bugs);
+**B9 (volatile/MMIO)** now matters because real ROMs use the `<pm.h>` registers; then peephole/cost
+tuning (B12) and the branch-relaxation lift (B13→B14). A nice usability follow-up: auto-wire
+`__interrupt(n)` functions to the crt0 vector table (today ISRs are installed by hand). See
+[HANDOFF.md](HANDOFF.md) for current state + per-session log, and
+[building-roms.md](building-roms.md) for the end-user guide.

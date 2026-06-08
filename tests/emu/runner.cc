@@ -5,7 +5,7 @@
 // linked with this file, which provides the host glue the core expects
 // (get_machine / debug_print) plus a tiny test protocol:
 //
-//   - the .min ROM (romgen.py output; byte 0 = physical 0x2100) is loaded at
+//   - the .min ROM (romgen output; byte 0 = physical 0x2100) is loaded at
 //     memory[0x2100] (RAM + cartridge are one unified writable array), the BIOS is
 //     bypassed (PC forced to 0x2100 where crt0 lives), and the CPU is stepped
 //     instruction-by-instruction.
@@ -107,8 +107,12 @@ int main(int argc, char** argv) {
 			m.memory[2 * v]     = slot & 0xFF;
 			m.memory[2 * v + 1] = (slot >> 8) & 0xFF;
 		}
+		// The S1C88 leaves SP undefined at reset; on real hardware the BIOS sets it
+		// before entering the cart, and the production crt0 deliberately does NOT touch
+		// SP. Mimic the BIOS here: park the stack just below the test mailbox (0x1FF8).
+		m.reg.sp = 0x1FF0;
 		m.reg.pc = m.memory[0] | (m.memory[1] << 8);	// reset vector (= 0x2102)
-		if (verbose) fprintf(stderr, "[emu] PM cart: vectors synthesized, entry via reset slot 0x%04X\n", m.reg.pc);
+		if (verbose) fprintf(stderr, "[emu] PM cart: SP=0x%04X, vectors synthesized, entry via reset slot 0x%04X\n", m.reg.sp, m.reg.pc);
 	} else {
 		m.reg.pc = 0x2100;	// test crt0: code at the cartridge base
 	}

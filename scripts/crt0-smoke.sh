@@ -12,6 +12,7 @@
 set -euo pipefail
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 SDCC="${REPO}/build/sdcc-4.5.0"
+[ -x "${SDCC}/bin/romgen" ] || "${REPO}/scripts/build-romgen.sh" >/dev/null
 SDCCBIN="${SDCC}/src/sdcc"; SDAS="${SDCC}/bin/sdas88"; SDLD="${SDCC}/bin/sdldz80"
 EMU="${REPO}/tests/emu"; RUNNER="${REPO}/build/emu/runner"
 OUT="$(mktemp -d)"; trap 'rm -rf "$OUT"' EXIT
@@ -35,12 +36,14 @@ cc -E -P -x c "${OUT}/t.c" > "${OUT}/t.i"
 "$SDCCBIN" -ms1c88 --c1mode -o "${OUT}/t.asm" < "${OUT}/t.i" || { echo "!! compile FAILED"; exit 1; }
 "$SDAS" -o "${OUT}/t.rel" "${OUT}/t.asm" || { echo "!! assemble FAILED"; exit 1; }
 
-# link: crt0 first; header @ 0x2100, code follows, RAM @ 0x1000
-"$SDLD" -nwxi -b _HEADER=0x2100 -b _HOME=0x2200 -b _CODE=0x4000 -b _DATA=0x1000 \
+# link: crt0 first (header is the front of _CODE @ 0x2100), RAM @ 0x1000; pull s1c88.lib.
+# (SP is set by the BIOS / the runner's mini-BIOS on reset; crt0 doesn't touch it.)
+LIBDIR="${SDCC}/share/sdcc/lib/s1c88"
+"$SDLD" -nwxi -b _CODE=0x2100 -b _DATA=0x1000 -k "$LIBDIR" -l s1c88 \
     "${OUT}/t.ihx" "${OUT}/crt0.rel" "${OUT}/t.rel" > "${OUT}/err" 2>&1 || {
   echo "!! LINK FAILED"; grep -E "Undefined|ASlink" "${OUT}/err" | sort -u | sed 's/^/    /'; exit 1; }
 
-python3 "${REPO}/scripts/romgen.py" "${OUT}/t.ihx" "${OUT}/t.min" > "${OUT}/err" 2>&1 || {
+"${SDCC}/bin/romgen" "${OUT}/t.ihx" "${OUT}/t.min" > "${OUT}/err" 2>&1 || {
   echo "!! romgen FAILED"; cat "${OUT}/err"; exit 1; }
 
 # verify the header bytes landed correctly in the .min (file byte 0 == phys 0x2100)
@@ -54,7 +57,7 @@ echo ">> header OK: 'PM' @ 0x2100, 'NINTENDO' @ 0x21A4"
 set +e
 "$RUNNER" --verbose "${OUT}/t.min" >"${OUT}/run.out" 2>"${OUT}/run.err"; rc=$?
 set -e
-grep -q "PM cart: vectors synthesized" "${OUT}/run.err" || { echo "!! runner did NOT take the PM boot path"; cat "${OUT}/run.err"; exit 1; }
+grep -q "PM cart:" "${OUT}/run.err" || { echo "!! runner did NOT take the PM boot path"; cat "${OUT}/run.err"; exit 1; }
 if [ "$rc" -eq 42 ]; then
   echo ">> crt0-smoke: PASS (booted via PM reset vector, gsinit ran, main()=42)"
 else

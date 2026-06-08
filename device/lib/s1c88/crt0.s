@@ -5,21 +5,27 @@
 ; environment, then calls _main. Assembled to crt0.rel; the sdcc driver links
 ; it first (port->linker.crt = "crt0.rel").
 ;
-; ROM header (cartridge byte 0 == physical 0x2100; see docs/s1c88/banked-branch.md
-; bank table). Hardware/BIOS-checked fields:
+; LAYOUT. The cartridge header lives at the very start of _CODE, and crt0 is linked
+; first, so with `-b _CODE=0x2100` (the driver's default code_loc) the header sits at
+; physical 0x2100 (cartridge byte 0; see docs/s1c88/banked-branch.md). Keeping the
+; header in _CODE (rather than a separate area) means the driver only has to pin
+; _CODE + _DATA — no extra -b for the header, and it dodges the sdas88 quirk where an
+; unpinned _CODE (implicit area 0 of every module) would land at address 0.
+;
+; ROM header (hardware/BIOS-checked fields):
 ;   0x2100  "PM"                      2-byte cartridge marker
 ;   0x2102  reset vector slot         6 bytes: ld nb,#page ; jrl __start
 ;   0x2108  26 IRQ vector slots       26 x 6 bytes -> _irq_default (RETE)
 ;   0x21A4  "NINTENDO"                8-byte BIOS watermark (REQUIRED)
-; Each vector slot is exactly 6 bytes (ld nb,#bb = CE C4 bb, 3B; jrl = F3 rr qq,
-; 3B) so the BIOS dispatch math (slot N at 0x2102 + 6*N) lands on each jump. On
-; real hardware the BIOS reads the 0x0000-0x00FF vector table and routes IRQ N
-; to its 0x2102+6*N slot; the optional secondary header tail (0x21BC) is dropped
-; (unchecked by hardware).
+; Each vector slot is exactly 6 bytes (ld nb,#bb = CE C4 bb, 3B; jrl = F3 rr qq, 3B)
+; so the BIOS dispatch math (slot N at 0x2102 + 6*N) lands on each jump. On real
+; hardware the BIOS reads the 0x0000-0x00FF vector table and routes IRQ N to its
+; 0x2102+6*N slot; the optional secondary header tail (0x21BC) is dropped (unchecked).
 ;
-; Runtime contract (abi-decision.md): EP=XP=YP=0 (the EP=0 invariant, load-bearing
-; for all near (hl)/(iy) access), __sdcc_fptr cell in near RAM for banked
-; function-pointer dispatch, _DATA zero-init + _INITIALIZER->_INITIALIZED copy.
+; Runtime contract (abi-decision.md): EP=XP=YP=0 (the EP=0 invariant, load-bearing for
+; all near (hl)/(iy) access), __sdcc_fptr cell in near RAM for banked function-pointer
+; dispatch, _INITIALIZER->_INITIALIZED copy. _DATA zero-init needs no loop: the BIOS
+; clears all RAM at boot (and the emulator runner clears 0x0000-0x1FFF on load).
 ;--------------------------------------------------------------------------
 	.module crt0
 	.globl	_main
@@ -30,15 +36,15 @@
 	.globl	l__INITIALIZER
 
 	;----------------------------------------------------------------
-	; ROM area order (cart, bank 0 common area): header first, then code.
+	; Area order. crt0 (linked first) establishes it: _CODE first so
+	; the header is area 0 at the pinned base; ROM init areas next;
+	; RAM areas last.
 	;----------------------------------------------------------------
-	.area	_HEADER
-	.area	_HOME
 	.area	_CODE
+	.area	_HOME			; codegen/library home code — must chain into ROM
 	.area	_GSINIT
 	.area	_GSFINAL
 	.area	_INITIALIZER
-	;---- RAM area order ----
 	.area	_DATA
 	.area	_INITIALIZED
 
@@ -51,9 +57,9 @@ __sdcc_fptr::
 	.ds	2
 
 	;================================================================
-	; Cartridge header @ 0x2100 (linker: -b _HEADER=0x2100)
+	; Cartridge header — first bytes of _CODE (pinned @ 0x2100)
 	;================================================================
-	.area	_HEADER
+	.area	_CODE
 	.ascii	"PM"			; 0x2100 cartridge marker
 
 	; 0x2102 reset vector slot -> __start (page 0 = common bank)
@@ -69,11 +75,10 @@ __sdcc_fptr::
 	.ascii	"NINTENDO"		; 0x21A4 BIOS watermark (required)
 
 	;================================================================
-	; Startup
+	; Startup (immediately after the header, still in _CODE)
 	;================================================================
-	.area	_HOME
 __start::
-	ld	sp, #0x1FF0		; stack top (near RAM; below the emu mailbox)
+	; SP is left as the BIOS set it on reset — crt0 does not touch the stack.
 	ld	a, #0x00
 	ld	ep, a			; the EP=0 invariant ...
 	ld	xp, a			; ... near data/index pages all 0
@@ -104,16 +109,13 @@ __start::
 	;----------------------------------------------------------------
 	; Default IRQ handler — return-from-exception (restores SC).
 	;----------------------------------------------------------------
-	.area	_HOME
 _irq_default::
 	rete
 
 	;================================================================
 	; Static initialization: copy _INITIALIZER (ROM) -> _INITIALIZED
-	; (RAM), then run the per-module _GSINIT code; _GSFINAL holds the
-	; ret. The C zero-init guarantee for _DATA needs no work here: the
-	; Pokémon Mini BIOS clears all RAM at boot (and the emulator runner
-	; clears 0x0000-0x1FFF on load), so _DATA starts zeroed.
+	; (RAM), then fall through the per-module _GSINIT code; _GSFINAL
+	; holds the ret. (C zero-init: see header — the BIOS clears RAM.)
 	;================================================================
 	.area	_GSINIT
 gsinit::

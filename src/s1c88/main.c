@@ -574,11 +574,14 @@ _setDefaultOptions (void)
   options.intlong_rent = 1;
   options.float_rent = 1;
   options.noRegParams = 0;
-  /* Default code and data locations. */
-  options.code_loc = 0x200;
+  /* Default code and data locations — the Pokémon Mini common-area memory map.
+     _CODE starts at the cartridge base 0x2100 (crt0 puts the "PM" header at the
+     very front of _CODE; see device/lib/s1c88/crt0.s); _DATA is near RAM at 0x1000
+     (RAM spans 0x1000-0x1FFF). The driver pins these via {z80bases} -> -b_CODE/-b_DATA. */
+  options.code_loc = 0x2100;
   options.allow_undoc_inst = false;
 
-  options.data_loc = 0x8000;
+  options.data_loc = 0x1000;
 
   options.out_fmt = 'i';        /* Default output format is ihx */
 }

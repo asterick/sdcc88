@@ -6,12 +6,25 @@ steps under **NEXT ACTION**. Everything needed to continue is here or linked fro
 > **▶ The forward-looking work list is [`TODO.md`](TODO.md)** — the critical path to a *usable*
 > toolchain (driver wiring, real crt0, target lib, device headers, packaging) plus the
 > quality/coverage backlog (float diff module, `__critical`/nested-IRQ, peephole tuning).
-> Suggested next step: TODO **#4 (the `s1c88` support library)** — A1+A2+A3 are done (session 26),
-> so the integrated `sdcc -ms1c88 game.c` now preprocesses → compiles → assembles → finds crt0;
-> the only remaining link gap is the missing `s1c88` lib (div/mul/mem/str support routines).
+> Suggested next step: **the critical-path TODO Section A (#1–#7) is DONE (session 26)** — the
+> toolchain is usable end to end (`scripts/setup-sdk.sh`; `sdcc -ms1c88 game.c` → `romgen` →
+> bootable `.min`; `examples/hello`; `docs/s1c88/building-roms.md`). Next is **Section B** quality
+> work — highest value: **B8 the float/softfloat differential module** (largest unexecuted surface).
 
-_Last updated: 2026-06-07 (session 26: **the usable-toolchain critical path begins — TODO
-A1+A2+A3 done**. (A1) Driver wiring: `src/s1c88/main.c` `_z80AsmCmd`→`sdas88`, `_libs`→`s1c88`;
+_Last updated: 2026-06-07 (session 26: **the usable-toolchain critical path (TODO Section A,
+#1–#7) is COMPLETE — `sdcc -ms1c88 game.c` now builds a bootable Pokémon Mini ROM end to end**.
+Beyond A1+A2+A3 (below): **#4** `s1c88.lib` (the 10 codegen-emitted div/mod/mul routines +
+mem*/str*, a lightweight ASxxxx text-index lib compiled through our own port — no sdar needed),
+plus the driver memory map (`_CODE`=0x2100 header-first, `_DATA`=0x1000, crt0 declares `_HOME`).
+**#5** `device/include/s1c88/pm.h` (Epson/SDK register names from the c88-pokemini header,
+addresses cross-checked vs minimon-core; `#include <pm.h>` boots). **#6** `tools/romgen.c` — romgen
+rewritten in C (byte-identical, no Python; `romgen.py` removed). **#7** `scripts/setup-sdk.sh`
+(one-command toolchain build), `examples/hello/` (copy-me project, `make` → `.min`, boots), and
+`docs/s1c88/building-roms.md` (end-user guide). **The stack is left as the BIOS sets it** (crt0
+doesn't touch SP; the emulator runner's mini-BIOS parks SP=0x1FF0 — an earlier `--stack-loc`/
+`__sdcc_stack_top` scheme was dropped per the owner). All gates green: corpus 20/20, emu-test 8/8,
+diff-test 4, driver/crt0/rom/branch smokes, example. Next: Section B (float diff module #8 first).
+Below, the original A1+A2+A3 entry: **TODO A1+A2+A3 done**. (A1) Driver wiring: `src/s1c88/main.c` `_z80AsmCmd`→`sdas88`, `_libs`→`s1c88`;
 the integrated driver now invokes `sdas88` and emits a valid XL3 `.rel`. (A2) Preprocessor: the
 installed `bin/sdcpp` was a wrapper around an unbuilt cpp — **`scripts/build-sdcpp.sh`** builds
 `support/sdbinutils/libiberty` + `support/cpp` (the GCC-cpp fork), so `sdcc -ms1c88 foo.c`

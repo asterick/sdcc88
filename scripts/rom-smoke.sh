@@ -10,8 +10,10 @@
 # romgen maps those to physical: bank0 logic; bankN -> N*0x8000 + (logic & 0x7FFF).
 set -uo pipefail
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
-SDAS="${REPO}/build/sdcc-4.5.0/bin/sdas88"; SDLD="${REPO}/build/sdcc-4.5.0/bin/sdldz80"
+SDCC="${REPO}/build/sdcc-4.5.0"
+SDAS="${SDCC}/bin/sdas88"; SDLD="${SDCC}/bin/sdldz80"
 [ -x "$SDAS" ] && [ -x "$SDLD" ] || { echo "!! build sdas88 + sdldz80 first" >&2; exit 2; }
+[ -x "${SDCC}/bin/romgen" ] || "${REPO}/scripts/build-romgen.sh" >/dev/null
 
 tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
 cat > "$tmp/r.asm" <<'EOF'
@@ -47,7 +49,7 @@ EOF
 # declared to romgen with --far so it bypasses the (bank<<16)|logic code mapping.
 "$SDLD" -nwxi -b _HOME=0x2100 -b _CODE_1=0x18000 -b _CODE_2=0x28000 -b _FAR=0x18800 "$tmp/r.ihx" "$tmp/r.rel" >/dev/null 2>&1 \
   || { echo "FAIL: link"; exit 1; }
-python3 "${REPO}/scripts/romgen.py" "$tmp/r.ihx" "$tmp/r.min" --far=0x18800-0x18fff || { echo "FAIL: romgen"; exit 1; }
+"${SDCC}/bin/romgen" "$tmp/r.ihx" "$tmp/r.min" --far=0x18800-0x18fff || { echo "FAIL: romgen"; exit 1; }
 
 # Verify with a hexdump of the three physical regions.
 hx() { od -An -tx1 -j "$1" -N "$2" "$tmp/r.min" | tr -s ' ' | sed 's/^ //'; }

@@ -15,6 +15,7 @@
 set -uo pipefail
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 SDCC="${REPO}/build/sdcc-4.5.0"
+[ -x "${SDCC}/bin/romgen" ] || "${REPO}/scripts/build-romgen.sh" >/dev/null
 SDCCBIN="${SDCC}/src/sdcc"
 SDAS="${SDCC}/bin/sdas88"
 SDLD="${SDCC}/bin/sdldz80"
@@ -99,7 +100,7 @@ for src in "${EMU}"/cases/*.c; do
     echo "LINK-FAIL"; grep -E "Undefined Global|ASlink" "${OUT}/err" | sort -u | sed 's/^/    /'
     fail=$((fail+1)); continue
   fi
-  if ! python3 "${REPO}/scripts/romgen.py" "${OUT}/${b}.ihx" "${OUT}/${b}.min" ${FAR_ROMGEN} > "${OUT}/err" 2>&1; then
+  if ! "${SDCC}/bin/romgen" "${OUT}/${b}.ihx" "${OUT}/${b}.min" ${FAR_ROMGEN} > "${OUT}/err" 2>&1; then
     echo "ROMGEN-FAIL"; sed 's/^/    /' "${OUT}/err"; fail=$((fail+1)); continue
   fi
 
