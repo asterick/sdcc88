@@ -1,11 +1,13 @@
 # sdcc88 TODO — toward a usable toolchain
 
-Status snapshot (2026-06-07): the four core tools (`sdcc -ms1c88`, `sdas88`, `sdldz80` +
-banked branches, `romgen.py`) all **work** and are exercised end-to-end by the script
-harnesses (`scripts/*.sh`, `tests/`). But they only work *through those scripts* — a user
-typing `sdcc -ms1c88 game.c` today FAILS, because the driver integration, runtime, and
-packaging aren't done. The codegen is functionally complete + verified (corpus 20/20,
-emu-test 8/8, diff-test 4 modules); 5 reachable codegen bugs found+fixed via the test layers.
+Status snapshot (2026-06-07, session 26): **A1+A2+A3 done** — the integrated driver now
+preprocesses (real sdcpp built), compiles, and assembles via `sdas88`, and a production
+`crt0.s` (real PM `"PM"`/`"NINTENDO"` header + vector table + C runtime) is built and boots a C
+`main()` end to end through a new mini-BIOS in the emulator runner. **The one remaining gap to
+`sdcc -ms1c88 game.c` linking cleanly is the `s1c88` support library (#4).** The four core tools
+(`sdcc -ms1c88`, `sdas88`, `sdldz80` + banked branches, `romgen.py`) all **work**. Codegen is
+functionally complete + verified (corpus 20/20, emu-test 8/8, diff-test 4 modules); 5 reachable
+codegen bugs found+fixed via the test layers.
 
 Legend: **S/M/L** = rough effort. Items are roughly dependency-ordered within each section.
 
@@ -15,18 +17,29 @@ Legend: **S/M/L** = rough effort. Items are roughly dependency-ordered within ea
 
 A user should be able to: `sdcc -ms1c88 game.c` → assemble → link (banked) → `.min`.
 
-1. **[S, blocking] Driver tool wiring.** `src/s1c88/main.c` still names the z80 tools:
-   `_z80AsmCmd = "sdasz80"` must become **`sdas88`**; `_crt = "crt0.rel"` and `_libs = "z80"`
-   must point at the s1c88 startup + lib. (`_z80LinkCmd = "sdldz80"` is already correct — our
-   banked linker is sdldz80.) Without this the integrated assemble/link uses the wrong
-   assembler and missing files.
-2. **[S] Preprocessor wiring.** `sdcpp` is built and works when invoked directly, but the
-   driver calls bare `sdcpp` via PATH → fails (so `sdcc foo.c` without `--c1mode` can't
-   preprocess). Needs install/PATH or an absolute path.
-3. **[M] A real crt0 / startup.** Only a *test* crt0 exists (`tests/emu/crt0.asm`). Need a
-   production startup: Pokémon Mini ROM header, the real interrupt **vector table**, `_DATA`
-   zero + `_INITIALIZER`→`_INITIALIZED` copy, stack + EP/XP/YP=0 setup, the `__sdcc_fptr`
-   cell, `bcall _main` entry — assembled to `crt0.rel` where the driver finds it.
+1. **[S, blocking] Driver tool wiring. ✅ DONE (session 26).** `src/s1c88/main.c`:
+   `_z80AsmCmd` `"sdasz80"`→**`"sdas88"`**, `_libs` `"z80"`→**`"s1c88"`** (`_z80LinkCmd
+   = "sdldz80"` was already correct; `_crt = "crt0.rel"` is generic). Verified: the
+   integrated driver invokes `sdas88 -plosgffw` and produces a valid XL3 `.rel`.
+2. **[S] Preprocessor wiring. ✅ DONE (session 26).** The installed `bin/sdcpp` was a thin
+   wrapper that exec'd whatever `cpp` lived in `support/cpp/gcc/` — but the real SDCC cpp was
+   never built (`build.sh` does only `make -C src`). **`scripts/build-sdcpp.sh`** now builds
+   `support/sdbinutils/libiberty` + `support/cpp` (the GCC-cpp fork), so the wrapper finds the
+   real cpp. Verified end to end: `sdcc -ms1c88 foo.c` preprocesses (sdcpp) → compiles → `sdas88`
+   → `.rel`, no `--c1mode` needed.
+3. **[M] A real crt0 / startup. ✅ DONE (session 26).** `device/lib/s1c88/crt0.s`: the real
+   Pokémon Mini cartridge header — **`"PM"` marker @ 0x2100**, the **6-byte IRQ vector slots**
+   (`ld nb,#page ; jrl handler`; reset→`__start`, 26 maskable→`_irq_default` RETE), **`"NINTENDO"`
+   watermark @ 0x21A4** (the optional 0x21BC tail is dropped, unchecked by hardware) — plus the C
+   runtime: stack, **EP=XP=YP=0** (the EP=0 invariant), IRQ mask, gsinit
+   (`_INITIALIZER`→`_INITIALIZED`; `_DATA` zero-init needs no loop — the BIOS clears RAM at boot,
+   as does the runner), the **`__sdcc_fptr`** cell, `bcall _main`. `scripts/build-runtime.sh`
+   assembles it to `crt0.rel` and installs it in the driver's lib dir (the "couldn't find crt0.rel"
+   warning is gone — only the `s1c88` lib (#4) is still missing). **The emulator runner gained a
+   minimal BIOS** (auto-detected via `"PM"`): it synthesizes the 0x0000-0x00FF vector table from the
+   cart's slots and enters via the reset vector, exactly as hardware does. `scripts/crt0-smoke.sh`
+   boots a C `main()` through it end to end (header bytes verified, gsinit ran, `main()`=42); the 8
+   existing emu cases (bare test crt0) still pass.
 4. **[M] Target C runtime library.** Today each test compiles `_divuint`/`_mullong`/… ad-hoc.
    Build SDCC's `device/lib` for s1c88 into an **`s1c88.lib`** (div/mul + the `__mul*int2*long`
    widening helpers, native byte-loop memcpy/memset/strcpy/…, float/longlong support) and

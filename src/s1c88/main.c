@@ -802,7 +802,7 @@ static const char *_gnuLdCmd[] = {
 */
 /* $3 is replaced by assembler.debug_opts resp. port->assembler.plain_opts */
 static const char *_z80AsmCmd[] = {
-  "sdasz80", "$l", "$3", "$2", "$1.asm", NULL
+  "sdas88", "$l", "$3", "$2", "$1.asm", NULL
 };
 
 
@@ -813,7 +813,7 @@ static const char *_GnuAsmCmd[] = {
 };
 */
 static const char *const _crt[] = { "crt0.rel", NULL, };
-static const char *const _libs_z80[] = { "z80", NULL, };
+static const char *const _libs_z80[] = { "s1c88", NULL, };
 
 /* Globals */
 PORT s1c88_port =

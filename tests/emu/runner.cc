@@ -84,15 +84,34 @@ int main(int argc, char** argv) {
 	if (n == 0) { fprintf(stderr, "%s: empty ROM\n", rom_path); return 2; }
 	if (verbose) fprintf(stderr, "[emu] loaded %zu bytes at phys 0x2100\n", n);
 
-	// reset, then bypass the BIOS: jump straight to crt0 at 0x2100 (bank 0, so
-	// cb/nb = 0; sc stays 0xC0 = interrupts masked). The BIOS will NOT boot with
-	// the peripherals pruned from the core, so we must never run it — PC is forced
-	// to the cartridge entry here. Memory is always accessible (control has no
-	// enable side effects).
+	// reset, then bypass the real (pruned) BIOS. Two boot conventions, auto-detected:
+	//
+	//  (a) Production crt0: a real Pokémon Mini cartridge header with the "PM" marker
+	//      at 0x2100. We act as a minimal BIOS — synthesize the 0x0000-0x00FF interrupt
+	//      vector table from the cart's 6-byte jump slots (vector N's handler address =
+	//      slot N at 0x2102 + 6*N), then enter via the reset vector (word at 0x0000 =
+	//      the reset slot 0x2102, which runs `ld nb,#0 ; jrl __start`). This is what the
+	//      real BIOS does after validating the cart, so the production startup + ISR
+	//      dispatch run exactly as on hardware.
+	//
+	//  (b) Test crt0 (tests/emu/crt0.asm): code lives directly at 0x2100 (no "PM"
+	//      marker). PC is forced there. Kept for the existing emu cases.
+	//
+	// Memory is always accessible (control has no enable side effects).
 	cpu_reset(m);
-	m.reg.pc = 0x2100;
 	m.reg.cb = 0;
 	m.reg.nb = 0;
+	if (m.memory[0x2100] == 'P' && m.memory[0x2101] == 'M') {
+		for (int v = 0; v < 27; v++) {		// reset + 26 maskable IRQ slots
+			uint32_t slot = 0x2102 + 6 * v;
+			m.memory[2 * v]     = slot & 0xFF;
+			m.memory[2 * v + 1] = (slot >> 8) & 0xFF;
+		}
+		m.reg.pc = m.memory[0] | (m.memory[1] << 8);	// reset vector (= 0x2102)
+		if (verbose) fprintf(stderr, "[emu] PM cart: vectors synthesized, entry via reset slot 0x%04X\n", m.reg.pc);
+	} else {
+		m.reg.pc = 0x2100;	// test crt0: code at the cartridge base
+	}
 
 	uint64_t steps = 0;
 	while (m.status == Machine::STATUS_NORMAL && steps < max_steps) {

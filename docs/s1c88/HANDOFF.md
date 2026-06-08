@@ -6,10 +6,26 @@ steps under **NEXT ACTION**. Everything needed to continue is here or linked fro
 > **▶ The forward-looking work list is [`TODO.md`](TODO.md)** — the critical path to a *usable*
 > toolchain (driver wiring, real crt0, target lib, device headers, packaging) plus the
 > quality/coverage backlog (float diff module, `__critical`/nested-IRQ, peephole tuning).
-> Suggested first step: TODO A1+A2 (point the driver at `sdas88` + wire `sdcpp` so
-> `sdcc -ms1c88 foo.c` drives the right tools).
+> Suggested next step: TODO **#4 (the `s1c88` support library)** — A1+A2+A3 are done (session 26),
+> so the integrated `sdcc -ms1c88 game.c` now preprocesses → compiles → assembles → finds crt0;
+> the only remaining link gap is the missing `s1c88` lib (div/mul/mem/str support routines).
 
-_Last updated: 2026-06-07 (session 25: **emulator pruned to a minimal CPU+memory+IRQ+timers
+_Last updated: 2026-06-07 (session 26: **the usable-toolchain critical path begins — TODO
+A1+A2+A3 done**. (A1) Driver wiring: `src/s1c88/main.c` `_z80AsmCmd`→`sdas88`, `_libs`→`s1c88`;
+the integrated driver now invokes `sdas88` and emits a valid XL3 `.rel`. (A2) Preprocessor: the
+installed `bin/sdcpp` was a wrapper around an unbuilt cpp — **`scripts/build-sdcpp.sh`** builds
+`support/sdbinutils/libiberty` + `support/cpp` (the GCC-cpp fork), so `sdcc -ms1c88 foo.c`
+preprocesses for real (no `--c1mode`). (A3) **Production crt0** (`device/lib/s1c88/crt0.s`): the
+real Pokémon Mini cartridge header — **`"PM"` @ 0x2100**, 27 × **6-byte vector slots**
+(`ld nb,#page ; jrl`; reset→`__start`, 26 maskable→`_irq_default`), **`"NINTENDO"` @ 0x21A4**
+(0x21BC tail dropped, unchecked) — plus stack/EP=XP=YP=0/IRQ-mask/gsinit/`__sdcc_fptr`/`bcall
+_main`. `scripts/build-runtime.sh` installs `crt0.rel` in the driver's lib dir. **The emulator
+runner gained a minimal BIOS** (auto-detected via `"PM"`): synthesizes the 0x00-0xFF vector table
+from the cart slots and enters via the reset vector, as hardware does. `scripts/crt0-smoke.sh`
+boots a C `main()` end to end (header bytes verified, gsinit ran, `main()`=42); emu-test still 8/8,
+corpus 20/20. The header magic is **`"PM"`** per the project owner (a booting homebrew uses `"MN"`;
+followed the owner's direction). Remaining critical path: **#4 `s1c88` lib**, then #5 headers, #6
+romgen integration, #7 packaging. — Earlier, session 25: **emulator pruned to a minimal CPU+memory+IRQ+timers
 harness** (LCD/blitter/audio/RTC/TIM256/input/GPIO/EEPROM removed; control = 3 dumb bytes; RAM
 + cartridge unified into one writable `memory[]` so **far writes work**; BIOS bypassed). **New
 control-flow differential module** (`control.c`, 467 values) found **bug #4 — genCast unsigned
