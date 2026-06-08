@@ -19,21 +19,22 @@ sdcc88 is an **overlay on upstream SDCC, built with SDCC's own autotools build**
 *not* a reimplemented build system. `build.sh` fetches SDCC, drops our port into its tree, registers it,
 and builds the compiler.
 
-> **Status:** the full toolchain is **complete and usable** — `sdcc -ms1c88 game.c -o game.ihx &&
-> romgen game.ihx game.min` builds a bootable Pokémon Mini ROM. `src/s1c88` started as a clone of
-> SDCC's `z80` port (the z80 register model fits the S1C88 well) and the codegen has been retargeted to
-> the real S1C88 ISA, always-green incremental. The binary toolchain — `sdas88` (full ISA, byte-verified,
-> also the codegen validator), `sdldz80` (assemble→link + **banked `bcall`/`bjump`**, linker-resolved bank
-> switching), `romgen` (C, → flat `.min`) — plus the production `crt0`, `s1c88.lib`, and `<pm.h>` device
-> header are all in place. The codegen retarget is **functionally complete** (corpus 20/20 byte-identical,
-> emu-test 16/16, diff-test 12; all numbered ABI tasks closed; native `DIV`/`MLT`; 3-byte banked function
-> pointers; S1C88 **MAXIMUM-mode** call model). The one remaining known bug is **deprioritized/deferred** —
-> the `_fsadd` different-sign float-subtract miscompile (TODO #8; float is low-value here). (The narrow
-> pointer-compare miscompile `&a[i] < &a[j]`, TODO #11-ptrcmp-bug, is now FIXED — a peephole read-analysis
-> gap for `cp ba, hl`.) What remains is integer/pointer
-> quality/coverage (#11), code-size/peephole tuning (#12, with `size-check.sh` as the yardstick), branch
-> relaxation (#14, broken into #14a/b/c), and the z80-artifact scrub remainder (#20 A/D/F).
-> Design/ABI: **`docs/s1c88/abi-decision.md`**; current state + next action: **`docs/s1c88/HANDOFF.md`**;
+> **Status: complete and in maintenance.** `sdcc -ms1c88 game.c -o game.ihx && romgen game.ihx game.min`
+> builds a bootable Pokémon Mini ROM. `src/s1c88` started as a clone of SDCC's `z80` port (the z80 register
+> model fits the S1C88 well) and is fully retargeted to the real S1C88 ISA. The binary toolchain — `sdas88`
+> (full ISA, byte-verified, also the codegen validator, with same-module branch relaxation), `sdldz80`
+> (assemble→link + **banked `bcall`/`bjump`**, linker-resolved bank switching), `romgen` (C, → flat `.min`)
+> — plus the production `crt0`, `s1c88.lib`, and `<pm.h>` device header are all in place. Codegen is
+> functionally complete (all numbered ABI tasks closed; native `DIV`/`MLT`; 3-byte banked function pointers;
+> S1C88 **MAXIMUM-mode** call model), every gate green (corpus 20/20 byte-identical, emu-test 16/16,
+> diff-test 12, run-tests 50/50), and the differential-mining suite is clean.
+>
+> The one known bug is **deprioritized** — the `_fsadd` different-sign float-subtract miscompile (TODO #8;
+> float is low-value here). Ongoing work on the existing source base is the **forward backlog in
+> `docs/s1c88/TODO.md`**: more differential coverage (#11), code-size peephole work (#12, yardstick
+> `size-check.sh`), the deferred linker cross-module relaxation (#14c), the `UNIMPLEMENTED`-boundary lift
+> (#16), and the z80-lineage cleanup remainder (#20 D).
+> Design/ABI: **`docs/s1c88/abi-decision.md`**; resume state: **`docs/s1c88/HANDOFF.md`**;
 > end-user guide: **`docs/s1c88/building-roms.md`**; the toolchain: `docs/s1c88/{sdas88-retarget,banked-branch}.md`.
 
 ## The codegen design (read `docs/s1c88/abi-decision.md`)

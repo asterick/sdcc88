@@ -1,377 +1,108 @@
-# sdcc88 TODO — toward a usable toolchain
+# sdcc88 — backlog: bugs, coverage, code-size, cleanup
 
-Status snapshot (2026-06-08): **THE CRITICAL PATH (Section A) IS DONE — the toolchain is usable.**
-`scripts/setup-sdk.sh` builds everything in one command; `sdcc -ms1c88 game.c -o game.ihx && romgen
-game.ihx game.min` produces a bootable Pokémon Mini ROM, with the production `crt0` (real `"PM"`/
-`"NINTENDO"` header), the auto-linked `s1c88.lib`, the `<pm.h>` device header, and a C `romgen` (no
-Python). `examples/hello/` is a copy-me project; `docs/s1c88/building-roms.md` is the how-to. All gates
-green (corpus 20/20, emu-test 16/16, diff-test 12, driver/crt0/rom/branch smokes, example). **Remaining =
-Section B (quality/coverage) and Section C (documented limitations).**
+The toolchain is **complete and in maintenance.** `sdcc -ms1c88 game.c -o game.ihx && romgen game.ihx
+game.min` builds a bootable Pokémon Mini ROM, and every gate is green: corpus 20/20 byte-identical, emu-test
+16/16, diff-test 12, run-tests 50/50 (TAP), plus the driver / crt0 / rom / branch / insn-size smokes and the
+`examples/hello` build.
 
-Legend: **S/M/L** = rough effort. Items are roughly dependency-ordered within each section.
+This file is the **forward backlog** for the existing source base — bug-chasing, coverage, code-size, and
+z80-lineage cleanup. Shipped work is not re-documented here; it lives in git history + commit messages, the
+per-topic memories, and `abi-decision.md`. Resume state + load-bearing watch-outs are in
+[`HANDOFF.md`](HANDOFF.md); the design/ABI is [`abi-decision.md`](abi-decision.md); the end-user guide is
+[`building-roms.md`](building-roms.md).
 
----
-
-## A. Critical path to a usable toolchain — ✅ DONE
-
-`sdcc -ms1c88 game.c` → assemble → link (banked) → `.min` works end to end. Delivered:
-
-1. **Driver tool wiring** — `main.c` `_z80AsmCmd`→`sdas88`, `_libs`→`s1c88`; integrated driver emits valid XL3 `.rel`.
-2. **Preprocessor** — `scripts/build-sdcpp.sh` builds the real SDCC cpp (libiberty + `support/cpp`); `sdcc -ms1c88 foo.c` preprocesses for real (no `--c1mode`).
-3. **Production crt0** — `device/lib/s1c88/crt0.s`: the real PM cartridge header (`"PM"` @ 0x2100, 27 × 6-byte vector slots, `"NINTENDO"` @ 0x21A4) + C runtime (EP=0, gsinit, `__sdcc_fptr`, `bcall _main`). It trusts the **BIOS reset-state contract** (all CPU regs 0 except BA=0xFFFF / NB=CB=0x01; SP parked; MMIO left in BIOS reset config — interrupts already masked), so it re-inits NO MMIO and only pins EP=0 defensively. When `main` returns it hands off via the **software-interrupt shutdown vector `int (0x48)`** (the BIOS installs it) — no test/exit code in the runtime. The emulator runner loads an embedded **test BIOS** (`tests/emu/bios.s`) that establishes that reset state in real S1C88 code, installs the 0x0048 shutdown routine, and enters the cart; the runner reads the exit code off `BA` on halt. There is ONE crt0 (the old `tests/emu/crt0.asm` is retired; emu/diff cases boot as real PM carts).
-4. **Target C runtime library** — `s1c88.lib` (ASxxxx text-index; the 10 codegen-emitted div/mod/mul routines + a mem*/str* libc subset, compiled through our own port) + the 26 per-vector default `rete` modules. Built/installed by `scripts/build-runtime.sh`.
-5. **Device headers** — `device/include/s1c88/pm.h`: full PM MMIO map in Epson/SDK names + `VEC_*` vector numbers, cross-checked vs minimon-core.
-6. **romgen integration** — `tools/romgen.c` (C, no Python; `romgen.py` removed), byte-identical on the banked + `--far` paths; built by `scripts/build-romgen.sh`.
-7. **Packaging + example + docs** — `scripts/setup-sdk.sh` (one-command SDK), `examples/hello/` (copy-me, `make` → `.min`, boots), `docs/s1c88/building-roms.md` (end-user guide).
+Legend: **S/M/L** = rough effort.
 
 ---
 
-## B. Quality & coverage
+## Known bugs
 
-8.  **[M] Float / softfloat — ⏸ DEPRIORITIZED (float is low-value for this target).** Known bug, parked.
-    `tests/diff/cases/float.c` (bit-exact, exactly-representable operands) covers same-sign add, multiply,
-    divide, compares, and all int↔float casts — all CORRECT. **The open bug: float SUBTRACTION (and
-    opposite-sign addition) corrupts the low mantissa bits** — `10.0-4.0` → `0x40C00182` not `0x40C00000`.
-    `__fssub` is `-((-a)+b)`, routing through the `_fsadd` *different-sign* path; the algorithm + all
-    isolated 32-bit ops compile correctly (reductions passed), so it's a register-pressure / spill bug in
-    the full `_fsadd` compile, not a library issue. Float arithmetic is rare on the Pokémon Mini, so this
-    is parked behind the integer/pointer correctness and code-size work; if revisited, re-add the subtract
-    cases to `float.c` (the regression test). (Note: `has_mulint2long` is disabled in main.c so int×int→long
-    uses `__mullong` — the port lacks the asm-only `__mul*int2*long` widening routines, which `_fsmul`
-    needs; see #15.)
-9.  **[S] volatile / MMIO coverage — ✅ DONE.** `tests/emu/cases/09_volatile.c` — volatile loads are not
-    hoisted (spin re-loads every iteration; volatile RAM round-trip ordering OK).
-10. **[S/M] `__critical` execution coverage — ✅ DONE; nested-IRQ — ✅ DONE.** `tests/emu/cases/10_critical.c`
-    proves SC-level masking (`or sc,#0xc0`) works. **Nested IRQ** (a higher-priority IRQ preempting a
-    lower-priority ISR) is now covered by `tests/emu/cases/12_nested_irq.c`: instead of two fiddly
-    phase-aligned timers it uses **keypad edge IRQs** — K1x (priority group 5) and K0x (group 6) get
-    different priorities, and the host drives each press on demand via the input mailbox
-    (`emu_set_keys`/`update_inputs`), so the low-priority handler can fire a higher-priority one *while it
-    runs* and the event log proves the {low-entry, high-entry, high-exit, low-exit} nesting order. (This
-    required restoring the vendored core's **input module**, pruned earlier; see its README. Note the PM
-    sticky-IRQ model: a keypad IRQ's `active` latch stays set until the ISR acks it via 0x2028/0x2029, or
-    it refires — the test acks both.)
-11. **[ongoing] Keep mining with the differential suite.** It has found multiple real codegen bugs (latest:
-    the long-long/struct return-ABI off-by-one, #18); more modules will find more. Stays open. **Pointable
-    targets** — each is one new `tests/diff/cases/*.c` (+ `tests/emu/cases/*.c` for ABI-shaped ones); add,
-    run corpus-check + emu-test + diff-test, fix what it surfaces:
-    - **#11-bitfields** — ✅ done (`tests/diff/cases/bitfields.c`, 264 values): unsigned/signed fields of
-      assorted widths, a field straddling a byte boundary, RMW that must preserve neighbours + a plain
-      member, compound-assign/`++`/`^=` on a field, and single-bit adjacency masking — all CORRECT, no
-      codegen bug. **Surfaced a soundness trap (not a bug):** the signedness of a *bare* `int x : N`
-      bit-field is implementation-defined (C11 6.7.2/5) — **sdcc treats it as UNSIGNED, gcc as signed** — so
-      a bare-int signed field diverges host-vs-target as IDB, not a miscompile. The test declares every
-      field with explicit `signed`/`unsigned` (both compilers honour that identically); recorded in the
-      case header + harness convention. Signed-field sign-extension codegen (`bit`/`rlc`/`sbc`) verified
-      correct for explicit `signed` fields.
-    - **#11-structargs** — ✅ done (`tests/diff/cases/structargs.c`, 96 values): struct-by-value args of
-      sizes 1–8 + nested/array structs, by-value copy-in semantics, whole-struct assignment (ldir copy),
-      struct-arg + struct-return together, and structs mixed with scalar args in every position. **Found +
-      FIXED a real SILENT miscompile:** when a struct-by-value arg precedes a register arg, e.g.
-      `f(struct, int)` or `f(u8, struct, int)`, the trailing register arg was **dropped entirely** — the
-      struct push (`genPointerPush`) walks the struct through HL and pushes via A/B, clobbering the
-      already-`send`-ed register arg, and a literal SEND "creates no live range" so `isRegDead` reported the
-      register free and it was never stashed. Fix: `genPointerPush` now scans preceding SENDs (as `genIpush`
-      already did) and stashes whichever pair (HL or BA) holds a sent arg into the dead IY across the push,
-      restoring it before the call. The rare two-parked-pairs form `f(struct, char, int)` (needs to stash
-      BOTH HL and BA, only one IY slot) now traps loudly (UNIMPLEMENTED) instead of miscompiling — cataloged
-      as a boundary in `abi-decision.md`. Corpus stayed byte-identical (the path isn't in the corpus);
-      diff/emu caught it.
-    - **#11-ptrarith** — ✅ done (`tests/diff/cases/ptrarith.c`, 264 values): indexing across widths,
-      `p[-1]`, pointer differences incl. a `/3` struct stride, equality, multi-dim, struct fields, pointer
-      walk, `__far` index + diff — all CORRECT. **Surfaced one bug, deferred:**
-      - **#11-ptrcmp-bug** — ✅ FIXED. A relational compare of TWO freshly address-of'd elements with
-        **runtime** indices, e.g. `&a[i] < &a[j]`, was a SILENT miscompile. Root cause was NOT in genCmp
-        (which correctly emits the native `cp ba, hl` pair compare) but in the **peephole read-analysis**
-        (`peep.c` `s1c88MightRead`): the cp/or handler had cases for `cp a,X`/`cp hl,X`/`cp iy,X` as the
-        first operand but **none for `cp ba, X`**, so it fell through to `argCont`, which stops at the comma
-        and never scanned the `hl` SECOND operand — reads of HL by `cp ba, hl` were invisible, and the
-        peephole then deleted the `add hl, ba` (+ the index shift) that built the right-hand address as
-        "unused result". Fix: a `cp ba, rr` first-operand case in `s1c88MightRead`. Corpus stayed
-        byte-identical (the change only makes the analysis recognize MORE reads → deletes fewer insns);
-        the `lt`/`ge` cases are restored in `ptrarith.c` and asserted in `tests/emu/cases/16_ptrcmp.c`.
-    - **#11-switch** — ✅ done (`tests/diff/cases/switch.c`, 620 values): dense-from-zero (real jump table —
-      `jp hl` + `.dw` table, swept across in-range/boundary/out-of-range→default), offset-dense, sparse
-      (if-chain), signed selector with negative cases, wide 16-bit selector, fall-through / grouped labels,
-      and a no-default switch (out-of-range leaves the value untouched) — all CORRECT, no codegen bug. The
-      genJumpTab path (HL = &table + 2×selector, `jp hl`) executed correctly on the emulator across the full
-      0..130 sweep. (Smaller dense blocks fall below the middle-end's table-density threshold and lower to
-      if-chains; both paths are now covered.)
-    - **#11-fnptr2** — ✅ done (`tests/diff/cases/fnptr2.c`, 36 values): the INDIRECT call (PCALL through
-      the 3-byte banked pointer + `__sdcc_fptr`) with the rich signatures the direct path tests — wide
-      (u32) returns, struct returns (bigreturn hidden pointer THROUGH a fnptr), small register-struct
-      returns, 7-arg stack-overflow lists, mixed-width args, a struct passed BY VALUE through a fnptr (the
-      genPointerPush register-stash path via PCALL), pointers held in arrays/structs runtime-selected, and a
-      fnptr-returning-fnptr — all CORRECT, no codegen bug. Confirmed via emitted asm that every call site
-      dispatches through `__sdcc_fptr` (24 refs), i.e. real PCALLs, not folded to direct calls.
-    - **#11-unions** — unions / type-punning / overlapping member access (endianness-exact).
-    - **#11-libc** — `mem*`/`str*` differential (memcpy/memmove/memset/strcmp/strlen…) run through the lib.
-    - **#11-longshift** — 32-bit shifts/rotates by a *variable* count + long division edge values (beyond
-      `arith.c`'s fixed-count shifts).
-12. **[L, open-ended, ongoing] Peephole / cost tuning.** Codegen is correct-first, not yet size/speed-tuned.
-    Stays open. **Pointable targets:**
-    - **#12-sizeharness** — ✅ DONE. `scripts/size-check.sh`: compiles+assembles every `scripts/corpus/*.c`
-      and reports each program's ROM size (sum of non-RAM `.rel` areas) + a per-program/total **delta vs a
-      committed baseline** (`scripts/corpus/sizes.baseline`, 8460 B / 20 programs). Report-only (never
-      gates); `snapshot` re-blesses. Makes every peephole/cost (#12) and relaxation (#14) win visible and
-      monotone — and since the baseline is tracked, size changes show up in git diffs. *Use it: run before
-      a change, make the change, run again, read the delta column.*
-    - **#12-peep-audit** — ✅ DONE (first pass). Audited `peeph.def` (238 rules) for z80-inherited rules that
-      are dead or mis-targeted on the S1C88. **Removed 4 provably-dead rules:** 0b (`isPort('sm83')` — never
-      our port), 2d (matched only the z80 implied-accumulator rotates `rlca/rla/rrca/rra`; the codegen emits
-      the operand forms `rlc a`/`rl a`/…), and 97a/97b (gated on `same(%1 'bc' 'de')` — pairs the BA+HL model
-      never produces). Corpus stayed byte-identical, confirming deadness. **The real win — enabled BA as a
-      scratch pair:** the inherited byte-split / register-pair rules listed z80's `bc`/`de` as scratch pairs,
-      which don't exist on the S1C88, so they could only ever use `hl` (and 570/586/609, which need a
-      *non-hl* scratch, NEVER fired). Added `ba` to `isRegPair` + `s1c88canSplitReg` (peep.c) and retargeted
-      the nine `unusedReg`/`canSplitReg` lists to the real pairs (`'hl' 'ba'`, or `… 'ba'` where `hl` is the
-      live pointer). This resurrected 3 dead rules and let 6 more fall back to BA when HL is busy —
-      e.g. `ld a,#x ; ld b,#0` → `ld ba,#x`. **−20 B on the corpus (8452→8432)**, all verified correct
-      (emu 16/16, diff 12/12, clean assembly, rom/crt0/driver smokes); corpus + size baselines re-blessed.
-      (`unusedReg` accepts only 2–3 candidates — watch that when extending a list.) Follow-ups: `#12-flag-reuse`,
-      `#12-redundant-moves`, and pruning the residual dead z80-mnemonic tokens from multi-token `same()` lists.
-    - **#12-redundant-moves** — ✅ AUDITED (no safe net win available). Scanned the whole corpus + diff
-      output for the classic redundancies — back-moves (`ld X,Y ; ld Y,X`), store-then-reload of a slot/reg,
-      load-after-store, and the frequent `ld;ld` bigrams. The existing rules (0a, 9/9a/9b, 10, 11, 98) already
-      cover the genuine cases; every remaining candidate is *legitimate*, not redundant: control-flow joins
-      (a reload after a label, reachable by other paths), pointer advancement (`ld (hl),a ; inc hl ;
-      ld a,(hl)` loads a DIFFERENT byte), and aliasing-conservative memory reloads. The codegen's move
-      sequences are tight; forcing a rule on the remaining matches would risk miscompiles. Closed as audited
-      rather than landing a low-value/unsafe rule. (The one residual pair-shuffle — `push b ; ld b,l ;
-      or a,b ; pop b` around a zero test — is the flag-reuse byte-combine follow-up, not a plain move.)
-    - **#12-flag-reuse** — ✅ DONE (model fix; one peephole opportunity noted). The peephole flag-WRITE
-      analysis (`peep.c` `s1c88SurelyWritesFlag`) carried the z80 model: it claimed 16-bit `inc`/`dec`
-      "do not affect flags" and 16-bit `add hl,X` does not set Z/S/P. **On the S1C88, 16-bit INC/DEC set
-      Z V N and 16-bit ADD/SUB set Z C V N** (`instruction-set.md` §16-bit arithmetic). That under-reporting
-      was both a latent stale-flag-reuse hazard (an earlier flag could be wrongly treated as surviving a
-      16-bit op that actually clobbers it — the same class as the #11-ptrcmp gap) AND an optimization
-      blocker. Fixed the model to report those writes accurately (SP forms conservatively excluded — their
-      per-flag manual cells are unverified and the codegen doesn't rely on them). This is strictly safer
-      (more-accurate clobber detection prevents wrong reuse) and unblocked a real shrink: a dead no-op
-      `add hl,#0` whose flags are immediately clobbered by a following `add hl,ba` is now removable
-      (`14_mixed` −3 B; corpus 8432→8429). Verified emu 16/16, diff 12/12, clean assembly, smokes green;
-      baselines re-blessed. **Remaining opportunity (follow-up):** the post-16-bit-add byte-combine zero
-      test — `add hl,X ; ld a,h ; ld b,l ; or a,b ; jr Z` (the `(a+b)?` / function-result-test idiom) — is
-      now provably redundant (the `add` set Z), but capturing it needs a dedicated peephole that sees past
-      the `push b`/`pop b` register-preservation noise; ~5 insns/site when it fires.
-    - **#12-cost-accuracy** — ✅ DONE (the #20-A collapse; per-cycle numeric refinement deferred as
-      low-value, with reasoning). Collapsed `cost2`'s dead 7-variant timing signature
-      (`cost2(bytes, z80_states, z180, r2k, sm83, tlcs90, ez80, r800)`) to **`cost2(bytes, cycles)`** across
-      all 491 call sites (scripted, every site verified to keep only the first two args incl. the computed
-      `3 + iy`/`4 * iy` and `3.5f` forms; the body already used only `bytes` + the 2nd arg, so the corpus
-      stayed **byte-identical** — proving the dropped columns were dead). This removes the z80 cruft and
-      makes the cost function honest (this IS the #20-A item). **Why the numbers themselves were NOT
-      rewritten:** the allocator's final cost is `bytes + cycles·count / divider` with
-      `divider = 8 << (codeSize·3 + !codeSpeed·3)` = **64–512** for the size-focused PM default/`-opt-code-size`,
-      so cycle counts are discounted ~64–512× and **bytes dominate** — replacing the (roughly proportional)
-      z80 cycle estimates with exact S1C88 counts does not change the size-optimized output, and the only
-      affected path (`-opt-code-speed`) can't be validated without a cycle benchmark. The existing numbers
-      are retained as reasonable cycle estimates; a real numeric pass is a speed-focused follow-up, low
-      priority for this size-first target. Verified emu 16/16, diff 12/12, run-tests 50/50, smokes green.
-    - **#12-far-idiom** — tighten the `__far` EP=0 deref sequences and the `bcall`/`bjump` slots (ties into
-      #14 once relaxation lands).
-13. **[M] Conditional `bjump`/`bcall` via invert-and-skip trampolines — ✅ DONE** (commit `1bbe90c`).
-    The long forms (`carl`/`jrl`) and the linker's `bjump`/`bcall` only have the basic conditions
-    `c/nc/z/nz`; the signed/flag conditions (`lt/ge/gt/le/v/nv/p/m/f0..nf3`) exist **only** as short
-    relative (`jrs`/`cars`, ±127). So `sdas88` lowers a signed-conditional `bjump`/`bcall` to an
-    **invert-and-skip trampoline**: `jrs <inverted-cc>, +7 ; ld nb,#<bank> ; carl|jrl target` (9 bytes) —
-    the inverted short condition hops over the unconditional 6-byte banked branch when the original
-    condition is false. The inversion table (`invcce[]`) covers all 16 CNDE conditions; the inner banked
-    branch reuses the same `R_S1C88_BANK`+`R_PCR` link resolution as the unconditional form, so the linker
-    still writes/elides `ld nb` and the disp. Coverage: `insn-size-check.sh` (9-byte size), `11_bankcc.c`
-    (execution, taken + skipped), and `rom-smoke.sh` (the cross-bank conditional worst case —
-    `bjump lt,_b2fn` → `jrs ge,+7 ; ld nb,#2 ; jrl`). Now #14 has a uniform "every conditional has a
-    reachable long form".
-14. **[L] Branch relaxation — shrink `bjump`/`bcall`.** *(Prerequisite #13 ✅.)* Today `bjump`/`bcall` are
-    the always-long bank-switching form (`ld nb,#bank ; carl/jrl`, 6 B; 9 B for a signed conditional). The
-    linker picks the *bank*, not the *size* — same-bank slots are NOP-padded, never shrunk. The win:
-    same-bank, in-range calls drop the `ld nb` and use `cars`/`jrs` (2 B) or `carl`/`jrl` (3 B), and signed
-    conditionals use a plain short `jrs <cc>` instead of the #13 trampoline. Most calls are intra-common-bank,
-    so this is a large code-size win. **Broken into digestible, value-first steps** (full design +
-    grounding in `banked-branch.md` "Relaxation plan"):
+- **Float subtraction (#8) — open, deprioritized/parked.** All float subtraction (and opposite-sign add)
+  corrupts the low mantissa bits: `10.0 - 4.0` → `0x40C00182` not `0x40C00000`. `__fssub` is `-((-a)+b)`,
+  routing through the `_fsadd` *different-sign* path; the algorithm + all isolated 32-bit ops compile
+  correctly, so it's a register-pressure / spill bug in the full `_fsadd` compile, not a library issue.
+  Float is rare on the Pokémon Mini, so this is parked behind everything else. If revisited, re-add the
+  subtract cases to `tests/diff/cases/float.c` (the regression test). *(Related: `has_mulint2long` is off in
+  `main.c`, so int×int→long widens to 32-bit and calls `__mullong`; writing the `__mul*int2*long` asm would
+  give a smaller/faster widen AND unblock `_fsmul` — but it's a code-size nicety, not correctness.)*
 
-    - **#14a [S] — opportunity analysis (zero-risk). — ✅ DONE.** `scripts/relax-analysis.sh` compiles each
-      fully-linkable program, assembles with `-l` and links with `-u`, and reads every `bcall`/`bjump`
-      slot's FINAL resolved bytes from the relocated listing (`.rst`) — authoritative, no binary-scan
-      heuristics (and complete, since `s1c88.lib` carries **zero** slots; only crt0 + user code do). For
-      each slot it recovers same-bank-vs-cross-bank, the branch form, and the displacement, then computes
-      the minimal legal form and bytes saved. **Result (examples/hello + `scripts/relax/{fixmath,sprite}.c`):
-      user-code call sites shrink ~53% — 270 → 127 B, 143 B saved across 45 slots, every one same-bank
-      (intra-common-bank, exactly the #14b target); crt0's 27 reset/IRQ vector slots are hardware-fixed and
-      correctly excluded.** Two findings fell out: (1) **all sampled programs are single common-bank**, so
-      the cross-bank win (branch-form only, `ld nb` stays — smaller, #14c territory) isn't exercised here;
-      (2) **20 bank-0 slots still carry `ld nb,#0`** — the linker NOPs the `ld nb` for *some* bank-0 targets
-      but not others (an existing inconsistency; relaxation removes the field entirely). **Feasibility gate
-      (the #14b precondition):** sdas runs a FIXED **3-pass** sequencer (`asxxsrc/asmain.c`
-      `for(pass=0;pass<3)`), not iterate-to-fixpoint. The STM8 + F8 backends prove this 3-pass +
-      per-target `setbit`/`getbit` bit-table + `fuzz` scheme **converges** for monotonic (start-long,
-      shrink-only) relaxation — no `asmain.c` change needed. **Catch for #14b:** STM8/F8 `ls_mode` bails on
-      ALL relocatable operands (`e_base.e_ap != 0` → forced long); same-module relaxation must extend it to
-      the **same-area** relocatable case (displacement `= e_addr − dot.s_addr`, known each pass) and add the
-      ~30-line bit table to `s1c88mch.c`. Run-it: `scripts/relax-analysis.sh [prog.c …]` (report-only).
-    - **#14b [M] — assembler same-module relaxation (the big practical win, NO linker reflow). — ✅ DONE.**
-      `s1c88mch.c` `S_PCALL`/`S_PJUMP`: when the target is in the CURRENT area (`e1.e_flag==0 &&
-      e1.e_base.e_ap==dot.s_area`) it is same-bank, so the `ld nb` is dropped and the minimal RELATIVE form
-      is emitted directly — `cars`/`jrs d8` (2 B) when the displacement fits ±127, else `carl`/`jrl d16`
-      (3 B) — vs the 6-byte linker slot. Short-vs-long is chosen via a per-target `setbit`/`getbit` bit table
-      (ported from asstm8/asf8): pass 0 sizes long (upper bound), pass 1 records the fit decision (with the
-      `fuzz` forward-ref correction), pass 2 replays it — so pass-1/pass-2 layouts are identical and the
-      pass-2 displacement is exact (a pass-2 range check loudly catches any wrong short choice). Done:
-      (i) unconditional + (ii) short-form-when-in-range + (iii) basic-cc. **Deferred (low value):** signed-cc
-      same-area (scc≥0) still falls through to the #13 9-byte trampoline (correct, just not shrunk) — rare,
-      and the win is in the unconditional `bcall`. Cross-area/external/signed-cc targets keep the fixed
-      6/9-byte linker slot, unchanged. **Validated:** insn-size-check locks both the worst-case slots
-      (external target → 6/9 B = the compiler's `s1c88instructionSize`) and the relaxed forms (same-area →
-      2 B); emu 16/16 + diff 12/12 (the harness `diff_e*`/`diff_tag` helpers are intra-module calls that now
-      relax to 2-byte `cars`, exercising the multi-pass fuzz convergence under execution); corpus stays
-      byte-identical (compiler output unchanged); rom/crt0/driver smokes green; relax-analysis opportunity
-      collapsed 45→2 user slots (~137 B reclaimed across examples/hello + relax/{fixmath,sprite}); corpus
-      ROM baseline 8460→8452. The compiler keeps sizing `bcall`/`bjump` at the worst case (6/9) — it can't
-      know a target's area at compile time, and over-sizing only makes its own jr-range calc conservative
-      (safe). Mind the branch-displacement convention (one byte earlier than z80) — reused from S_CARS/S_CARL.
-    - **#14c [L] — linker cross-module relaxation (the hard reflow, deferrable).** For cross-area/cross-module
-      calls, add the relaxation pass sdld lacks: after area placement, iteratively shrink in-range same-bank
-      slots and reflow subsequent addresses/symbols/relocs to a fixpoint, then re-emit. Itself staged: (i)
-      single-pass conservative shrink; (ii) iterate to fixpoint; (iii) conditional-trampoline shrink. Can be
-      deferred if #14b captures enough — many programs are single-module or common-bank-heavy.
-
-    Gate every step on `branch-smoke.sh` (byte-lock the forms), emu/diff (correctness), and re-baseline the
-    corpus; add a size-regression check so shrinks are visible and monotone.
-15. **[S] `__mul*int2*long` widening differential coverage — ✅ DONE.** `tests/diff/cases/arith.c` now has a
-    `widemul` helper covering the 16×16→32 widening multiply (`(u32)u16 * (u32)u16`, signed, and the
-    single-cast/promote forms) — host-vs-emulator clean. The earlier "intentionally not tested" note was
-    stale: with `has_mulint2long` off (main.c) the middle end does NOT emit a `__mul*int2*long` widening
-    call — it widens to 32-bit and calls `__mullong` (verified), which the harness already links. So the
-    widen-then-32×32 codegen is now covered. **Deferred optimization (low priority):** writing the
-    hand-written `__muluint2ulong`/`__mulsint2slong` asm + enabling `has_mulint2long` would give a smaller/
-    faster int×int→long (and was the `_fsmul` unblock for #8) — but float is parked, so this is a code-size
-    nicety, not correctness; the widemul cases will exercise that call path automatically if it's enabled.
-20. **[L] Z80-artifact scrub — B+C ✅ DONE; A/D/F deferred.** The port was cloned from SDCC's `z80` and
-    carried z80/eZ80/Rabbit/SM83/Z80N/R800/TLCS90 mnemonics, symbols, comments, and variable names.
-    **Done (scope categories B + C):** all port-private identifiers renamed to `s1c88*` (peep.c's 9
-    flag/jump helpers, `genZ80iCode`/`dryZ80Code`/`z80_init_reg_asmop`, main.c's PORT wiring
-    `_z80_init`/`_z80AsmCmd`/`_z80LinkCmd`/`_z80_options`/`_z80_builtins`/`_z80_genAssemblerStart`/
-    `_libs_z80`, `Z80_OPTS`→`S1C88_OPTS`, `Z80_FLOAT`→`S1C88_FLOAT`, the include guards,
-    `Z80_MAX_REGS`); and **every rephraseable comment** across peep.c/gen.c/main.c/headers/ralloc/support
-    reworded to describe only the S1C88 (z80 + other-variant trivia removed). Done in always-green slices;
-    39/39 throughout, corpus byte-identical.
-    **(A) ✅ DONE** (with #12-cost-accuracy) — collapsed `cost2(...)`'s dead 7-variant timing params to
-    `cost2(bytes, cycles)` across all 491 call sites (scripted; corpus byte-identical, confirming the 6
-    dropped columns were dead). **Still deferred:** **(D)** dead toggles + machinery — the `nmosZ80` /
-    `--nmos-z80` option, `z80n_de` and its folded branch, the `#pragma portmode z80/z180` handling, and the
-    asm-dialect tables (`mappings.i` `_z80asm`/`_gas_z80`, main.c's `{z80*}` link-command-template variables
-    + the `z80-elf-ld/as` gas-path tool names) — these are coordinated/maybe-dead and want per-unit
-    verification; **(D, sub-unit)** the peephole **flag-token model** (`pf`/`sf`/`hf`/`nf`/`vf`/`lf` — z80
-    flag names) and its documenting comments (peep.c) — rename as one unit; **(F, MUST NOT touch)**
-    `TARGET_Z80_LIKE`/`TARGET_IS_Z80`/`ASM_TYPE_Z80ASM` (shared SDCC core — the port depends on being
-    Z80-like, see `CLAUDE.md`) and `sdldz80` (the ASxxxx linker-binary/build-script contract). Provenance
-    `@file ... derived from the z80 port` header lines are kept as factual lineage.
+There are **no other known correctness bugs** — the differential suite is clean.
 
 ---
 
-## C. Known limitations — fix or formally document
+## Correctness coverage — keep mining the differential suite (#11)
 
-16. **`UNIMPLEMENTED` traps — ✅ DOCUMENTED; lift is a future target.** The ~66 `UNIMPLEMENTED` sites are
-    **loud traps, never silent miscompiles** (`wassertl(regalloc_dry_run,…) + cost(4000)` steers the
-    allocator away; only a forced real-emit aborts). The boundary categories are now cataloged in
-    `abi-decision.md` ("Known codegen boundaries"): no-spare-pointer under `--reserve-regs-iy`, register
-    pressure in multi-byte ALU (genEor/genPlus/genAnd/…), a value spanning A+B that spills into L/H, a
-    permutation cycle through A that isn't the `A<->B` swap, giant (>255-byte) struct return, and the
-    HL-restore-vs-return-in-HL conflict. **Future lift:** construct a triggering C snippet per site,
-    classify reachable-vs-cost-avoided, fix the cheap reachable ones, delete the impossible guards — a real
-    research pass (the cost steering makes triggers hard to hand-write, which is itself evidence they
-    rarely fire).
-17. **CPOINTER (code-space `const` data pointers) — ✅ DONE (documented + guarded).** Investigation found
-    the original premise wrong: plain `const` pointers are **2-byte near** (not 3-byte), and the
-    `aop->code` flag is vestigial. Plain `const` data lives in the common bank (near deref, correct because
-    it's physical `< 0x8000`); **far const data already works via `__far const`** (3-byte EP-paged deref —
-    verified at runtime by `tests/emu/cases/13_farconst.c`). Documented the convention in `abi-decision.md`
-    + `building-roms.md` and fixed the inaccurate HANDOFF note. The silent-miscompile hazard (near-pointed
-    const overflowing the common bank) is now a **loud `romgen` error** on any non-banked content past
-    logic `0x7FFF`. (The literal "lift" — page-aware plain const pointers — was rejected: it would regress
-    every const pointer to 3-byte/slower to duplicate what `__far const` already does.)
-18. **float / long long correctness** — float subtraction is the open #8 bug (deprioritized). **long long
-    is now VERIFIED** (`tests/diff/cases/longlong.c`): binops/shifts/casts/return-ABI host-vs-emulator clean.
-    Mining it found + fixed a real miscompile — struct/long-long **return-by-value** dropped the 3-byte
-    max-mode return frame in the hidden-pointer offset for leaf (frame-ptr-omitted) functions (genRet); the
-    byte-identical corpus never caught it (baseline encoded the bug), only execution did. Regression tests:
-    `14_llret`, `15_structret`.
-19. **Structured test runner — ✅ DONE.** `scripts/run-tests.sh` builds the compiler once, runs every
-    suite (corpus / emu / diff / toolchain smokes) **in parallel**, and emits one **TAP version 13**
-    stream — one test point per case, with per-assertion `#` diagnostics (emu `CHECK` failures), a `1..N`
-    plan, and a summary; exits non-zero on any failure. The case-suites gained an opt-in `TAP=1` mode
-    (clean `ok`/`not ok` body on stdout, build noise to stderr); their default human output is unchanged.
-    50 points green.
+The highest-value ongoing work. Each new `tests/diff/cases/*.c` (+ a `tests/emu/cases/*.c` for ABI-shaped
+behaviour) is run through `corpus-check` + `emu-test` + `diff-test`; the suite has caught several real
+**silent** miscompiles that byte-identical assembly never could (struct-arg register-drop, the `cp ba,hl`
+pointer-compare peephole gap, the long-long/struct return-ABI off-by-one). Covered: arith, bitfields, calls,
+control, longlong, memory, ptrarith, switch, structargs, fnptr2, unions, float *(except the parked subtract)*
+— plus the emu ABI cases. **Still untested (pick any; new territory is also fair game):**
+
+- **#11-libc** — `mem*`/`str*` differential (memcpy / memmove / memset / strcmp / strlen …) run through the lib.
+- **#11-longshift** — 32-bit shifts/rotates by a *variable* count + long-division edge values (beyond
+  `arith.c`'s fixed-count shifts).
+
+Workflow: add the case, run the three gates, fix what surfaces, add an emu/diff regression for any bug.
 
 ---
 
-## Suggested sequencing
+## Code size (#12, #14) — measurable via `scripts/size-check.sh` (corpus baseline, currently 8429 B)
 
-Section A (the critical path) is **done**. Float (#8) is **deprioritized** — low-value for this target,
-parked. Next, in priority order: **keep mining with the differential suite (#11)** — it's the highest-value
-correctness work, and **long long is still unverified** (start there, then bitfield-heavy code and deep
-call chains). Then the code-size/speed lift — branch relaxation (#14; its #13 prerequisite is done) and peephole/cost tuning (#12) —
-plus the Section C limitation audit (#16, #17).
-(`__interrupt(n)` auto-wiring is **done** — `void f(void) __interrupt(VEC_*)` emits `_irq_v<N>` at the
-handler's entry, where N is the cart vector slot; the runner BIOS and `<pm.h>` VEC_* use the real PM
-forwarding permutation, https://www.pokemon-mini.net/documentation/bios/.) See [HANDOFF.md](HANDOFF.md)
-for current state and [building-roms.md](building-roms.md)
-for the end-user guide.
+- **[S] #12-flag-reuse byte-combine peephole.** The post-16-bit-add zero test
+  `add hl,X ; ld a,h ; ld b,l ; or a,b ; jr Z` (the `(a+b)?` / function-result idiom) is now provably
+  redundant — the flag model knows `add hl,X` sets Z — but capturing it needs a peephole that sees past the
+  `push b`/`pop b` register-preservation noise. ~5 insns/site when it fires.
+- **[S] #12-far-idiom.** Tighten the `__far` EP=0 deref sequences and (now that #14b relaxation landed) the
+  `bcall`/`bjump` slot idioms.
+- **[S] #12 residual cleanup.** Prune the dead z80-mnemonic tokens (`rlca`/`scf`/`daa`/…) from multi-token
+  `same()` lists in `peeph.def` (byte-identical). Refining `cost2`'s cycle numbers to exact S1C88 counts is
+  **low value** for this target — the allocator cost is bytes-dominated (cycles discounted 64–512×; see the
+  cost-model memory) — so do it only as part of a speed-focused pass.
+- **[L, deferrable] #14c — linker cross-module branch relaxation.** sdld is fixed-size. Add a relaxation
+  pass that, after area placement, iteratively shrinks in-range same-bank *cross-module* `bcall`/`bjump`
+  slots and reflows subsequent addresses / symbols / relocs to a fixpoint, then re-emits. Staged: (i)
+  single-pass conservative shrink; (ii) iterate to fixpoint; (iii) conditional-trampoline shrink. #14b
+  already covers single-module / common-bank-heavy programs, so this is the harder remaining tail. Gate on
+  `branch-smoke.sh` + emu/diff and re-baseline the corpus sizes. (Design: `banked-branch.md` "Relaxation
+  plan".)
 
 ---
 
-## Z80-artifact scrub — scope (#20)
+## Codegen-boundary lift (#16) — future research pass
 
-The port was cloned from SDCC's multi-variant `z80` backend. The variant *predicate
-machinery* (`IS_Z80`/`IS_RAB`/…) is already constant-folded away (s1c88.h), so what
-remains is **names, dead per-variant data, and comments** — not live wrong-variant
-branches. Inventory (scan of `src/s1c88/` + `sdas/as88/`), in rough effort order:
+The ~66 `UNIMPLEMENTED` sites are **loud traps, never silent miscompiles** (a `cost(4000)` dry-run penalty
+steers the allocator away; only a forced real-emit aborts). The boundary categories are cataloged in
+`abi-decision.md` "Known codegen boundaries" — no-spare-pointer under `--reserve-regs-iy`, multi-byte-ALU
+register pressure, a value spanning A+B that spills into L/H, a permutation cycle through A that isn't the
+`A↔B` swap, a >255-byte struct return, the HL-restore-vs-return-in-HL conflict, and the struct-arg
+two-parked-pairs push. **The lift:** construct a triggering C snippet per site, classify
+reachable-vs-cost-avoided, fix the cheap reachable ones, delete the genuinely-impossible guards. The cost
+steering makes triggers hard to hand-write — which is itself evidence they rarely fire. None is a
+correctness risk today.
 
-**A. The `cost2` 7-variant timing model — the bulk (gen.c).** `cost2()` is declared
-`cost2(bytes, z80_states, z180_states, r2k_clocks, sm83_cycles, tlcs90_states,
-ez80_z80_cycles, r800_cycles)` but the body uses only `bytes` + `z80_states`; the
-other **6 columns are dead** yet passed at **491 call sites**. Collapse to
-`cost2(bytes, cycles)`, strip the 6 dead args everywhere (scriptable), rename
-`z80_states`→`cycles`. High-volume but mechanical. *(Whether the kept numbers are
-S1C88-accurate vs z80 is a separate concern — #12 cost tuning.)*
+---
 
-**B. Port-private identifiers to rename `*z80*`→`*s1c88*` — medium, low risk (build
-catches misses).**
-- `main.c` PORT wiring: `_z80_options`, `_z80_init`, `_z80_genAssemblerStart`,
-  `_z80_builtins`, `_z80LinkCmd`, `_z80AsmCmd`, the asm-dialect/lib config
-  (`_s1c88_z80asm_z80`, `_s1c88_asxxxx_z80`, `_s1c88_gas_z80`, `_libs_z80`).
-- `gen.c`: `genZ80iCode`, `dryZ80Code` (`genS1C88Code` is already done).
-- `peep.c`: `z80MightReadFlag[Condition]`, `z80SurelyWrites[Flag]`, `z80SurelyReturns`,
-  `z80MightBeParmInCallFromCurrentFunction`, `z80UncondJump`, `z80CondJump`,
-  `z80MightRead` (~11 functions).
-- `s1c88.h`: the `Z80_OPTS` struct (→ `S1C88_OPTS`).
+## Cleanup — z80-artifact scrub remainder (#20)
 
-**C. Comments / variant notes — high count (~78 in gen.c alone), lowest risk.**
-"the Rabbit has…", "SM83 does…", "eZ80 can…", "gbz80 flag handling…" notes that don't
-apply to a single-variant port — trim/delete. File headers too: `s1c88.h`
-(`z80/z80.h Common definitions for the z80-related ports`), `gen.c` (`code generator
-for Z80 and related`), and `Derived from z80mch.c` in the assembler.
+The port was cloned from SDCC's multi-variant z80 backend. The variant *predicate machinery*
+(`IS_Z80`/`IS_RAB`/…) is already constant-folded away, and the bulk of the scrub is done — port-private
+identifiers renamed to `s1c88*`, the variant comments reworded, and the `cost2` 7-variant timing signature
+collapsed to `cost2(bytes, cycles)`. **Remaining:**
 
-**D. Dead-variant functional toggles — verify, then remove (needs care).**
-- `HAS_IYL_INST` + `IYL_IDX`/`IYH_IDX`: eZ80 byte-addressable index registers; the
-  S1C88 IX/IY are NOT byte-addressable (s1c88.h flags this as the pending #7c removal).
-  Removing collapses several `gen.c` branches.
-- `nmosZ80` / `OPTION_NMOS_Z80` / `allow_undoc_inst`: the z80 undocumented-instruction
-  toggle; confirm it gates nothing meaningful on the S1C88, then drop.
+- **(D) [M] Dead-variant toggles + machinery — verify-then-remove (per-unit).**
+  - `HAS_IYL_INST` + the `IYL_IDX`/`IYH_IDX` byte-index machinery: eZ80 byte-addressable index registers;
+    the S1C88 IX/IY are NOT byte-addressable. Removing collapses several `gen.c` branches.
+  - The `nmosZ80` / `--nmos-z80` / `allow_undoc_inst` undocumented-instruction toggle, and the
+    `#pragma portmode z80/z180` handling — confirm they gate nothing on the S1C88, then drop.
+  - The asm-dialect tables (`mappings.i` `_z80asm`/`_gas_z80`; `main.c`'s `{z80*}` link-command-template
+    variables + the `z80-elf-ld/as` gas-path tool names).
+  - The peephole **flag-token model** (`pf`/`sf`/`hf`/`nf`/`vf`/`lf` — z80 flag names) and its comments —
+    rename as one unit.
 
-**E. Emitted z80 branch mnemonics `jp`/`jr`/`call` — large, coupled to #14 (DEFER).**
-The codegen emits z80 `jp`/`jr`/`call`; the peephole control-transfer rules translate
-them to S1C88 `jrs`/`jrl`/`cars`/`carl`. Emitting S1C88 directly requires solving
-branch-form selection — that **is** #14 (linker relaxation). So #20 covers only the
-comment/name hygiene around these; the mnemonic emission itself retires with #14.
-(`ld`/`ex` are native S1C88 and stay; spot-check `scf`/`ccf`.)
+  Each in an always-green slice (`run-tests.sh` after each; corpus byte-identity catches behaviour drift).
 
-**F. MUST NOT touch — shared core / external contract.**
-`TARGET_Z80_LIKE`, `TARGET_IS_Z80`, `IS_Z80`, `ASM_TYPE_Z80ASM` (shared SDCC core; the
-port depends on being Z80-like — see CLAUDE.md). `sdldz80` is the ASxxxx z80-family
-linker binary the build scripts invoke; rebranding to `sdld88` is a build-system change,
-out of scope for a code scrub.
-
-**Sequencing:** B + C are the cheap, high-clarity wins — do first in always-green slices
-(`run-tests.sh` after each; corpus is byte-identical and catches behavior drift). A is
-the mechanical bulk. D needs per-toggle verification. E defers to #14. F is off-limits.
+- **(F) MUST NOT touch — shared core / external contract.** `TARGET_Z80_LIKE`, `TARGET_IS_Z80`, `IS_Z80`,
+  `ASM_TYPE_Z80ASM` (shared SDCC core — the port DEPENDS on being z80-like, see `CLAUDE.md`) and `sdldz80`
+  (the ASxxxx linker-binary / build-script contract). The `@file … derived from the z80 port` provenance
+  headers stay as factual lineage.

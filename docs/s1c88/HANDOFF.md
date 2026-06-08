@@ -1,13 +1,11 @@
 # ▶ HANDOFF — pick up here
 
-**This is the single resume entry point.** If the prompt is *"let's pick up where you left off,"* do the
-steps under **NEXT ACTION**. Everything needed to continue is here or linked from here.
+**Single resume entry point.** sdcc88 is a **complete, working toolchain in maintenance**; this is the
+fastest way to resume. If the prompt is *"pick up where you left off,"* do the steps under **NEXT ACTION**.
+The forward backlog is [`TODO.md`](TODO.md); the design/ABI is [`abi-decision.md`](abi-decision.md); the
+end-user guide is [`building-roms.md`](building-roms.md).
 
 _Last updated: 2026-06-08._
-
-> **▶ The forward-looking work list is [`TODO.md`](TODO.md).** The critical path to a *usable* toolchain
-> (TODO Section A) is **DONE** — `sdcc -ms1c88 game.c && romgen game.ihx game.min` builds a bootable
-> Pokémon Mini ROM. What remains is quality/coverage (Section B) and documented limitations (Section C).
 
 ---
 
@@ -24,61 +22,27 @@ _Last updated: 2026-06-08._
   - **`romgen`** (`tools/romgen.c`, no Python) — `.ihx`/`.rel` → flat `.min`.
   - **`crt0.rel` + `s1c88.lib` + `<pm.h>`** installed in the driver's lib/include dirs by
     `scripts/build-runtime.sh`. `scripts/setup-sdk.sh` builds the whole SDK in one command.
-- **The codegen retarget is functionally complete** — every reachable z80-ism is gone, all numbered
-  ABI tasks (#7 register model, #8 IY args, #9 `__far` pointers) are CLOSED, division/modulus runs on
-  the native `DIV`, multiply on native `MLT`, function pointers are 3-byte banked code pointers, and the
-  call model is **S1C88 MAXIMUM mode** (3-byte CB:PC frames — `abi-decision.md` "The call model").
-- **All gates green:** corpus 20/20 byte-identical (0 sdas88 errors), emu-test 16/16 (execution),
-  diff-test 12 (host-vs-emulator), plus driver/crt0/rom/branch smokes and the `examples/hello` build.
+- **Codegen is functionally complete** — every reachable z80-ism gone; the ABI tasks (register model, IY
+  args, `__far` pointers) closed; native `DIV`/`MLT`; 3-byte banked function pointers; the S1C88
+  **MAXIMUM-mode** call model (3-byte CB:PC frames — `abi-decision.md` "The call model"). The assembler now
+  does same-module branch relaxation (#14b): intra-area `bcall`/`bjump` shrink to 2–3 bytes.
+- **All gates green:** corpus 20/20 byte-identical, emu-test 16/16, diff-test 12, run-tests 50/50 (TAP),
+  plus driver/crt0/rom/branch/insn-size smokes and the `examples/hello` build. Corpus ROM = 8429 B.
 - Everything builds + runs **inside the sandbox** — iterate freely, no `! ...`.
 
 ## NEXT ACTION (do this)
 
-1. **Confirm green:** `./scripts/dev.sh` (builds the compiler + codegen smoke) then
-   **`scripts/corpus-check.sh`** (byte-identical, 20/20), **`scripts/emu-test.sh`** (16/16 execution),
-   and **`scripts/diff-test.sh`** (host-vs-emulator). corpus-check proves asm is *stable*; emu-test +
-   diff-test prove it *computes the right values*. **Run all three for every codegen change**, and add
-   an emu/diff case whenever you touch new codegen territory (each new module has found real bugs).
-2. **Open work — see [`TODO.md`](TODO.md) for the pointable-target menu.** Mining (#11) keeps paying out —
-   prior rounds found+fixed the long-long/struct **return-ABI off-by-one**; long long, unions, and pointer
-   arithmetic are verified; **`#11-bitfields` is now verified too** (264 values; found only an implementation-
-   defined-signedness *test* trap — bare `int:N` is unsigned in sdcc, signed in gcc — not a codegen bug;
-   declare bit-fields with explicit `signed`/`unsigned`). **`#11-switch` is now verified too** (620 values;
-   jump-table + if-chain lowering, dense/sparse/offset/wide/signed/fall-through/no-default — no codegen bug).
-   **`#11-structargs` found + FIXED a real silent miscompile** (96 values): a register arg following a
-   struct-by-value arg, e.g. `f(struct, int)`, was dropped — `genPointerPush` clobbered the already-sent
-   register; fix stashes the parked HL/BA pair via IY (the rare two-parked-pairs `f(struct,char,int)` now
-   traps loudly, cataloged in abi-decision.md). **`#11-fnptr2` is now verified too** (36 values; the
-   INDIRECT PCALL path with wide/struct/bigreturn results, stack-overflow + mixed-width + struct-by-value
-   args, fnptr-returning-fnptr — confirmed real PCALLs via `__sdcc_fptr`, no codegen bug). **`#11-ptrcmp-bug`
-   is now FIXED** — the `&a[i] < &a[j]` silent miscompile was a peephole read-analysis gap (`s1c88MightRead`
-   had no `cp ba, X` case, so `argCont` never saw the `hl` operand and the peephole deleted the right-address
-   build); regression in `16_ptrcmp.c` + `ptrarith.c`. **The #11 pointable-target menu is now exhausted with
-   no open mining bugs.** Code size is now measurable
-   (`scripts/size-check.sh`, #12-sizeharness done). **#14a + #14b (assembler same-module branch
-   relaxation) are now DONE** — same-area `bcall`/`bjump` drop the `ld nb` and emit a 2-byte `cars`/`jrs`
-   (or 3-byte `carl`/`jrl`) instead of the 6-byte linker slot, chosen via a `setbit`/`getbit` bit table in
-   `s1c88mch.c` (no `asmain.c` change). Relax-analysis opportunity collapsed 45→2 user slots; corpus ROM
-   8460→8452; intra-module calls widely lower to 2-byte `cars`. The remaining lift is **#14c** (linker
-   cross-module relaxation — the hard reflow, deferrable) and the **#12 peephole/cost targets**.
-   **#12-peep-audit + #12-flag-reuse are now done.** peep-audit dropped 4 dead z80 rules and enabled BA as
-   a peephole scratch pair (`isRegPair`/`canSplitReg` + the `unusedReg` lists), resurrecting 3 rules that
-   never fired (−20 B; e.g. `ld a,#x ; ld b,#0` → `ld ba,#x`). flag-reuse corrected the z80 flag-write model
-   in `s1c88SurelyWritesFlag` — **S1C88 16-bit inc/dec set Z V N and 16-bit add/sub set Z C V N** (z80's
-   don't), which was a latent stale-flag-reuse hazard + an optimization blocker (−3 B, and a follow-up
-   peephole for the post-add byte-combine zero-test is noted in TODO). Corpus ROM now 8429.
-   **#12-cost-accuracy + #20-A are now done** — collapsed `cost2`'s dead 7-variant timing signature to
-   `cost2(bytes, cycles)` across all 491 sites (byte-identical; the cost model discounts cycles 64–512× for
-   the size target so the numbers themselves are low-value to refine — see TODO). **#12-redundant-moves
-   audited** — existing rules cover the real cases; remaining candidates are legitimate (control-flow joins,
-   pointer advancement, aliasing reloads), no safe win. Remaining #12: `#12-peep-audit` follow-ups, `#12-far-idiom`,
-   and the deferred flag-reuse byte-combine peephole. Section C (#16 traps, #17 const-data) is done. z80 scrub:
-   B+C+A done, D/F deferred (#20).
-3. **Deprioritized — float is low-value for this target.** The one known correctness bug is the `_fsadd`
-   different-sign miscompile (all float subtraction): `10.0-4.0` → `0x40C00182` not `0x40C00000`. It's a
-   register-pressure / spill bug in the full `_fsadd` compile (algorithm + isolated 32-bit ops are
-   correct), not a library issue. Parked unless float becomes relevant; if revisited, re-add the subtract
-   cases to `tests/diff/cases/float.c`. See TODO #8.
+1. **Confirm green** — `./scripts/run-tests.sh` (builds once, runs every suite in parallel, TAP, 50/50). For
+   a focused codegen change, the inner loop is `./scripts/dev.sh` then `corpus-check.sh` + `emu-test.sh` +
+   `diff-test.sh`: corpus-check proves the asm is *stable*; emu/diff prove it *computes the right values*.
+   **Run all three for every codegen change**, and add an emu/diff case whenever you touch new territory —
+   each new differential module has found real silent miscompiles.
+2. **Pick from the backlog — [`TODO.md`](TODO.md).** The toolchain is done and the #11 differential-mining
+   menu is exhausted (no open mining bugs). What's left is forward improvement on the existing source base:
+   keep mining new C constructs (`#11-libc`, `#11-longshift`, anything untested), code-size peephole work
+   (`#12-flag-reuse` byte-combine peephole, `#12-far-idiom`), the deferred linker cross-module relaxation
+   (`#14c`), the `UNIMPLEMENTED`-boundary lift (`#16`), and the z80-lineage cleanup remainder (`#20 D`).
+   The one known bug is **float subtraction (#8)**, parked — low-value for this target.
 
 ### Watch-outs (load-bearing)
 
@@ -131,9 +95,9 @@ whenever branch emission or the linker patch changes.
 - `./scripts/corpus-check.sh` — byte-identical codegen + 0-error assembly across `scripts/corpus/` (20/20).
 - `./scripts/size-check.sh` — corpus ROM-size measurement + delta vs `scripts/corpus/sizes.baseline`
   (report-only; `snapshot` to re-bless). The yardstick for #12 (peephole/cost) and #14 (relaxation) wins.
-- `./scripts/relax-analysis.sh` — branch-relaxation opportunity analysis (#14a, report-only): reads each
-  fully-linked program's resolved `bcall`/`bjump` slots from the relocated listing and reports the bytes
-  #14b/#14c would reclaim. Measured ~53% smaller user-code calls; confirms the 3-pass `fuzz` loop converges.
+- `./scripts/relax-analysis.sh` — branch-relaxation slot report (report-only): reads each fully-linked
+  program's resolved `bcall`/`bjump` slots from the relocated listing. With #14b landed, same-module slots
+  already relax to 2–3 B; use it to spot remaining cross-module (#14c) opportunity.
 - `./scripts/emu-test.sh` — RUN `tests/emu/cases/*.c` on the vendored minimon core (16/16). Execution truth.
 - `./scripts/diff-test.sh` — compile the same C host-vs-emulator and diff the output (12 modules).
 - `./scripts/validate-s1c88.sh <file.asm>` — assemble emitted codegen with `sdas88`; any reject = a z80-ism.
