@@ -267,6 +267,20 @@ are ROM tables. `__far` objects are emitted as a **romable static segment** (are
 `__far` RAM objects are unsupported (documented; there is no far RAM on this target). Writes
 *through* far pointers remain legal codegen (the target may map far RAM on other S1C88 chips).
 
+**Const-data pointers / the `CPOINTER` story (TODO #17).** Plain `const` data (string literals,
+lookup tables) is placed in code space (area `_CODE`/`_HOME`) and pointed to by **2-byte near
+GPOINTERs** — *not* a tagged 3-byte code pointer. The deref is an ordinary near `ld a,[hl]`, which is
+correct **because the common bank is physical `0x0000–0x7FFF`** (logic == physical), so a 16-bit
+offset reaches it. The `CPOINTER` class on this port is therefore effectively near; the codegen's
+`aop->code` flag is vestigial (set, never read). **Convention: plain `const` data must live in the
+common bank.** For const data in a *far* bank, use **`__far const`** — that is an `FPOINTER`
+(3-byte, EP-paged deref, area `_FAR`), exactly the machinery above, and it round-trips correctly
+(`tests/emu/cases/13_farconst.c`). The hazard — a plain (near-pointed) const/code object that
+overflows the common bank into the `0x8000–0xFFFF` window — is no longer silent: **`romgen`
+hard-errors on any non-banked content past logic `0x7FFF`** (that range is always the CB-selected
+bank window; far code uses bank ≥ 1, far data uses `--far`). So the boundary is *enforced*, not just
+conventional.
+
 **ABI:**
 - far-ptr argument passing: **stack** (documented divergence from Epson `IYP/IXP/HLP` — our
   allocator has no page-register model; caller+callee agree via `aopArg`, no interop concern).

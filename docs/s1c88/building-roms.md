@@ -85,6 +85,14 @@ Useful options:
 - `--opt-code-size` — favor size over speed.
 - `--code-loc` / `--data-loc` — override the `_CODE` / `_DATA` base (rarely needed).
 
+**`const` data and banks.** Plain `const` data (strings, tables) lives in the common
+bank and is read through ordinary 2-byte near pointers — so **all plain `const` data
+must fit in the common bank** (`0x2100-0x7FFF`). If code + const outgrows it, `romgen`
+stops with a *common-bank overflow* error rather than miscompiling. To put a large const
+table in a far bank, declare it `__far const` (it lands in the `_FAR` area and is read
+via the paged far-pointer path). Banked *code* is automatic — the linker splits oversized
+code across banks via `bcall`/`bjump`.
+
 The **stack pointer is set by the BIOS** on reset (the S1C88 leaves SP undefined at
 power-on); the crt0 deliberately does not touch it, so the stack lives wherever the
 Pokémon Mini BIOS parks it.

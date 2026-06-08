@@ -130,6 +130,22 @@ int main (int argc, char **argv)
               else
                 {
                   uint32_t bank = a >> 16, logic = a & 0xFFFF;
+                  /* Common-bank overflow guard (TODO #17): logic 0x8000-0xFFFF is
+                     ALWAYS the CB-selected bank window, never the common bank
+                     (0x0000-0x7FFF). Bank-0 content there means a non-banked area
+                     (code / const data) outgrew the common bank — and near (2-byte)
+                     pointers to that const data would silently address the wrong
+                     bank. Fail loudly instead. Far code uses bank>=1 (linker addr
+                     >= 0x10000); far data uses --far (is_far above). */
+                  if (bank == 0 && logic >= 0x8000u)
+                    {
+                      fprintf (stderr,
+                        "romgen: common-bank overflow — content at logic 0x%04x is past the\n"
+                        "        common bank (0x2100-0x7FFF). Near pointers can't reach it; move\n"
+                        "        code to a far bank (bcall/bjump) or const data to __far.\n",
+                        logic);
+                      rc = 2; break;
+                    }
                   phys = (bank == 0) ? logic : bank * 0x8000u + (logic & 0x7FFF);
                 }
               if (phys < CART_BASE)

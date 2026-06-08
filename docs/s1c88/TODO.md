@@ -5,7 +5,7 @@ Status snapshot (2026-06-07): **THE CRITICAL PATH (Section A) IS DONE — the to
 game.ihx game.min` produces a bootable Pokémon Mini ROM, with the production `crt0` (real `"PM"`/
 `"NINTENDO"` header), the auto-linked `s1c88.lib`, the `<pm.h>` device header, and a C `romgen` (no
 Python). `examples/hello/` is a copy-me project; `docs/s1c88/building-roms.md` is the how-to. All gates
-green (corpus 20/20, emu-test 12/12, diff-test 5, driver/crt0/rom/branch smokes, example). **Remaining =
+green (corpus 20/20, emu-test 13/13, diff-test 5, driver/crt0/rom/branch smokes, example). **Remaining =
 Section B (quality/coverage) and Section C (documented limitations).**
 
 Legend: **S/M/L** = rough effort. Items are roughly dependency-ordered within each section.
@@ -114,8 +114,15 @@ Legend: **S/M/L** = rough effort. Items are roughly dependency-ordered within ea
 16. **`UNIMPLEMENTED` traps.** Audit + document the pathological shapes that bail loudly (e.g.
     `--reserve-regs-iy` + >127-byte frame + multi-byte pointer read; shift/cast corners). Loud traps
     today, not silent miscompiles — but users should know the boundaries.
-17. **CPOINTER (code-space `const` data pointers).** 3 bytes but deref'd near-only; fine while const data
-    stays in the common bank — document the convention (or lift it).
+17. **CPOINTER (code-space `const` data pointers) — ✅ DONE (documented + guarded).** Investigation found
+    the original premise wrong: plain `const` pointers are **2-byte near** (not 3-byte), and the
+    `aop->code` flag is vestigial. Plain `const` data lives in the common bank (near deref, correct because
+    it's physical `< 0x8000`); **far const data already works via `__far const`** (3-byte EP-paged deref —
+    verified at runtime by `tests/emu/cases/13_farconst.c`). Documented the convention in `abi-decision.md`
+    + `building-roms.md` and fixed the inaccurate HANDOFF note. The silent-miscompile hazard (near-pointed
+    const overflowing the common bank) is now a **loud `romgen` error** on any non-banked content past
+    logic `0x7FFF`. (The literal "lift" — page-aware plain const pointers — was rejected: it would regress
+    every const pointer to 3-byte/slower to duplicate what `__far const` already does.)
 18. **float / long long correctness** — float subtraction is the open #8 bug; long long is unverified.
 19. **Structured test runner — ✅ DONE.** `scripts/run-tests.sh` builds the compiler once, runs every
     suite (corpus / emu / diff / toolchain smokes) **in parallel**, and emits one **TAP version 13**

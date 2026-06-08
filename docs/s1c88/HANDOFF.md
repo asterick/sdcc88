@@ -28,14 +28,14 @@ _Last updated: 2026-06-07._
   ABI tasks (#7 register model, #8 IY args, #9 `__far` pointers) are CLOSED, division/modulus runs on
   the native `DIV`, multiply on native `MLT`, function pointers are 3-byte banked code pointers, and the
   call model is **S1C88 MAXIMUM mode** (3-byte CB:PC frames — `abi-decision.md` "The call model").
-- **All gates green:** corpus 20/20 byte-identical (0 sdas88 errors), emu-test 12/12 (execution, incl. nested IRQ),
+- **All gates green:** corpus 20/20 byte-identical (0 sdas88 errors), emu-test 13/13 (execution),
   diff-test 5 (host-vs-emulator), plus driver/crt0/rom/branch smokes and the `examples/hello` build.
 - Everything builds + runs **inside the sandbox** — iterate freely, no `! ...`.
 
 ## NEXT ACTION (do this)
 
 1. **Confirm green:** `./scripts/dev.sh` (builds the compiler + codegen smoke) then
-   **`scripts/corpus-check.sh`** (byte-identical, 20/20), **`scripts/emu-test.sh`** (12/12 execution),
+   **`scripts/corpus-check.sh`** (byte-identical, 20/20), **`scripts/emu-test.sh`** (13/13 execution),
    and **`scripts/diff-test.sh`** (host-vs-emulator). corpus-check proves asm is *stable*; emu-test +
    diff-test prove it *computes the right values*. **Run all three for every codegen change**, and add
    an emu/diff case whenever you touch new codegen territory (each new module has found real bugs).
@@ -57,8 +57,12 @@ _Last updated: 2026-06-07._
   `make -C build/.../src` (it compiles a stale copy and produces a confusing edited-vs-stale "heisenbug").
 - **Rebuild the runtime after any crt0/lib/linker change** — `scripts/build-runtime.sh` (the `.rel` bank
   field must match the current linker; a stale `crt0.rel`/`s1c88.lib` silently breaks the integrated link).
-- **CPOINTER hazard:** pointers to code-space *data* are 3 bytes but deref'd near-only — fine while const
-  data stays in the common bank (the current convention). TODO #17.
+- **Const-data placement (TODO #17, done):** plain `const` data lives in the common bank and is reached
+  via **2-byte near** pointers (correct — the common bank is physical `< 0x8000`). For const data in a
+  **far** bank use **`__far const`** (3-byte, EP-paged deref — the #9 machinery; verified by
+  `tests/emu/cases/13_farconst.c`). `romgen` now **hard-errors on common-bank overflow** (any non-banked
+  content past logic `0x7FFF`), so an oversized near-pointed const can't silently miscompile. (The old
+  "3-byte CPOINTER deref'd near" note was inaccurate — plain const pointers are 2-byte near.)
 - **Runtime contract:** programs provide `__sdcc_fptr:: .ds 2` in near RAM (crt0 does; bare test startups
   must too). Far const data lives in area `_FAR` at PHYSICAL addresses (`romgen --far=start-end`).
 - **Emulator-core header changes need a full rebuild.** Every translation unit in
@@ -83,11 +87,11 @@ whenever branch emission or the linker patch changes.
 ## Verify / the tools
 
 - **`./scripts/run-tests.sh` — the unified runner: builds once, runs every suite in parallel, emits one
-  TAP version 13 stream (39 points) + summary, exits non-zero on any failure.** Use this as the one-shot
+  TAP version 13 stream (40 points) + summary, exits non-zero on any failure.** Use this as the one-shot
   gate; the individual suites below are still there for focused runs (and each takes `TAP=1`).
 - `./scripts/dev.sh` — build compiler + codegen smoke test → `GREEN`.
 - `./scripts/corpus-check.sh` — byte-identical codegen + 0-error assembly across `scripts/corpus/` (20/20).
-- `./scripts/emu-test.sh` — RUN `tests/emu/cases/*.c` on the vendored minimon core (12/12). Execution truth.
+- `./scripts/emu-test.sh` — RUN `tests/emu/cases/*.c` on the vendored minimon core (13/13). Execution truth.
 - `./scripts/diff-test.sh` — compile the same C host-vs-emulator and diff the output (5 modules).
 - `./scripts/validate-s1c88.sh <file.asm>` — assemble emitted codegen with `sdas88`; any reject = a z80-ism.
 - `./scripts/branch-smoke.sh` — byte-lock the branch displacement convention (above).
