@@ -36,14 +36,12 @@
 #define OPTION_CONST_SEG        "--constseg"
 #define OPTION_DATA_SEG         "--dataseg"
 #define OPTION_CALLEE_SAVES_BC  "--callee-saves-bc"
-#define OPTION_PORTMODE         "--portmode="
 #define OPTION_ASM              "--asm="
 #define OPTION_NO_STD_CRT0      "--no-std-crt0"
 #define OPTION_RESERVE_IY       "--reserve-regs-iy"
 #define OPTION_FRAMEPOINTER     "--fno-omit-frame-pointer"
 #define OPTION_EMIT_EXTERNS     "--emit-externs"
 #define OPTION_LEGACY_BANKING   "--legacy-banking"
-#define OPTION_NMOS_Z80         "--nmos-z80"
 #define OPTION_SDCCCALL         "--sdcccall"
 #define OPTION_ALLOW_UNDOC_INST "--allow-undocumented-instructions"
 
@@ -62,7 +60,6 @@ S1C88_OPTS s1c88_opts;
 
 static OPTION _s1c88_options[] = {
   {0, OPTION_CALLEE_SAVES_BC, &s1c88_opts.calleeSavesBC, "Force a called function to always save BC"},
-  {0, OPTION_PORTMODE,        NULL, "Determine PORT I/O mode (z80/z180)"},
   {0, OPTION_BO,              NULL, "<num> use code bank <num>"},
   {0, OPTION_BA,              NULL, "<num> use data bank <num>"},
   {0, OPTION_ASM,             NULL, "Define assembler name (rgbds/asxxxx/isas/z80asm/gas)"},
@@ -74,7 +71,6 @@ static OPTION _s1c88_options[] = {
   {0, OPTION_FRAMEPOINTER,    &s1c88_opts.noOmitFramePtr, "Do not omit frame pointer"},
   {0, OPTION_EMIT_EXTERNS,    NULL, "Emit externs list in generated asm"},
   {0, OPTION_LEGACY_BANKING,  &s1c88_opts.legacyBanking, "Use legacy method to call banked functions"},
-  {0, OPTION_NMOS_Z80,        &s1c88_opts.nmosZ80, "Generate workaround for NMOS Z80 when saving IFF2"},
   {0, OPTION_SDCCCALL,        &options.sdcccall, "Set ABI version for default calling convention", CLAT_INTEGER},
   {0, OPTION_ALLOW_UNDOC_INST,&options.allow_undoc_inst, "Allow use of undocumented instructions"},
   {0, NULL}
@@ -195,7 +191,6 @@ _reg_parm (sym_link *l, bool reentrant)
 enum
 {
   P_BANK = 1,
-  P_PORTMODE,
   P_CODESEG,
   P_CONSTSEG,
 };
@@ -271,48 +266,6 @@ do_pragma (int id, const char *name, const char *cp)
       }
       break;
 
-    case P_PORTMODE:
-      {                         /*.p.t.20030716 - adding pragma to manipulate z80 i/o port addressing modes */
-        const char *str;
-
-        cp = get_pragma_token (cp, &token);
-
-        if (TOKEN_EOL == token.type)
-          {
-            err = 1;
-            break;
-          }
-
-        str = get_pragma_string (&token);
-
-        cp = get_pragma_token (cp, &token);
-        if (TOKEN_EOL != token.type)
-          {
-            err = 1;
-            break;
-          }
-
-        if (!strcmp (str, "z80"))
-          {
-            s1c88_opts.port_mode = 80;
-          }
-        else if (!strcmp (str, "z180"))
-          {
-            s1c88_opts.port_mode = 180;
-          }
-        else if (!strcmp (str, "save"))
-          {
-            s1c88_opts.port_back = s1c88_opts.port_mode;
-          }
-        else if (!strcmp (str, "restore"))
-          {
-            s1c88_opts.port_mode = s1c88_opts.port_back;
-          }
-        else
-          err = 1;
-      }
-      break;
-
     case P_CODESEG:
     case P_CONSTSEG:
       {
@@ -366,7 +319,6 @@ do_pragma (int id, const char *name, const char *cp)
 
 static struct pragma_s pragma_tbl[] = {
   {"bank", P_BANK, 0, do_pragma},
-  {"portmode", P_PORTMODE, 0, do_pragma},
   {"codeseg", P_CODESEG, 0, do_pragma},
   {"constseg", P_CONSTSEG, 0, do_pragma},
   {NULL, 0, 0, NULL},
@@ -448,21 +400,6 @@ _parseOptions (int *pargc, char **argv, int *i)
               port->assembler.externGlobal = TRUE;
               asm_addTree (&_s1c88_gas_z80);
               _G.asmType = ASM_TYPE_GAS;
-              return TRUE;
-            }
-        }
-      else if (!strncmp (argv[*i], OPTION_PORTMODE, sizeof (OPTION_PORTMODE) - 1))
-        {
-          char *portmode = getStringArg (OPTION_ASM, argv, i, *pargc);
-
-          if (!strcmp (portmode, "z80"))
-            {
-              s1c88_opts.port_mode = 80;
-              return TRUE;
-            }
-          else if (!strcmp (portmode, "z180"))
-            {
-              s1c88_opts.port_mode = 180;
               return TRUE;
             }
         }
@@ -799,23 +736,11 @@ static const char *_s1c88LinkCmd[] = {
   "sdldz80", "-nf", "$1", "$L", NULL
 };
 
-/*
-static const char *_gnuLdCmd[] = {
-  "z80-elf-ld", "", "$1", NULL
-};
-*/
 /* $3 is replaced by assembler.debug_opts resp. port->assembler.plain_opts */
 static const char *_s1c88AsmCmd[] = {
   "sdas88", "$l", "$3", "$2", "$1.asm", NULL
 };
 
-
-
-/*
-static const char *_GnuAsmCmd[] = {
-  "z80-elf-as", "$l", "$3", "$2", "$1.asm", NULL
-};
-*/
 static const char *const _crt[] = { "crt0.rel", NULL, };
 static const char *const _libs_s1c88[] = { "s1c88", NULL, };
 

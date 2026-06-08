@@ -10,12 +10,9 @@
 typedef struct
   {
     int calleeSavesBC;
-    int port_mode;
-    int port_back;
     int reserveIY;
     int noOmitFramePtr;
     int legacyBanking;
-    int nmosZ80;
   }
 S1C88_OPTS;
 
@@ -23,9 +20,14 @@ extern S1C88_OPTS s1c88_opts;
 
 /* sdcc88 is a SINGLE-VARIANT port: the inherited multi-variant sub-port
    predicate machinery is GONE — every variant-gated branch was
-   constant-folded away (task #7a). HAS_IYL_INST survives only until the
-   IYL/IYH_IDX removal (#7c): the S1C88 IX/IY are not byte-addressable. */
-#define HAS_IYL_INST (options.allow_undoc_inst)
+   constant-folded away (task #7a).
+   HAS_IYL_INST gated the eZ80 byte-addressable index-register instructions
+   (`ld iyl,…` etc.); the S1C88 IX/IY are NOT byte-addressable, so it is
+   hardcoded 0. (It was previously tied to `--allow-undoc-inst`, which would
+   have switched on invalid IX/IY-byte codegen — a latent footgun.) IYL_IDX/
+   IYH_IDX remain as ASMOP_IY's byte ordinals; only the eZ80 *instructions*
+   are gone. */
+#define HAS_IYL_INST 0
 
 #define IY_RESERVED (s1c88_opts.reserveIY)
 

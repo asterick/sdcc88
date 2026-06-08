@@ -92,17 +92,26 @@ The port was cloned from SDCC's multi-variant z80 backend. The variant *predicat
 identifiers renamed to `s1c88*`, the variant comments reworded, and the `cost2` 7-variant timing signature
 collapsed to `cost2(bytes, cycles)`. **Remaining:**
 
-- **(D) [M] Dead-variant toggles + machinery — verify-then-remove (per-unit).**
-  - `HAS_IYL_INST` + the `IYL_IDX`/`IYH_IDX` byte-index machinery: eZ80 byte-addressable index registers;
-    the S1C88 IX/IY are NOT byte-addressable. Removing collapses several `gen.c` branches.
-  - The `nmosZ80` / `--nmos-z80` / `allow_undoc_inst` undocumented-instruction toggle, and the
-    `#pragma portmode z80/z180` handling — confirm they gate nothing on the S1C88, then drop.
-  - The asm-dialect tables (`mappings.i` `_z80asm`/`_gas_z80`; `main.c`'s `{z80*}` link-command-template
-    variables + the `z80-elf-ld/as` gas-path tool names).
-  - The peephole **flag-token model** (`pf`/`sf`/`hf`/`nf`/`vf`/`lf` — z80 flag names) and its comments —
-    rename as one unit.
+- **(D) Dead-variant toggles + machinery — mostly done; two remainders.**
+  - ✅ `HAS_IYL_INST` hardcoded `0` (was tied to `--allow-undoc-inst`, a footgun that would switch on the
+    eZ80 byte-addressable IX/IY instructions that don't exist on the S1C88). The branches now constant-fold
+    away, matching the `IS_Z80`-constant pattern; `IYL_IDX`/`IYH_IDX` remain as ASMOP_IY's byte ordinals.
+  - ✅ Removed the dead `nmosZ80` / `--nmos-z80` option (declared, never read) and the dead
+    `#pragma portmode z80/z180` + `--portmode=` + `port_mode`/`port_back` fields (only set, never read).
+  - ✅ Deleted the commented-out `z80-elf-ld`/`z80-elf-as` gas command-template blocks (already dead; the
+    live commands are `sdldz80`/`sdas88`).
+  - ⏸ **Remaining (deferred, low value):** the gas/z80asm asm-DIALECT trees (`mappings.i` `_z80asm`,
+    `_s1c88_z80asm_z80`, `_s1c88_gas_z80` + their mapping tables, and the `--asm=gas`/`--asm=z80asm` branches
+    in `main.c`). These are non-functional for the S1C88 (the toolchain is asxxxx/sdas-only), but removal is
+    entangled with the multi-dialect `ASM_TYPE` machinery and those paths have **zero test coverage**, so a
+    botched edit wouldn't be caught — poor risk/reward for cosmetic gain. Leave the dialect system intact
+    (it's inert; the default is always asxxxx).
+  - ⏸ **Remaining (deferred):** the peephole **flag-token model** (`pf`/`sf`/`hf`/`nf`/`vf`/`lf` — z80 flag
+    names). This is NOT a clean rename: the S1C88 has Z/C/V/N (no S/P/H, and N is negative not add-subtract),
+    so mapping the z80 flag set onto the S1C88 is a real flag-semantics task (it touches the same analysis as
+    the #12-flag-reuse work), not cosmetic. Defer until/unless it's worth a careful pass.
 
-  Each in an always-green slice (`run-tests.sh` after each; corpus byte-identity catches behaviour drift).
+  (Done in always-green slices — each byte-identical, run-tests 50/50, smokes green.)
 
 - **(F) MUST NOT touch — shared core / external contract.** `TARGET_Z80_LIKE`, `TARGET_IS_Z80`, `IS_Z80`,
   `ASM_TYPE_Z80ASM` (shared SDCC core — the port DEPENDS on being z80-like, see `CLAUDE.md`) and `sdldz80`
