@@ -103,7 +103,7 @@ findLabel (const lineNode *pl)
 
   /* 1. extract label in opcode */
 
-  /* In each z80 jumping opcode the label is at the end of the opcode */
+  /* In each S1C88 jumping opcode the label is at the end of the opcode */
   p = strlen (pl->line) - 1 + pl->line;
 
   /* scan backward until ',' or '\t' */
@@ -166,7 +166,7 @@ static bool argCont(const char *arg, const char *what)
 }
 
 static bool
-z80MightBeParmInCallFromCurrentFunction(const char *what)
+s1c88MightBeParmInCallFromCurrentFunction(const char *what)
 {
   if (strchr(what, 'l') && s1c88_regs_used_as_parms_in_calls_from_current_function[L_IDX])
     return TRUE;
@@ -184,7 +184,7 @@ z80MightBeParmInCallFromCurrentFunction(const char *what)
 
 /* Check if the flag implies reading what. */
 static bool
-z80MightReadFlagCondition(const char *cond, const char *what)
+s1c88MightReadFlagCondition(const char *cond, const char *what)
 {
   while(isspace (*cond))
     cond++;
@@ -208,7 +208,7 @@ z80MightReadFlagCondition(const char *cond, const char *what)
 }
 
 static bool
-z80MightReadFlag(const lineNode *pl, const char *what)
+s1c88MightReadFlag(const lineNode *pl, const char *what)
 {
   if(ISINST(pl->line, "ld") ||
      ISINST(pl->line, "or") ||
@@ -293,7 +293,7 @@ z80MightReadFlag(const lineNode *pl, const char *what)
   // catch c, nc, z, nz, po, pe, p and m
   if(ISINST(pl->line, "jp") ||
      ISINST(pl->line, "jr"))
-    return (strchr(pl->line, ',') && z80MightReadFlagCondition(pl->line + 2, what));
+    return (strchr(pl->line, ',') && s1c88MightReadFlagCondition(pl->line + 2, what));
 
   // flags don't matter according to calling convention
   if(ISINST(pl->line, "reti") ||
@@ -301,10 +301,10 @@ z80MightReadFlag(const lineNode *pl, const char *what)
     return false;
 
   if(ISINST(pl->line, "call"))
-    return (strchr(pl->line, ',') && z80MightReadFlagCondition(pl->line + 4, what));
+    return (strchr(pl->line, ',') && s1c88MightReadFlagCondition(pl->line + 4, what));
 
   if(ISINST(pl->line, "ret"))
-    return (pl->line[3] == '\t' && z80MightReadFlagCondition(pl->line + 3, what));
+    return (pl->line[3] == '\t' && s1c88MightReadFlagCondition(pl->line + 3, what));
 
   // we don't know anything about this
   if(ISINST(pl->line, "rst"))
@@ -322,7 +322,7 @@ z80MightReadFlag(const lineNode *pl, const char *what)
 }
 
 static bool
-z80MightRead(const lineNode *pl, const char *what)
+s1c88MightRead(const lineNode *pl, const char *what)
 {
   if(strcmp(what, "iyl") == 0 || strcmp(what, "iyh") == 0)
     what = "iy";
@@ -351,14 +351,14 @@ z80MightRead(const lineNode *pl, const char *what)
       if (f && IS_FUNC (f->type))
         return s1c88IsParmInCall(f->type, what);
       else // Fallback needed for calls through function pointers and for calls to literal addresses.
-        return z80MightBeParmInCallFromCurrentFunction(what);
+        return s1c88MightBeParmInCallFromCurrentFunction(what);
     }
 
   if(ISINST(pl->line, "reti") || ISINST(pl->line, "retn"))
     return(strcmp(what, "sp") == 0);
 
   if(ISINST(pl->line, "ret")) // S1C88: a ;pcall-tagged ret IS a function-pointer CALL (RET-dispatch) — its arguments are read by the callee
-    return s1c88IsReturned(what) || (strstr(pl->line, ";pcall") && z80MightBeParmInCallFromCurrentFunction(what)) || strcmp(what, "sp") == 0;
+    return s1c88IsReturned(what) || (strstr(pl->line, ";pcall") && s1c88MightBeParmInCallFromCurrentFunction(what)) || strcmp(what, "sp") == 0;
 
   if(!strcmp(pl->line, "ex\t(sp), hl") || !strcmp(pl->line, "ex\t(sp),hl"))
     return(!strcmp(what, "h") || !strcmp(what, "l") || strcmp(what, "sp") == 0);
@@ -507,7 +507,7 @@ z80MightRead(const lineNode *pl, const char *what)
     return(!!strstr("ahl", what));
 
   // Bit test: the S1C88 operand order is `bit reg, #mask` — the REGISTER is
-  // the FIRST operand (z80 had `bit #n, reg`, register after the comma).
+  // the FIRST operand (before the comma).
   // Scanning the wrong side made notUsed() think `bit a, #0x01` doesn't read
   // A, so peephole 7 deleted the A reload before it (caught by tests/emu 03,
   // a wrong quotient out of the C-compiled __divuint). argCont stops at the
@@ -584,7 +584,7 @@ z80MightRead(const lineNode *pl, const char *what)
 }
 
 static bool
-z80UncondJump(const lineNode *pl)
+s1c88UncondJump(const lineNode *pl)
 {
   if((ISINST(pl->line, "jp") || ISINST(pl->line, "jr")) &&
      strchr(pl->line, ',') == 0)
@@ -593,7 +593,7 @@ z80UncondJump(const lineNode *pl)
 }
 
 static bool
-z80CondJump(const lineNode *pl)
+s1c88CondJump(const lineNode *pl)
 {
   if(((ISINST(pl->line, "jp") || ISINST(pl->line, "jr")) &&
       strchr(pl->line, ',') != 0) ||
@@ -604,7 +604,7 @@ z80CondJump(const lineNode *pl)
 
 // TODO: z80 flags only partly implemented
 static bool
-z80SurelyWritesFlag(const lineNode *pl, const char *what)
+s1c88SurelyWritesFlag(const lineNode *pl, const char *what)
 {
   /* LD instruction is never change flags except LD A,I and LD A,R.
     But it is most popular instruction so place it first */
@@ -784,7 +784,7 @@ callSurelyWrites (const lineNode *pl, const char *what)
 }
 
 static bool
-z80SurelyWrites (const lineNode *pl, const char *what)
+s1c88SurelyWrites (const lineNode *pl, const char *what)
 {
   if(strcmp(what, "iyl") == 0 || strcmp(what, "iyh") == 0)
     what = "iy";
@@ -842,7 +842,7 @@ z80SurelyWrites (const lineNode *pl, const char *what)
 }
 
 static bool
-z80SurelyReturns(const lineNode *pl)
+s1c88SurelyReturns(const lineNode *pl)
 {
   if(strcmp(pl->line, "ret") == 0)
     return TRUE;
@@ -913,7 +913,7 @@ scan4op (lineNode **pl, const char *what, const char *untilOp,
 
       if(isFlag)
         {
-          if(z80MightReadFlag(*pl, what))
+          if(s1c88MightReadFlag(*pl, what))
             {
               D(("S4O_RD_OP (flag)\n"));
               return S4O_RD_OP;
@@ -921,14 +921,14 @@ scan4op (lineNode **pl, const char *what, const char *untilOp,
         }
       else
         {
-          if (z80MightRead (*pl, what))
+          if (s1c88MightRead (*pl, what))
             {
               D (("S4O_RD_OP\n"));
               return S4O_RD_OP;
             }
         }
 
-      if (z80UncondJump (*pl))
+      if (s1c88UncondJump (*pl))
         {
           lineNode *tlbl = findLabel (*pl);
           if (!tlbl) // jp/jr could be a tail call.
@@ -952,7 +952,7 @@ scan4op (lineNode **pl, const char *what, const char *untilOp,
               return S4O_ABORT;
             }
         }
-      if (z80CondJump(*pl))
+      if (s1c88CondJump(*pl))
         {
           *plCond = findLabel (*pl);
           if (!*plCond)
@@ -966,7 +966,7 @@ scan4op (lineNode **pl, const char *what, const char *untilOp,
 
       if (isFlag)
         {
-          if (z80SurelyWritesFlag (*pl, what))
+          if (s1c88SurelyWritesFlag (*pl, what))
             {
               D (("S4O_WR_OP (flag)\n"));
               return S4O_WR_OP;
@@ -974,15 +974,15 @@ scan4op (lineNode **pl, const char *what, const char *untilOp,
         }
       else
         {
-        if(z80SurelyWrites(*pl, what))
+        if(s1c88SurelyWrites(*pl, what))
           {
             D(("S4O_WR_OP\n"));
             return S4O_WR_OP;
           }
         }
 
-      /* Don't need to check for de, hl since z80MightRead() does that */
-      if(z80SurelyReturns(*pl))
+      /* Don't need to check for de, hl since s1c88MightRead() does that */
+      if(s1c88SurelyReturns(*pl))
         {
           D(("S4O_TERM\n"));
           return S4O_TERM;
@@ -1237,9 +1237,6 @@ s1c88canAssign (const char *op1, const char *op2, const char *exotic)
     (!strcmp(dst, "hl") || !strcmp(dst, "ix") || !strcmp(dst, "iy")) && !strcmp(src, "sp"))
     return true;
 
-  // Rabbit can load between iy and hl.
-  
-
   return false;
 }
 
@@ -1380,14 +1377,6 @@ int s1c88instructionSize(lineNode *pl)
 
       if (op1start[0] == '(' && STRNCASECMP(op1start, "(bc)", 4) && STRNCASECMP(op1start, "(de)", 4) && STRNCASECMP(op1start, "(hl" , 3) && STRNCASECMP(op2start, "hl", 2) && STRNCASECMP(op2start, "a", 1) || op2start[0] == '(' && STRNCASECMP(op2start, "(bc)", 4) && STRNCASECMP(op1start, "(de)", 4) && STRNCASECMP(op2start, "(hl" , 3) && STRNCASECMP(op1start, "hl", 2) && STRNCASECMP(op1start, "a", 1))
         return(4);
-
-      /* Rabbit 16-bit pointer load */
-      
-      
-
-      /* eZ80 16-bit pointer load */
-      
-      
 
       /* These 4 are the only remaining cases of 3 byte long ld instructions. */
       if(argCont(op2start, "(ix)") || argCont(op2start, "(iy)"))
