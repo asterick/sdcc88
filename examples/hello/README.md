@@ -47,10 +47,11 @@ console at `0x1FF8` so `make run` shows output. A real game would loop forever i
 `main()` instead of returning.
 
 **Interrupts:** this program defines no handlers, and it still links — the crt0's
-per-vector trampolines `bjump _irq_v<N>`, and the runtime library provides a
-do-nothing `rete` default for every vector. To handle one, define
-`void irq_v<N>(void) __interrupt` (the `VEC_*` numbers are in `<pm.h>`); it
-overrides just that vector's default. See `docs/s1c88/building-roms.md` §5.
+per-slot trampolines `bjump _irq_v<N>`, and the runtime library provides a
+do-nothing `rete` default for every cart vector slot. To handle one, declare a
+handler `void f(void) __interrupt(VEC_*)` (the cart-slot `VEC_*` constants are in
+`<pm.h>`); the compiler auto-wires it to that slot. See
+`docs/s1c88/building-roms.md` §5.
 
 See [`docs/s1c88/building-roms.md`](../../docs/s1c88/building-roms.md) for the full
 guide and [`<pm.h>`](../../device/include/s1c88/pm.h) for the register map.

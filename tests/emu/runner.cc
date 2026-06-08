@@ -102,10 +102,28 @@ int main(int argc, char** argv) {
 	m.reg.cb = 0;
 	m.reg.nb = 0;
 	if (m.memory[0x2100] == 'P' && m.memory[0x2101] == 'M') {
-		for (int v = 0; v < 27; v++) {		// reset + 26 maskable IRQ slots
-			uint32_t slot = 0x2102 + 6 * v;
-			m.memory[2 * v]     = slot & 0xFF;
-			m.memory[2 * v + 1] = (slot >> 8) & 0xFF;
+		// The PM BIOS does NOT identity-map hardware IRQs to cart vector slots: it
+		// forwards a permuted subset (gaps where a hardware IRQ has no cart vector:
+		// $01/$02 NMI, $11/$12 unused, $13 cart-eject = BIOS-handled). cart2hw[c] is
+		// the hardware IRQ number serviced by cart slot c (0..26); we install cart
+		// slot c's trampoline address (0x2102 + 6*c) at hardware vector 2*cart2hw[c],
+		// exactly as the BIOS routes it. (https://www.pokemon-mini.net/documentation/bios/)
+		static const int cart2hw[27] = {
+			0x00,                                           // 0  reset
+			0x03, 0x04,                                     // 1,2  PRC copy/frame
+			0x05, 0x06, 0x07, 0x08, 0x09, 0x0A,             // 3..8  Timer2/1/3
+			0x0B, 0x0C, 0x0D, 0x0E,                         // 9..12 32/8/2/1 Hz
+			0x0F, 0x10,                                     // 13,14 IR / shock
+			0x15, 0x16, 0x17, 0x18, 0x19, 0x1A, 0x1B, 0x1C, // 15..22 power/right/left/down/up/C/B/A
+			0x1D, 0x1E,                                     // 23,24 (unknown)
+			0x13,                                           // 25  cartridge ejected
+			0x14,                                           // 26  cartridge IRQ
+		};
+		for (int c = 0; c < 27; c++) {
+			uint32_t slot = 0x2102 + 6 * c;
+			int hw = cart2hw[c];
+			m.memory[2 * hw]     = slot & 0xFF;
+			m.memory[2 * hw + 1] = (slot >> 8) & 0xFF;
 		}
 		// The S1C88 leaves SP undefined at reset; on real hardware the BIOS sets it
 		// before entering the cart, and the production crt0 deliberately does NOT touch

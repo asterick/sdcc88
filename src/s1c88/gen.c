@@ -5937,6 +5937,28 @@ genFunction (const iCode * ic)
   if (!regalloc_dry_run)
     genLine.lineCurr->isLabel = 1;
 
+  /* S1C88 __interrupt(n) auto-wiring: an ISR declared with an explicit cartridge
+     IRQ slot number N (`void f(void) __interrupt(N)`) also defines the global
+     label _irq_v<N> at its entry — the symbol the crt0 header trampoline
+     (`bjump _irq_v<N>`) resolves to.  So the handler installs itself in vector
+     slot N with no hand-naming of irq_v<N>.  N is the CARTRIDGE IRQ slot
+     (1..26, the <pm.h> VEC_* values, per the PM BIOS forwarding table), NOT the
+     raw hardware IRQ number; slot 0 is the reset vector. */
+  if (IFFUNC_ISISR (sym->type) && FUNC_INTNO (sym->type) != INTNO_UNSPEC)
+    {
+      int vec = FUNC_INTNO (sym->type);
+      if (vec < 1 || vec > 26)
+        werror (W_CONST_RANGE, "in __interrupt(n): n must be a cartridge IRQ slot 1..26 (see <pm.h> VEC_*)");
+      else
+        {
+          char vname[16];
+          SNPRINTF (vname, sizeof (vname), "_irq_v%d", vec);
+          emit2 ("!globalfunctionlabeldef", vname);
+          if (!regalloc_dry_run)
+            genLine.lineCurr->isLabel = 1;
+        }
+    }
+
   ftype = operandType (IC_LEFT (ic));
 
   if (IFFUNC_ISNAKED (ftype))

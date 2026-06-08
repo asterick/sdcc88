@@ -149,36 +149,45 @@
 #define IRQ4_IR_RECV      _BV(7)
 #define IRQ4_SHOCK        _BV(6)
 
-/* Hardware interrupt VECTOR numbers — the handler address is read from
-   physical (2 * vector). These index the crt0 cartridge vector table
-   (slot N at 0x2102 + 6*N). See device/lib/s1c88/crt0.s. */
-#define VEC_RESET             0x00
-#define VEC_DIV_ZERO          0x01
-#define VEC_WATCHDOG          0x02
-#define VEC_PRC_COMPLETE      0x03
-#define VEC_DIV_OVF           0x04
-#define VEC_TIM2_HI_UF        0x05
-#define VEC_TIM2_LO_UF        0x06
-#define VEC_TIM1_HI_UF        0x07
-#define VEC_TIM1_LO_UF        0x08
-#define VEC_TIM3_HI_UF        0x09
-#define VEC_TIM3_PIVOT        0x0A
-#define VEC_32HZ              0x0B
-#define VEC_8HZ               0x0C
-#define VEC_2HZ               0x0D
-#define VEC_1HZ              0x0E
-#define VEC_IR_RECV           0x0F
-#define VEC_SHOCK             0x10
-#define VEC_CART_EJECT        0x13
-#define VEC_CART              0x14
-#define VEC_KEYPOWER          0x15
-#define VEC_KEYRIGHT          0x16
-#define VEC_KEYLEFT           0x17
-#define VEC_KEYDOWN           0x18
-#define VEC_KEYUP             0x19
-#define VEC_KEYC              0x1A
-#define VEC_KEYB              0x1B
-#define VEC_KEYA              0x1C
+/* Cartridge interrupt VECTOR slot numbers — pass these to __interrupt(n):
+ *
+ *     void on_1hz(void) __interrupt(VEC_1HZ) { ... }   // installs as vector 12
+ *
+ * VEC_* is the CARTRIDGE IRQ slot (0..26), i.e. the crt0 header trampoline index
+ * (slot N at 0x2102 + 6*N), NOT the raw hardware IRQ number. The PM BIOS forwards
+ * a permuted subset of the 32 hardware IRQs to these 27 cart slots; the trailing
+ * comment on each line is the hardware IRQ ($xx) it services. (Reference:
+ * https://www.pokemon-mini.net/documentation/bios/ — the "Cart IRQ" column.)
+ *
+ * Hardware IRQs NOT forwarded to the cartridge (handled by the BIOS, no slot):
+ * div-by-zero ($01), watchdog ($02), unused ($11/$12), cartridge-eject ($13). */
+#define VEC_RESET             0   /* HW $00  reset (crt0 __start; not user-overridable) */
+#define VEC_PRC_COMPLETE      1   /* HW $03  PRC copy complete */
+#define VEC_PRC_FRAME         2   /* HW $04  PRC frame divider overflow */
+#define VEC_TIM2_HI_UF        3   /* HW $05  Timer2 upper-8 underflow */
+#define VEC_TIM2_LO_UF        4   /* HW $06  Timer2 lower-8 underflow */
+#define VEC_TIM1_HI_UF        5   /* HW $07  Timer1 upper-8 underflow */
+#define VEC_TIM1_LO_UF        6   /* HW $08  Timer1 lower-8 underflow */
+#define VEC_TIM3_HI_UF        7   /* HW $09  Timer3 upper-8 underflow */
+#define VEC_TIM3_PIVOT        8   /* HW $0A  Timer3 pivot */
+#define VEC_32HZ              9   /* HW $0B  32 Hz (from 256 Hz timer) */
+#define VEC_8HZ               10  /* HW $0C  8 Hz */
+#define VEC_2HZ               11  /* HW $0D  2 Hz */
+#define VEC_1HZ               12  /* HW $0E  1 Hz */
+#define VEC_IR_RECV           13  /* HW $0F  IR receiver */
+#define VEC_SHOCK             14  /* HW $10  shock sensor */
+#define VEC_KEYPOWER          15  /* HW $15  power key */
+#define VEC_KEYRIGHT          16  /* HW $16  right key */
+#define VEC_KEYLEFT           17  /* HW $17  left key */
+#define VEC_KEYDOWN           18  /* HW $18  down key */
+#define VEC_KEYUP             19  /* HW $19  up key */
+#define VEC_KEYC              20  /* HW $1A  C key */
+#define VEC_KEYB              21  /* HW $1B  B key */
+#define VEC_KEYA              22  /* HW $1C  A key */
+#define VEC_UNKNOWN3          23  /* HW $1D  (unmapped hardware IRQ) */
+#define VEC_UNKNOWN4          24  /* HW $1E  (unmapped hardware IRQ) */
+#define VEC_CART_EJECT        25  /* HW $13  cartridge ejected */
+#define VEC_CART              26  /* HW $14  cartridge IRQ */
 
 /* ---- Audio ------------------------------------------------------------- */
 #define AUD_CTRL          _SFR8(0x70)

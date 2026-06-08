@@ -21,16 +21,19 @@
 ; jrl`, or 3 nops + jrl for a common-bank target) — exactly 6 bytes, so the BIOS
 ; dispatch math (slot N at 0x2102 + 6*N) lands on each jump AND the handler can
 ; live in ANY bank.  On real hardware the BIOS reads the 0x0000-0x00FF vector
-; table and routes IRQ N to its 0x2102+6*N slot; ROM is read-only, so handlers
-; are NOT installed by writing low memory — each slot bjumps to the symbol
-; `_irq_v<N>` (vector number N, see <pm.h> VEC_*), which YOU define:
+; table and routes a hardware IRQ to the CART slot the BIOS forwards it to (the
+; permuted map on https://www.pokemon-mini.net/documentation/bios/); ROM is
+; read-only, so handlers are NOT installed by writing low memory — each slot
+; bjumps to the symbol `_irq_v<N>` (N = CART vector slot, see <pm.h> VEC_*),
+; which YOU define.  The easy way is `__interrupt(N)` auto-wiring: an ISR with an
+; explicit cart-slot number compiles its entry as `_irq_v<N>` automatically:
 ;
-;     void irq_v8(void) __interrupt { ... }   // a TIM0 handler (VEC_TIM0 = 8)
+;     void on_tim1(void) __interrupt(VEC_TIM1_LO_UF) { ... }   // -> _irq_v6 (slot 6)
 ;
-; Every `_irq_v<N>` MUST be defined.  The s1c88 runtime library provides a
-; default (do-nothing RETE) for each as a separate module, so a program that
-; doesn't use interrupts links fine and you only override the vectors you want.
-; (A future `__interrupt(N)` auto-wiring / weak-default pass is planned.)
+; (Equivalently you may still hand-name the function `irq_v6`.)  The s1c88 runtime
+; library provides a default (do-nothing RETE) for every slot as a separate
+; module, so a program that doesn't use interrupts links fine and you only
+; override the vectors you want.
 ;
 ; Runtime contract (abi-decision.md): EP=XP=YP=0 (the EP=0 invariant, load-bearing for
 ; all near (hl)/(iy) access), __sdcc_fptr cell in near RAM for banked function-pointer

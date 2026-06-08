@@ -94,7 +94,9 @@ Legend: **S/M/L** = rough effort. Items are roughly dependency-ordered within ea
 
 Section A (the critical path) is **done**. Next: **B8 (the float-subtract bug)** is the highest-value item
 (an open correctness bug). Then nested-IRQ coverage (#10 follow-up), keep mining with the differential
-suite (#11), peephole/cost tuning (#12), and the branch-relaxation lift (#13 → #14). A nice usability
-follow-up: auto-wire `__interrupt(n)` functions to the crt0 vector table (today ISRs are installed by hand
-by defining `irq_v<N>`). See [HANDOFF.md](HANDOFF.md) for current state and [building-roms.md](building-roms.md)
+suite (#11), peephole/cost tuning (#12), and the branch-relaxation lift (#13 → #14).
+(`__interrupt(n)` auto-wiring is **done** — `void f(void) __interrupt(VEC_*)` emits `_irq_v<N>` at the
+handler's entry, where N is the cart vector slot; the runner BIOS and `<pm.h>` VEC_* use the real PM
+forwarding permutation, https://www.pokemon-mini.net/documentation/bios/.) See [HANDOFF.md](HANDOFF.md)
+for current state and [building-roms.md](building-roms.md)
 for the end-user guide.

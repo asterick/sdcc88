@@ -96,16 +96,18 @@ For **banked** (>32 KiB) ROMs and `__far` ROM data, code/data are placed at
 ## 5. Interrupts
 
 The cartridge ROM is read-only, so you do **not** install handlers by writing the
-low-memory vector table. Instead the crt0 header has a `bjump` trampoline per
-vector (`bjump _irq_v<N>` at `0x2102 + 6*N`); the BIOS routes IRQ N there, and it
-jumps to the handler symbol `irq_v<N>`. **To handle vector N, just define
-`irq_v<N>`** as an `__interrupt` function — the symbol overrides the library's
-do-nothing default for that one vector:
+low-memory vector table. Instead the crt0 header has a `bjump` trampoline per cart
+vector slot (`bjump _irq_v<N>` at `0x2102 + 6*N`); the BIOS forwards a hardware IRQ
+to its cart slot, and the trampoline jumps to the handler symbol `_irq_v<N>`.
+
+**To handle a vector, just declare `__interrupt(VEC_*)`** — the compiler emits
+`_irq_v<N>` at the function's entry automatically, overriding the library's
+do-nothing default for that one slot:
 
 ```c
 #include <pm.h>
-/* VEC_TIM0 == 8 -> define irq_v8 */
-void irq_v8(void) __interrupt {
+/* VEC_TIM1_LO_UF == cart slot 6 -> the compiler defines _irq_v6 here */
+void on_timer1(void) __interrupt(VEC_TIM1_LO_UF) {
     ...                          /* your work */
     IRQ_ACT1 = IRQ1_TIM1_LO_UF;  /* acknowledge the source */
 }
@@ -118,12 +120,14 @@ int main(void) {
 }
 ```
 
-The `VEC_*` constants in `<pm.h>` give the vector numbers (so `VEC_TIM0` → `irq_v8`).
-Handlers can live in any bank (the trampoline `bjump` resolves it). Vectors you
-don't define keep the library default — each unresolved vector decomposes to its
-own standalone do-nothing `rete` (there is no shared default handler). (A friendlier
-`__interrupt(N)` auto-wiring — so you don't number vectors by hand — is a planned
-follow-up.) `scripts/crt0-isr-smoke.sh` exercises this end to end.
+The `VEC_*` constants in `<pm.h>` are the **cart vector slots** (0..26) — *not* the
+raw hardware IRQ numbers; the PM BIOS forwards a permuted subset of the 32 hardware
+IRQs to those 27 slots (see `<pm.h>` for the per-slot hardware-IRQ comments, sourced
+from <https://www.pokemon-mini.net/documentation/bios/>). Handlers can live in any
+bank (the trampoline `bjump` resolves it). Vectors you don't declare keep the library
+default — each unresolved slot decomposes to its own standalone do-nothing `rete`.
+(You may still hand-name a function `irq_v<N>` instead of using `__interrupt(N)`.)
+`scripts/crt0-isr-smoke.sh` exercises this end to end.
 
 ## 6. Verifying
 

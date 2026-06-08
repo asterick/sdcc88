@@ -5,11 +5,13 @@
 # by writing the low-memory vector table (which is BIOS ROM on real hardware).
 #
 # Uses the production crt0 (device/lib/s1c88/crt0.s): its header trampoline for
-# vector N (`bjump _irq_vN`) dispatches the IRQ to the handler.  This program
-# defines irq_v8 (VEC_TIM0 = 8), overriding the library default; the other 25
-# vectors keep their lib defaults.  The emulator runner's mini-BIOS synthesizes
-# the 0x00-0xFF vector table from the cart trampolines, so dispatch runs exactly
-# as on hardware.  main() returns 42 iff the timer ISR fired via the trampoline.
+# cart vector N (`bjump _irq_vN`) dispatches the IRQ to the handler.  This program
+# uses __interrupt(n) AUTO-WIRING: `void f(void) __interrupt(VEC_TIM1_LO_UF)` makes
+# the compiler define _irq_v6 at f's entry (VEC_TIM1_LO_UF = cart slot 6, the BIOS
+# forward of hardware IRQ $08 = Timer1-lower), overriding the library default; the
+# other 25 vectors keep their lib defaults.  The runner's mini-BIOS synthesizes the
+# 0x00-0xFF vector table from the cart trampolines using the real BIOS permutation,
+# so dispatch runs exactly as on hardware.  main() returns 42 iff the ISR fired.
 set -euo pipefail
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 SDCC="${REPO}/build/sdcc-4.5.0"
@@ -27,12 +29,13 @@ cat > "${OUT}/isr.c" <<'EOF'
 #define MMIO8(a) (*(volatile unsigned char *)(a))
 volatile unsigned int ticks = 0;
 
-/* VEC_TIM0 == 8 -> the crt0 trampoline at slot 8 (0x2132) bjumps here.  No
-   `*(unsigned int*)0x10 = ...` write — the vector table is read-only ROM. */
-void irq_v8(void) __interrupt
+/* __interrupt(VEC_TIM1_LO_UF) -> the compiler defines _irq_v6, the symbol the
+   crt0 trampoline at cart slot 6 (0x2126) bjumps to.  No `*(unsigned int*)0x10
+   = ...` write — the low-memory vector table is read-only ROM on hardware. */
+void tim_isr(void) __interrupt(VEC_TIM1_LO_UF)
 {
     ticks++;
-    MMIO8(0x2027) = 0x04;            /* acknowledge TIM0 */
+    MMIO8(0x2027) = 0x04;            /* acknowledge hardware IRQ $08 (Timer1-lower) */
 }
 
 int main(void)
