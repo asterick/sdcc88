@@ -55,43 +55,43 @@ A user should be able to: `sdcc -ms1c88 game.c` → assemble → link (banked) �
     more modules (longs, bitfield-heavy, deep call chains) will find more.
 12. **[L, open-ended] Peephole / cost tuning.** The standing "remaining" codegen item — size
     and speed (codegen is correct-first, not yet tuned).
-13. **[L, large lift] Linker branch relaxation (shrink `bjump`/`bcall`).** Today the compiler
-    emits `bjump`/`bcall` as the always-long, bank-switching form (the linker picks the bank but
-    not the *size*): worst-case `ld nb,#bank ; nop ; carl/jrl` (~6–7 bytes). When the resolved
-    target is in the **same bank** and within relative range, the linker should shrink it to the
-    smallest legal form — drop the `ld nb` bank-switch entirely, and pick `cars`/`jrs` (8-bit
-    relative) over `carl`/`jrl` (16-bit) when it fits. This is a classic **relaxation** pass:
-    iteratively shrink branches and recompute all addresses to a fixpoint (shrinking one branch
-    moves later addresses, which can let *more* shrink), being careful that no branch that fit
-    stops fitting. The ASxxxx/sdld model is fixed-size by default, so this means adding a
-    relaxation phase over the `R_S1C88_BANK`/PC-relative relocs + address recomputation — large,
-    but a big code-size/speed win. Cross-check against `branch-smoke.sh` (the displacement
-    convention) and re-baseline the corpus afterward.
-
-    Part of the same task: **conditional `bjump`/`bcall` via invert-and-skip trampolines.** The
-    long forms (`carl`/`jrl`) and the linker's `bjump`/`bcall` only support the basic conditions
-    `c/nc/z/nz`; the signed/flag conditions (`lt/ge/gt/le/v/nv/p/m/f0..nf3`) exist **only** as
-    short relative (`jrs`/`cars`, ±127). So when such a conditional must reach a far / out-of-
-    range / cross-bank target, the linker must synthesize a trampoline: invert the short
+13. **[M] Conditional `bjump`/`bcall` via invert-and-skip trampolines.** *(Prerequisite for #14.)*
+    The long forms (`carl`/`jrl`) and the linker's `bjump`/`bcall` only support the basic
+    conditions `c/nc/z/nz`; the signed/flag conditions (`lt/ge/gt/le/v/nv/p/m/f0..nf3`) exist
+    **only** as short relative (`jrs`/`cars`, ±127). So a conditional that must reach a far /
+    out-of-range / cross-bank target needs an **invert-and-skip trampoline**: invert the short
     condition to skip over an unconditional long branch/call —
     `jrs <inverted-cond>, .+<len> ; bjump/bcall target`. This generalizes the assembler's
     task-#10 lowering (local `jp <signed cc>` → `jrs <inv>,+4 ; jrl e`) to the linker's
-    bank-switching path, chosen as part of the same size-selection/relaxation pass (a short
-    conditional that fits stays a plain `jrs`; only out-of-range ones grow the trampoline).
-14. **[S] `__mul*int2*long` widening differential coverage.** Skipped in the diff harness for
+    bank-switching path. Doing it first gives #14 a uniform "every conditional has a reachable
+    long form" model to size against.
+14. **[L, large lift] Linker branch relaxation (shrink `bjump`/`bcall`).** *(Depends on #13.)*
+    Today the compiler emits `bjump`/`bcall` as the always-long, bank-switching form (the linker
+    picks the bank but not the *size*): worst-case `ld nb,#bank ; nop ; carl/jrl` (~6–7 bytes).
+    When the resolved target is in the **same bank** and within relative range, the linker should
+    shrink it to the smallest legal form — drop the `ld nb` bank-switch entirely, pick `cars`/
+    `jrs` (8-bit relative) over `carl`/`jrl` (16-bit) when it fits, and for conditionals choose a
+    plain short `jrs <cc>` over the #13 trampoline when in range. This is a classic **relaxation**
+    pass: iteratively shrink branches and recompute all addresses to a fixpoint (shrinking one
+    branch moves later addresses, which can let *more* shrink), being careful that no branch that
+    fit stops fitting. The ASxxxx/sdld model is fixed-size by default, so this means adding a
+    relaxation phase over the `R_S1C88_BANK`/PC-relative relocs + address recomputation — large,
+    but a big code-size/speed win. Cross-check against `branch-smoke.sh` (the displacement
+    convention) and re-baseline the corpus afterward.
+15. **[S] `__mul*int2*long` widening differential coverage.** Skipped in the diff harness for
     lack of the support routines; add once #4 (real lib) exists.
 
 ---
 
 ## C. Known limitations — fix or formally document
 
-15. **`UNIMPLEMENTED` traps.** Audit + document the pathological shapes that bail loudly (e.g.
+16. **`UNIMPLEMENTED` traps.** Audit + document the pathological shapes that bail loudly (e.g.
     `--reserve-regs-iy` + >127-byte frame + multi-byte pointer read; shift/cast corners). Loud
     traps today, not silent miscompiles — but users should know the boundaries.
-16. **CPOINTER (code-space `const` data pointers).** 3 bytes but deref'd near-only; fine while
+17. **CPOINTER (code-space `const` data pointers).** 3 bytes but deref'd near-only; fine while
     const data stays in the common bank — document the convention (or lift it).
-17. **float / long long correctness** — unverified until #8 exists.
-18. **[optional] Structured test runner** (TAP/parallel/per-assertion). Current bash + exit
+18. **float / long long correctness** — unverified until #8 exists.
+19. **[optional] Structured test runner** (TAP/parallel/per-assertion). Current bash + exit
     codes is fine but doesn't scale to many cases.
 
 ---
