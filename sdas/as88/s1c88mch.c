@@ -581,33 +581,22 @@ struct mne *mp;
 			op = (v1 < 0) ? 0xF2 : (0xE8 + v1);	/* carl / carl cc */
 		else
 			op = (v1 < 0) ? 0xF3 : (0xEC + v1);	/* jrl  / jrl cc  */
-		/* Emit the slot:  ld nb,#<bank> ; <carl|jrl> target
-		   - the NB byte carries R_S1C88_BANK: the linker writes the target's bank
-		     (its address >> 16) or NOPs the whole `ld nb` when the bank is 0 or
-		     the current bank.
-		   - the displacement carries the standard R_PCR: the 16-bit write masks
-		     off the bank difference, leaving the logic-relative displacement. */
+		/* Emit the 6-byte slot:  ld nb,#<bank> ; <carl|jrl> target
+		   - the NB byte carries R_S1C88_BANK as a SINGLE in-place byte (outr1be):
+		     the linker writes the target's bank (its address >> 16) there, or NOPs
+		     the whole `ld nb` when the bank is 0 (common) or the current bank.  The
+		     worst case for any unconditional or basic-cc (c/nc/z/nz) banked branch
+		     is exactly these 6 bytes — there is no short-only condition here, so no
+		     larger invert-and-skip form is reachable.
+		   - the displacement carries the standard R_PCR: the 16-bit write masks off
+		     the bank difference, leaving the logic-relative displacement.
+		   The bank reloc runs on a COPY (e2) — outr1be reads the expr but the
+		   subsequent R_PCR must see e1 with only the +1 bias applied. */
 		outab(0xCE); outab(0xC4);		/* ld nb opcode  */
-		/* Bank byte.  TODO: emit the R_S1C88_BANK reloc so the linker writes the
-		   target's bank (its address >> 16) or NOPs the ld nb.  That needs the
-		   24-bit/escape relocation path (asout.c:534), which is gated on the
-		   target identity — sdas88 currently self-reports TARGET_ID_UNKNOWN and
-		   takes the 16-bit path that truncates the mode.  Until a TARGET_ID_S1C88
-		   identity enables it, emit bank 0 (correct for common-area / single-bank
-		   targets); the displacement below already links correctly. */
-		/* Bank field carrying R_S1C88_BANK — a 2-byte [bank][pad] field via
-		   outrw() (which emits exactly 2 bytes and advances the counter by 2, so
-		   nothing desyncs; the escape mode reaches the linker because the s1c88
-		   identity routes word relocations through the escape path).  sdld88
-		   writes the target's bank (its linker address >> 16; code areas at
-		   (bank<<16)|logic) into [bank] and a NOP (FF) into [pad] — giving
-		   `ld nb,#bank ; nop ; carl/jrl`.  When that bank is 0 (common) or the
-		   current area's, it NOPs the whole `ld nb`+pad instead. */
-		outrw(&e1, R_S1C88_BANK);		/* [bank][pad] — unbiased target */
+		e2 = e1;
+		outr1be(&e2, R_S1C88_BANK);		/* [bank] — 1 in-place byte, unbiased target */
 		outab(op);				/* carl/jrl opcode */
-		e1.e_addr += 1;				/* S1C88-vs-z80 PCR base bias (see S_JRS);
-						           applied after the bank reloc so the
-						           bank byte uses the true address */
+		e1.e_addr += 1;				/* S1C88-vs-z80 PCR base bias (see S_JRS) */
 		outrw(&e1, R_PCR);			/* disp16 (+ R_PCR reloc -> target) — logic-relative */
 		break;
 

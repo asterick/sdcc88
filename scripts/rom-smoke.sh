@@ -57,14 +57,14 @@ home="$(hx 0 8)"        # _start @ physical 0x2100 (file 0)
 b1="$(hx $((0x8000-0x2100)) 3)"    # _b1fn  @ physical 0x08000
 b2="$(hx $((0x10000-0x2100)) 3)"   # _b2fn  @ physical 0x10000
 fdata="$(hx $((0x18800-0x2100)) 2)"   # _ftbl @ physical 0x18800 (the __far block)
-farrd="$(hx 15 11)"   # _farrd follows _start (two 7-byte bcall slots + ret = 15 B of _HOME)
+farrd="$(hx 13 11)"   # _farrd follows _start (two 6-byte bcall slots + ret = 13 B of _HOME)
 echo "  _start  (phys 0x02100): $home"
 echo "  _b1fn   (phys 0x08000): $b1"
 echo "  _b2fn   (phys 0x10000): $b2"
 echo "  _ftbl   (phys 0x18800): $fdata"
-echo "  _farrd  (phys 0x0210f): $farrd"
+echo "  _farrd  (phys 0x0210d): $farrd"
 fail=0
-case "$home" in "ce c4 01 ff f2"*) echo "  ok  bcall _b1fn -> ld nb,#1 ; nop ; carl";; *) echo "  FAIL bcall _b1fn bank/slot"; fail=1;; esac
+case "$home" in "ce c4 01 f2"*) echo "  ok  bcall _b1fn -> ld nb,#1 ; carl (6-byte slot)";; *) echo "  FAIL bcall _b1fn bank/slot"; fail=1;; esac
 case "$b1"   in "b0 11 f8")        echo "  ok  _b1fn placed in bank 1 (ld a,#0x11 ; ret)";;  *) echo "  FAIL _b1fn placement"; fail=1;; esac
 case "$b2"   in "b0 22 f8")        echo "  ok  _b2fn placed in bank 2 (ld a,#0x22 ; ret)";;  *) echo "  FAIL _b2fn placement"; fail=1;; esac
 case "$fdata" in "a5 5a")          echo "  ok  __far data at its physical address (0x18800)";; *) echo "  FAIL __far data placement"; fail=1;; esac

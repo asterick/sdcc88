@@ -61,23 +61,75 @@
                                          outchk(2, 4);
                                          out_txb(2, esp->e_addr);
                                          if (esp->e_flag) {
+@@ -683,6 +683,52 @@
+         dot.s_addr += 2;
+ }
+ 
++/*)Function     VOID    outr1be(esp, r)
++ *
++ *              expr *  esp             pointer to expr structure
++ *              int     r               relocation mode (an escape mode, e.g.
++ *                                      R_S1C88_BANK)
++ *
++ * sdcc88: emit a SINGLE in-place relocation byte carrying an escape relocation
++ * mode, bypassing the s1c88 24-bit byte-select path that outrb()/outrxb() force
++ * (that path writes a 3-byte placeholder the linker collapses to 1, which
++ * desyncs an immediately-following relocation).  Used for the banked-branch NB
++ * bank byte so the slot is 6 bytes (ld nb,#bank ; <branch> disp16) — see
++ * sdas/as88/s1c88mch.c (S_PJUMP/S_PCALL) and lkrloc3.c (R_S1C88_BANK).
++ */
++VOID
++outr1be(struct expr *esp, int r)
++{
++        int n;
++
++        if (pass == 2) {
++                if (esp->e_flag == 0 && esp->e_base.e_ap == NULL) {
++                        /* absolute target: the NB bank byte is (value >> 16) */
++                        out_lxb(1, esp->e_addr >> 16, 0);
++                        if (oflag) {
++                                outchk(1, 0);
++                                out_txb(1, esp->e_addr >> 16);
++                        }
++                } else {
++                        r |= R_BYTE | esp->e_rlcf;
++                        out_lb(lobyte(esp->e_addr), r | R_RELOC);
++                        if (oflag) {
++                                outchk(1, 5);
++                                out_txb(1, esp->e_addr);  /* placeholder; linker writes the bank */
++                                if (esp->e_flag) {
++                                        n = esp->e_base.e_sp->s_ref;
++                                        r |= R_SYM;
++                                } else {
++                                        n = esp->e_base.e_ap->a_ref;
++                                }
++                                write_rmode(r, txtp - txt - 1);
++                                out_rw(n);
++                        }
++                }
++        }
++        dot.s_addr += 1;
++}
++
+ /*)Function     VOID    outr3b(esp, r)
+  *
+  *              expr *  esp             pointer to expr structure
 --- a/sdas/linksrc/lkrloc3.c
 +++ b/sdas/linksrc/lkrloc3.c
-@@ -370,6 +370,35 @@
+@@ -370,6 +370,33 @@
                          reli = a[rindex]->a_addr;
                  }
  
 +/* sdcc88: S1C88 banked-branch bank field (R_S1C88_BANK = 0x800).  The slot is
-+ *   CE C4 [bank] [pad] <carl|jrl> <disp16>
-+ * with the [bank][pad] 2-byte field at rtp..rtp+1 (the 24-bit reloc path emits
-+ * a_bytes=2 placeholder bytes).  Write the target's code bank into [bank] (its
-+ * linker address >> 16, code areas placed at (bank<<16)|logic) and a NOP (FF)
-+ * into [pad] — yielding `ld nb,#bank ; nop ; <branch>`.  When that bank is 0
-+ * (common area) or the current area's bank, NOP the whole `ld nb`+pad instead
-+ * (CE C4 at rtp-2..rtp-1 plus the field) so no bank switch happens — but ONLY
-+ * when those two bytes are inside THIS T line (rtp-2 >= rtofst): the slot can
-+ * be split across T lines, leaving CE C4 at the end of the PREVIOUS (already
-+ * emitted) record; rtp-2 would then index this record's ADDRESS bytes,
++ *   CE C4 [bank] <carl|jrl> <disp16>
++ * with [bank] a SINGLE in-place byte at rtp (sdas88 emits it via outr1be(), 6
++ * bytes total).  Write the target's code bank into [bank] (its linker address
++ * >> 16, code areas placed at (bank<<16)|logic) — yielding `ld nb,#bank ;
++ * <branch>`.  When that bank is 0 (common area) or the current area's bank, NOP
++ * the whole `ld nb` instead (CE C4 [bank] at rtp-2..rtp) so no bank switch
++ * happens — but ONLY when CE C4 are inside THIS T line (rtp-2 >= rtofst): the
++ * slot can split across T lines, leaving CE C4 at the end of the PREVIOUS
++ * (already emitted) record; rtp-2 would then index this record's ADDRESS bytes,
 + * corrupting its output address to 0xFFxxxx.  The fallback `ld nb,#tbank` is
 + * always semantically correct (branches copy NB->CB, and RET/RETE restore
 + * NB = CB = popped byte) — it merely keeps a redundant bank switch. */
@@ -85,7 +137,6 @@
 +                        int tbank = (int) ((reli >> 16) & 0xFF);
 +                        int cbank = (int) (((pc + (rtp - rtofst)) >> 16) & 0xFF);
 +                        /* Leave rtflg set on these bytes so lkout() emits them. */
-+                        rtval[rtp+1] = 0xFF;            /* pad -> nop */
 +                        if ((tbank == 0 || tbank == cbank) && rtp - 2 >= (int) rtofst) {
 +                                rtval[rtp-2] = 0xFF;    /* nop (was CE)   */
 +                                rtval[rtp-1] = 0xFF;    /* nop (was C4)   */

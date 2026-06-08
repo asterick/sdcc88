@@ -1572,7 +1572,11 @@ int s1c88instructionSize(lineNode *pl)
     return(3);
 
   /* banked pseudo-ops: the linker resolves them into at most
-     ld nb, #bank + carl (the 6-byte worst-case slot) */
+     ld nb, #bank + carl/jrl (the 6-byte worst-case slot — basic conditions
+     only; sdas88 emits the NB bank byte as a single in-place reloc).
+     NOTE: this size MUST equal what the assembler actually emits — a mismatch
+     silently corrupts branch-range decisions.  scripts/insn-size-check.sh
+     guards the contract; update both together. */
   if(ISINST(pl->line, "bcall") || ISINST(pl->line, "bjump"))
     return(6);
 

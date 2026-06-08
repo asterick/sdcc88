@@ -147,6 +147,10 @@ extern	int	addr();
 extern	int	admode();
 extern	int	srch();
 
+	/* asout.c (sdcc88 addition) — 1-byte in-place escape relocation, used for
+	   the banked-branch NB bank byte (see machine() S_PJUMP/S_PCALL). */
+extern	VOID	outr1be(struct expr *esp, int r);
+
 	/* s1c88mch.c */
 extern	VOID	machine();
 extern	VOID	minit();
