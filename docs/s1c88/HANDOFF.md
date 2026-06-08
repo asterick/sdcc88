@@ -3,7 +3,7 @@
 **This is the single resume entry point.** If the prompt is *"let's pick up where you left off,"* do the
 steps under **NEXT ACTION**. Everything needed to continue is here or linked from here.
 
-_Last updated: 2026-06-07._
+_Last updated: 2026-06-08._
 
 > **▶ The forward-looking work list is [`TODO.md`](TODO.md).** The critical path to a *usable* toolchain
 > (TODO Section A) is **DONE** — `sdcc -ms1c88 game.c && romgen game.ihx game.min` builds a bootable
@@ -39,12 +39,14 @@ _Last updated: 2026-06-07._
    and **`scripts/diff-test.sh`** (host-vs-emulator). corpus-check proves asm is *stable*; emu-test +
    diff-test prove it *computes the right values*. **Run all three for every codegen change**, and add
    an emu/diff case whenever you touch new codegen territory (each new module has found real bugs).
-2. **Next priority — keep mining with the differential suite (#11).** It has found ~9 real reachable
-   miscompiles that byte-identical assembly never could; the untested integer/pointer territory is where
-   the next correctness bugs live: **long long (currently unverified)**, bitfield-heavy code, and deep
-   call chains. Add a `tests/diff/cases/*.c` module, run corpus-check + emu-test + diff-test, fix what it
-   surfaces. After that, the code-size/speed work — the branch-relaxation lift (#14; #13 prerequisite done) and
-   peephole/cost tuning (#12) — plus the Section C limitation audit (#16, #17).
+2. **Open work — see [`TODO.md`](TODO.md) for the pointable-target menu.** Mining (#11) keeps paying out —
+   this round it found+fixed the long-long/struct **return-ABI off-by-one** and surfaced a narrow
+   **pointer-compare miscompile** (`#11-ptrcmp-bug`, still open). long long, unions, and pointer arithmetic
+   are now verified; **`#11-bitfields` is the next high-bug-risk module**. Code size is now measurable
+   (`scripts/size-check.sh`, #12-sizeharness done), so the peephole/cost targets (`#12-redundant-moves`,
+   `#12-flag-reuse`, …) and the **branch-relaxation lift (#14, broken into #14a/b/c)** are ready to pick up.
+   Section C (#16 traps, #17 const-data) is done (documented + guarded). The z80-artifact scrub is B+C done,
+   A/D/F deferred (#20).
 3. **Deprioritized — float is low-value for this target.** The one known correctness bug is the `_fsadd`
    different-sign miscompile (all float subtraction): `10.0-4.0` → `0x40C00182` not `0x40C00000`. It's a
    register-pressure / spill bug in the full `_fsadd` compile (algorithm + isolated 32-bit ops are
@@ -94,7 +96,7 @@ whenever branch emission or the linker patch changes.
 - `./scripts/size-check.sh` — corpus ROM-size measurement + delta vs `scripts/corpus/sizes.baseline`
   (report-only; `snapshot` to re-bless). The yardstick for #12 (peephole/cost) and #14 (relaxation) wins.
 - `./scripts/emu-test.sh` — RUN `tests/emu/cases/*.c` on the vendored minimon core (16/16). Execution truth.
-- `./scripts/diff-test.sh` — compile the same C host-vs-emulator and diff the output (5 modules).
+- `./scripts/diff-test.sh` — compile the same C host-vs-emulator and diff the output (8 modules).
 - `./scripts/validate-s1c88.sh <file.asm>` — assemble emitted codegen with `sdas88`; any reject = a z80-ism.
 - `./scripts/branch-smoke.sh` — byte-lock the branch displacement convention (above).
 - `./scripts/setup-sdk.sh` — build the whole toolchain from a clean checkout (compiler → sdcpp → sdas88 →

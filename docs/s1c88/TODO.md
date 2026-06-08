@@ -1,6 +1,6 @@
 # sdcc88 TODO — toward a usable toolchain
 
-Status snapshot (2026-06-07): **THE CRITICAL PATH (Section A) IS DONE — the toolchain is usable.**
+Status snapshot (2026-06-08): **THE CRITICAL PATH (Section A) IS DONE — the toolchain is usable.**
 `scripts/setup-sdk.sh` builds everything in one command; `sdcc -ms1c88 game.c -o game.ihx && romgen
 game.ihx game.min` produces a bootable Pokémon Mini ROM, with the production `crt0` (real `"PM"`/
 `"NINTENDO"` header), the auto-linked `s1c88.lib`, the `<pm.h>` device header, and a C `romgen` (no
@@ -198,7 +198,7 @@ Legend: **S/M/L** = rough effort. Items are roughly dependency-ordered within ea
     stream — one test point per case, with per-assertion `#` diagnostics (emu `CHECK` failures), a `1..N`
     plan, and a summary; exits non-zero on any failure. The case-suites gained an opt-in `TAP=1` mode
     (clean `ok`/`not ok` body on stdout, build noise to stderr); their default human output is unchanged.
-    38 points green.
+    46 points green.
 
 ---
 
