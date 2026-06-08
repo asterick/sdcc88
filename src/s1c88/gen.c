@@ -1,5 +1,5 @@
 /*-------------------------------------------------------------------------
-  gen.c - code generator for Z80 and related.
+  gen.c - code generator for the Epson S1C88 (sdcc88; derived from the z80 port).
 
   Copyright (C) 1998, Sandeep Dutta . sandeep.dutta@usa.net
   Copyright (C) 1999, Jean-Louis VERN.jlvern@writeme.com
@@ -62,7 +62,7 @@ typedef enum
   PAIR_HL,
   PAIR_IY,
   PAIR_IX,
-  PAIR_BA,        // S1C88 B:A — the 2nd ALU pair (replaces z80 DE as 16-bit scratch)
+  PAIR_BA,        // S1C88 B:A — the 2nd ALU pair (16-bit scratch)
   NUM_PAIRS
 } PAIR_ID;
 
@@ -239,7 +239,7 @@ static struct asmop *const ASMOP_L = &asmop_l;
 static struct asmop *const ASMOP_IYH = &asmop_iyh;
 static struct asmop *const ASMOP_IYL = &asmop_iyl;
 static struct asmop *const ASMOP_HL = &asmop_hl;
-static struct asmop *const ASMOP_BA = &asmop_ba;   /* S1C88 2nd ALU pair B:A (z80 DE's role) */
+static struct asmop *const ASMOP_BA = &asmop_ba;   /* S1C88 2nd ALU pair B:A */
 static struct asmop *const ASMOP_IY = &asmop_iy;
 static struct asmop *const ASMOP_HLBA = &asmop_hlba;   /* S1C88 long layout HL(high):BA(low) */
 static struct asmop *const ASMOP_HLA = &asmop_hla;     /* 3-byte __far pointer: offset in HL, page in A (Epson HLP) */
@@ -249,12 +249,12 @@ static struct asmop *const ASMOP_MONE = &asmop_mone;
 
 /* Indexed by register ordinal (asmopregs[idx]); order matches ralloc.h. */
 static asmop *asmopregs[] = { &asmop_a, &asmop_b, &asmop_l, &asmop_h,
-  0, 0, 0, /* the z80 C/D/E ordinals — never allocated, no asmop */
+  0, 0, 0, /* the dropped C/D/E ordinals — never allocated, no asmop */
   &asmop_iyl, &asmop_iyh };
 
 // Init aop as a an asmop for data in registers, as given by the -1-terminated array regidx.
 static void
-z80_init_reg_asmop(asmop *aop, const signed char *regidx)
+s1c88_init_reg_asmop(asmop *aop, const signed char *regidx)
 {
   aop->type = AOP_REG;
   aop->size = 0;
@@ -273,17 +273,17 @@ z80_init_reg_asmop(asmop *aop, const signed char *regidx)
 void
 s1c88_init_asmops (void)
 {
-  z80_init_reg_asmop(&asmop_a, (const signed char[]){A_IDX, -1});
-  z80_init_reg_asmop(&asmop_b, (const signed char[]){B_IDX, -1});
-  z80_init_reg_asmop(&asmop_h, (const signed char[]){H_IDX, -1});
-  z80_init_reg_asmop(&asmop_l, (const signed char[]){L_IDX, -1});
-  z80_init_reg_asmop(&asmop_iyh, (const signed char[]){IYH_IDX, -1});
-  z80_init_reg_asmop(&asmop_iyl, (const signed char[]){IYL_IDX, -1});
-  z80_init_reg_asmop(&asmop_ba, (const signed char[]){A_IDX, B_IDX, -1});   // BA = A(low):B(high)
-  z80_init_reg_asmop(&asmop_hl, (const signed char[]){L_IDX, H_IDX, -1});
-  z80_init_reg_asmop(&asmop_iy, (const signed char[]){IYL_IDX, IYH_IDX, -1});
-  z80_init_reg_asmop(&asmop_hlba, (const signed char[]){A_IDX, B_IDX, L_IDX, H_IDX, -1});   // long = BA(low):HL(high)
-  z80_init_reg_asmop(&asmop_hla, (const signed char[]){L_IDX, H_IDX, A_IDX, -1});   // __far ptr = offset(HL):page(A)
+  s1c88_init_reg_asmop(&asmop_a, (const signed char[]){A_IDX, -1});
+  s1c88_init_reg_asmop(&asmop_b, (const signed char[]){B_IDX, -1});
+  s1c88_init_reg_asmop(&asmop_h, (const signed char[]){H_IDX, -1});
+  s1c88_init_reg_asmop(&asmop_l, (const signed char[]){L_IDX, -1});
+  s1c88_init_reg_asmop(&asmop_iyh, (const signed char[]){IYH_IDX, -1});
+  s1c88_init_reg_asmop(&asmop_iyl, (const signed char[]){IYL_IDX, -1});
+  s1c88_init_reg_asmop(&asmop_ba, (const signed char[]){A_IDX, B_IDX, -1});   // BA = A(low):B(high)
+  s1c88_init_reg_asmop(&asmop_hl, (const signed char[]){L_IDX, H_IDX, -1});
+  s1c88_init_reg_asmop(&asmop_iy, (const signed char[]){IYL_IDX, IYH_IDX, -1});
+  s1c88_init_reg_asmop(&asmop_hlba, (const signed char[]){A_IDX, B_IDX, L_IDX, H_IDX, -1});   // long = BA(low):HL(high)
+  s1c88_init_reg_asmop(&asmop_hla, (const signed char[]){L_IDX, H_IDX, A_IDX, -1});   // __far ptr = offset(HL):page(A)
   
   asmop_zero.type = AOP_LIT;
   asmop_zero.aopu.aop_lit = constVal ("0");
@@ -588,7 +588,7 @@ isPairDead (PAIR_ID id, const iCode * ic)
 static PAIR_ID
 getDeadPairId (const iCode *ic)
 {
-  /* S1C88: BA is the only dead-able scratch pair besides HL (no z80 BC/DE). */
+  /* S1C88: BA is the only dead-able scratch pair besides HL. */
   if (isPairDead (PAIR_BA, ic))
     {
       return PAIR_BA;
@@ -603,7 +603,7 @@ static PAIR_ID
 getFreePairId (const iCode *ic)
 {
   /* S1C88: the only general-purpose scratch pair besides HL is BA (the 2nd ALU
-     pair). The z80 BC/DE don't exist; isPairInUse(PAIR_BA) tests A and B, so
+     pair). isPairInUse(PAIR_BA) tests A and B, so
      this won't hand out BA while A (the accumulator) or B is live. */
   if (!isPairInUse (PAIR_BA, ic))
     {
@@ -742,7 +742,7 @@ getPairId (const asmop *aop)
 /* The S1C88's two 16-bit ALU pairs are HL and BA (only these have the full
    ADD/ADC/SUB/SBC/CP cross-product). Return which one the 2-byte chunk at
    `offset` occupies, or PAIR_INVALID. Unlike getPairId_o this recognizes BA
-   (A low, B high), which the z80-inherited helpers do not. */
+   (A low, B high), which the generic helpers do not. */
 static PAIR_ID
 aluPairId (const asmop *aop, int offset)
 {
@@ -796,9 +796,7 @@ ld_cost (const asmop *op1, int offset1, const asmop *op2, int offset2, bool coun
       switch (op2type)
         {
         case AOP_REG:
-          // ld r, r is dangerous, since support for it is inconsistent even among otherwise binary-compatible Rabbit devices.
           
-          // eZ80 ld r, ir / ld ir, r / ld ir, ir
           if (op1->aopu.aop_reg[offset1]->rIdx == IYL_IDX || op1->aopu.aop_reg[offset1]->rIdx == IYH_IDX ||
             op2->aopu.aop_reg[offset2]->rIdx == IYL_IDX || op2->aopu.aop_reg[offset2]->rIdx == IYH_IDX)
             {
@@ -1024,7 +1022,7 @@ op8_cost (const asmop *op, int offset)
   switch (op->type)
     {
     case AOP_REG:
-      if (op->aopu.aop_reg[offset]->rIdx == IYL_IDX || op->aopu.aop_reg[offset]->rIdx == IYH_IDX) // eZ80
+      if (op->aopu.aop_reg[offset]->rIdx == IYL_IDX || op->aopu.aop_reg[offset]->rIdx == IYH_IDX)
         {
           wassert (HAS_IYL_INST);
           cost (2, 2);
@@ -1070,7 +1068,7 @@ incdec_cost (const asmop *op, int offset)
   switch (op->type)
     {
     case AOP_REG:
-      if (op->aopu.aop_reg[offset]->rIdx == IYL_IDX || op->aopu.aop_reg[offset]->rIdx == IYH_IDX) // eZ80, r800
+      if (op->aopu.aop_reg[offset]->rIdx == IYL_IDX || op->aopu.aop_reg[offset]->rIdx == IYH_IDX)
         {
           wassert (HAS_IYL_INST);
           cost (2, 2);
@@ -1484,7 +1482,7 @@ _push (PAIR_ID pairId)
       /* The S1C88 has no AF register. Save A and the flag register (SC)
          separately — PUSH leaves all flags unchanged, so `push a` doesn't
          disturb the flags that `push sc` then saves. 2 bytes on the stack,
-         matching z80 `push af`. */
+         matching the S1C88 frame layout. */
       emit2 ("push a");
       cost2 (2, 11, 11, 10, 16, 8, 3, 4);
       emit2 ("push sc");
@@ -1532,8 +1530,7 @@ static void
 genMovePairPair (PAIR_ID srcPair, PAIR_ID dstPair)
 {
   /* S1C88: the 16-bit transfers are fully orthogonal — LD dst, src exists
-     for every pair combination of BA/HL/IX/IY (2 bytes, 2 cycles).  The z80
-     needed push/pop or byte-halves here. */
+     for every pair combination of BA/HL/IX/IY (2 bytes, 2 cycles). */
   wassertl (srcPair != PAIR_AF && dstPair != PAIR_AF, "AF is not a transfer pair on the S1C88");
   emit2 ("ld %s, %s", _pairs[dstPair].name, _pairs[srcPair].name);
   cost2 (2, 0, 0, 0, 0, 0, 0, 0);
@@ -1583,7 +1580,7 @@ aopForSym (const iCode * ic, symbol * sym, bool requires_a)
     {
       /* The pointer that is used depends on how big the offset is.
          Normally everything is AOP_STK, but for offsets of < -128 or
-         > 127 on the Z80 an extended stack pointer is used.
+         > 127 an extended stack pointer is used.
        */
       if ((_G.omitFramePtr || sym->stack < INT8MIN || sym->stack > (int) (INT8MAX - getSize (sym->type))))
         {
@@ -1613,8 +1610,8 @@ aopForSym (const iCode * ic, symbol * sym, bool requires_a)
     }
 
   /* S1C88: __sfr space falls through to the ordinary absolute-memory aops —
-     the hardware registers are memory-mapped (no z80-style I/O space), so
-     AOP_SFR (z80 in/out codegen) is never created. */
+     the hardware registers are memory-mapped (no separate I/O space), so
+     AOP_SFR is never created. */
 
   /* only remaining is far space */
   /* in which case DPTR gets the address */
@@ -2030,7 +2027,7 @@ aopRet (sym_link *ftype)
     return (0);
 
   /* S1C88: every calling convention returns in the native registers — the
-     legacy z80 sdcccall(0)/smallc/fastcall register sets (L/HL/DEHL) named
+     legacy sdcccall(0)/smallc/fastcall register sets (L/HL/DEHL) named
      bytes that don't exist here.  Both caller and callee read aopRet, so the
      mapping stays consistent. */
   switch (size)
@@ -2038,11 +2035,11 @@ aopRet (sym_link *ftype)
     case 1:
       return (ASMOP_A);
     case 2:
-      return ASMOP_BA;  // S1C88: int/short returned in BA (was z80 DE)
+      return ASMOP_BA;  // S1C88: int/short returned in BA
     case 3:
       return (ASMOP_HLA);   // S1C88: __far pointer returned offset-in-HL, page-in-A (Epson HLP)
     case 4:
-      return (ASMOP_HLBA);  // S1C88: long returned in HL:BA (was z80 HL:DE)
+      return (ASMOP_HLBA);  // S1C88: long returned in HL:BA
     default:
       return 0;
     }
@@ -2157,8 +2154,7 @@ aopArg (sym_link *ftype, int i)
 
   if (FUNC_ISZ88DK_FASTCALL (ftype))
     {
-      /* S1C88: the fastcall argument uses the native registers (the z80 set
-         named DEHL). */
+      /* S1C88: the fastcall argument uses the native registers. */
       if (i != 1 || IS_STRUCT (args->type))
         return 0;
 
@@ -2222,7 +2218,7 @@ isFuncCalleeStackCleanup (sym_link *ftype)
     return true;
 
   /* S1C88 maximum mode: the return frame is 3 bytes (PCL PCH CB) and only
-     RET can consume it (a jp can't restore CB), so the z80 callee-cleanup
+     RET can consume it (a jp can't restore CB), so the callee-cleanup
      epilogue tricks (pop hl ... jp hl) don't exist here. The CALLER cleans
      up stack parameters by default; only an explicit __z88dk_callee opts a
      function into the (bulkier) 3-byte frame-hop epilogue. */
@@ -2585,7 +2581,7 @@ makeFreePairId (const iCode * ic, bool * pisUsed)
 {
   *pisUsed = FALSE;
 
-  /* S1C88: BA is the only scratch pair besides HL (no z80 BC/DE). */
+  /* S1C88: BA is the only scratch pair besides HL. */
   if (ic != NULL && !bitVectBitValue (ic->rMask, A_IDX) && !bitVectBitValue (ic->rMask, B_IDX))
     return PAIR_BA;
 
@@ -2623,7 +2619,7 @@ fetchPairLong (PAIR_ID pairId, asmop *aop, const iCode *ic, int offset)
         }
 
       /* S1C88: a non-HL ALU-pair request computes in HL inside an `ex ba, hl`
-         pivot (EX always goes through BA; the z80 used the same trick with DE).
+         pivot (EX always goes through BA).
          The ld/add between the swaps touch neither A nor B. */
       wassert (pairId == PAIR_HL || pairId == PAIR_BA);
       if (pairId == PAIR_BA)
@@ -2670,8 +2666,7 @@ fetchPairLong (PAIR_ID pairId, asmop *aop, const iCode *ic, int offset)
           emit2 ("ld %s, %d (sp)", _pairs[pairId].name, sp_offset);
           cost (3, 6);
         }
-      /* Getting the parameter by a pop / push sequence is cheaper when we have a free pair (except for the Rabbit, which has an even cheaper sp-relative load).
-         SM83 is nearly twice as fast doing it byte by byte, but that's a byte bigger.
+      /* Getting the parameter by a pop / push sequence is cheaper when we have a free pair.
          Stack allocation can change after register allocation, so assume this optimization is not possible for the allocator's cost function (unless the stack location is for a parameter). */
       else if (aop->size - offset >= 2 && (aop->type == AOP_STK || aop->type == AOP_EXSTK) && (!regalloc_dry_run || aop->aopu.aop_stk > 0) && (aop->aopu.aop_stk + offset + _G.stack.offset + (aop->aopu.aop_stk > 0 ? _G.stack.param_offset : 0) + _G.stack.pushed) == 2 && ic && getFreePairId (ic) != PAIR_INVALID && getFreePairId (ic) != pairId)
         {
@@ -2740,7 +2735,6 @@ fetchPairLong (PAIR_ID pairId, asmop *aop, const iCode *ic, int offset)
         }
       else if (pairId == PAIR_IY)
         {
-          /* The Rabbit has the ld iy, n (sp) instruction. */
           int fp_offset = aop->aopu.aop_stk + offset + (aop->aopu.aop_stk > 0 ? _G.stack.param_offset : 0);
           int sp_offset = fp_offset + _G.stack.pushed + _G.stack.offset;
           if (isPair (aop))
@@ -2772,7 +2766,6 @@ fetchPairLong (PAIR_ID pairId, asmop *aop, const iCode *ic, int offset)
         }
       else
         {
-          /* The Rabbit has the ld hl, n (sp) and ld hl, n (ix) instructions. */
           int fp_offset = aop->aopu.aop_stk + offset + (aop->aopu.aop_stk > 0 ? _G.stack.param_offset : 0);
           int sp_offset = fp_offset + _G.stack.pushed + _G.stack.offset;
           if (!regalloc_dry_run && !strcmp (aopGet (aop, offset + 1, FALSE), _pairs[pairId].l))    // aopGet (aop, offset + 1, FALSE) is problematic: It prevents calculation of exact cost, and results in redundant code being generated. Todo: Exact cost
@@ -2784,7 +2777,6 @@ fetchPairLong (PAIR_ID pairId, asmop *aop, const iCode *ic, int offset)
               emit2 ("ld %s, a", _pairs[pairId].l);
               ld_cost (ASMOP_L, 0, ASMOP_A, 0, true);
             }
-          /* The Rabbit's cast to bool is a cheap way of zeroing h (similar to xor a, a for a for the Z80). */
           else {
               if (pairId == PAIR_HL && (aopInReg (aop, offset, IYL_IDX) || aopInReg (aop, offset, IYH_IDX)))
                 UNIMPLEMENTED;
@@ -2937,7 +2929,7 @@ setupPair (PAIR_ID pairId, asmop *aop, int offset)
       break;
 
     case AOP_EXSTK:
-      wassertl (pairId == PAIR_IY || pairId == PAIR_HL, "The Z80 extended stack must be in IY or HL");
+      wassertl (pairId == PAIR_IY || pairId == PAIR_HL, "The extended stack must be in IY or HL");
 
       {
         int offset = aop->aopu.aop_stk + _G.stack.offset;
@@ -3070,7 +3062,7 @@ aopGet (asmop *aop, int offset, bool bit16)
           break;
 
         case AOP_DIR:
-          wassert (0); // AOP_DIR: SM83 direct space, unused on the S1C88
+          wassert (0); // AOP_DIR: direct space, unused on the S1C88
           emit2 ("ld a, (%s+%d)", aop->aopu.aop_dir, offset);
           cost2 (3, 13, 12, 9, 16, 10, 4, 4);
           dbuf_append_char (&dbuf, 'a');
@@ -3142,7 +3134,7 @@ aopGet (asmop *aop, int offset, bool bit16)
 
         case AOP_PAIRPTR:
           /* S1C88: IX/IY use the displacement form relative to the fixed base
-             set by shiftIntoPair — the pair is never moved (the z80 move-
+             set by shiftIntoPair — the pair is never moved (the move-
              protocol plus an offset displacement double-applied the offset).
              HL has no displacement form, so it keeps the move-protocol. */
           if (aop->aopu.aop_pairId == PAIR_IX)
@@ -3236,7 +3228,7 @@ aopPut (asmop *aop, const char *s, int offset)
 
     case AOP_DIR:
       /* Direct.  Hmmm. */
-      wassert (0); // AOP_DIR: SM83 direct space, unused on the S1C88
+      wassert (0); // AOP_DIR: direct space, unused on the S1C88
       if (strcmp (s, "a"))
         emit2 ("ld a, %s", s);
       emit2 ("ld (%s+%d),a", aop->aopu.aop_dir, offset);
@@ -3464,7 +3456,6 @@ cheapMove (asmop *to, int to_offset, asmop *from, int from_offset, bool a_dead)
         return;
 
       if (!index ||
-        // eZ80 can assign between any byte of an index register and any non-hl register.
         HAS_IYL_INST && !aopInReg (to, to_offset, L_IDX) && !aopInReg (to, to_offset, H_IDX) && !aopInReg (from, from_offset, L_IDX) && !aopInReg (from, from_offset, H_IDX))
         {
           if (!regalloc_dry_run)
@@ -3531,7 +3522,7 @@ cheapMove (asmop *to, int to_offset, asmop *from, int from_offset, bool a_dead)
     }
 
   /* S1C88 access to an IY half (IX/IY are not byte-addressable).  Two legal
-     idioms replace the z80 `push iy / ex (sp), hl` machinery:
+     idioms replace the index-register stack machinery:
        - the BA pivot `ex ba, iy; <ld between A/B and L/H>; ex ba, iy` — fully
          self-restoring (BA, the other IY half, everything) but only usable
          when the partner byte is L or H (A/B are overwritten between swaps);
@@ -3640,7 +3631,7 @@ commitPair (asmop *aop, PAIR_ID id, const iCode *ic, bool dont_destroy) // Obsol
   if (!regalloc_dry_run && (aop->type == AOP_STK || aop->type == AOP_EXSTK) && !sp_offset
       && ((id == PAIR_HL) || id == PAIR_IY) && !dont_destroy)
     {
-      /* S1C88: direct SP-relative pair store (the z80 ex (sp),%s side effect
+      /* S1C88: direct SP-relative pair store,%s side effect
          of loading the old stack word was unused — the pair is spilled). */
       emit2 ("ld 0 (sp), %s", _pairs[id].name);
       cost2 (3, 0, 0, 0, 0, 0, 0, 0);
@@ -3661,7 +3652,7 @@ commitPair (asmop *aop, PAIR_ID id, const iCode *ic, bool dont_destroy) // Obsol
 
   else if (id == PAIR_HL && requiresHL (aop) && (IY_RESERVED && aop->type != AOP_HL && aop->type != AOP_IY))
     {
-      /* S1C88: stage through A and B (the z80 used D); save a live B. */
+      /* S1C88: stage through A and B; save a live B. */
       bool save_b = ic && !isRegDead (B_IDX, ic);
       if (save_b)
         {
@@ -3930,9 +3921,7 @@ genCopy (asmop *result, int roffset, asmop *source, int soffset, int sizex, bool
   // Now do the register shuffling.
 
   // Try to use:
-  // Rabbits: ld hl, iy; ld iy, hl
   // TLCS-90 ld rr, rr
-  // eZ80 lea rr, iy.
   // All: push rr / pop iy
   // All: push iy / pop rr
   for (int i = 0; i + 1 < n; i++)
@@ -4003,7 +3992,7 @@ skip_byte:
 
       /* S1C88: the accumulator-cache trick below is unsound when A itself is
          inside the permutation cycle — `ld a, <src>` destroys A's old value
-         before the byte sourced FROM A is read.  (Latent in the z80 original
+         before the byte sourced FROM A is read.  (Latent in the original
          too, but the BA-first argument ABI makes the plain A<->B swap common
          here: a temp allocated {B,A} sent to the BA argument register used to
          have its swap silently DROPPED, crossing the argument bytes — caught
@@ -4070,7 +4059,6 @@ skip_byte:
     }
   genCopyStack (result, roffset, source, soffset, n, assigned, &size, a_free, hl_free, false);
 
-  // Take de from stack first on Rabbit, while hl is still free, so we can do with just one ex de, hl.
   
   
   // Last, move everything else from stack to registers.
@@ -4115,7 +4103,7 @@ skip_byte:
           size -= 2;
           i += 2;
         }
-      else if (i + 1 < n && !assigned[i + 1] && (source->type == AOP_STK || source->type == AOP_EXSTK) && sp_offset == 2 && getPairId_o (result, roffset + i) != PAIR_INVALID && getPairId_o (result, roffset + i) != PAIR_HL && hl_free && (!regalloc_dry_run || source->aopu.aop_stk > 0) && !optimize.codeSpeed) // A bit slower, so don't do it when optimizing for speed. HL is the only possible extrapair (the z80 DE arm picked a phantom pair).
+      else if (i + 1 < n && !assigned[i + 1] && (source->type == AOP_STK || source->type == AOP_EXSTK) && sp_offset == 2 && getPairId_o (result, roffset + i) != PAIR_INVALID && getPairId_o (result, roffset + i) != PAIR_HL && hl_free && (!regalloc_dry_run || source->aopu.aop_stk > 0) && !optimize.codeSpeed) // A bit slower, so don't do it when optimizing for speed. HL is the only possible extrapair.
         {
           PAIR_ID pair = getPairId_o (result, roffset + i);
           PAIR_ID extrapair = PAIR_HL;
@@ -4491,15 +4479,15 @@ adjustStack (int n, bool af_free, bool hl_free, bool iy_free)
   _G.stack.pushed -= n;
 
 
-  /* S1C88: move SP with native ops. The z80 idiom this function otherwise emits
+  /* S1C88: move SP with native ops. The classic stack-adjust idiom this function otherwise emits
      (push/pop af, pop bc/de, inc/dec sp) is illegal or flag-unsafe here — there
-     is no AF/BC/DE register, and unlike the z80 even inc/dec sp set Z C V N.
+     is no AF/BC/DE register, and even inc/dec sp set Z C V N.
        - reserve (n<0): push a filler pair/byte. PUSH leaves flags untouched and
          needs no free register (the pushed value is overwritten before use), so
          this is always valid regardless of register pressure.
        - free (n>0): when flags are dead, one `add sp,#n` (signed 16-bit imm,
          either direction); otherwise pop into a genuinely-free pair (HL/IY) to
-         preserve flags. (The z80 version also took `de_free`/`bc_free` hints —
+         preserve flags. (An earlier version also took `de_free`/`bc_free` hints —
          meaningless on the S1C88, removed with the phantom registers.) */
   {
       while (n <= -2)                    /* reserve 2 bytes, flag-safe filler */
@@ -4573,9 +4561,9 @@ outBitC (operand *result)
   else
     {
       emit3 (A_LD, ASMOP_A, ASMOP_ZERO);
-      /* carry -> A bit 0. The S1C88 has no z80 acc-rotate `rla`; use the
+      /* carry -> A bit 0. The S1C88 has no accumulator-rotate `rla`; use the
          operand form `rl a` (same carry-in-to-bit-0; its extra Z/S flag
-         effects are unused here). Valid on the z80/SM83 sub-ports too. */
+         effects are unused here). */
       emit3 (A_RL, ASMOP_A, 0);
       outAcc (result);
     }
@@ -4921,7 +4909,7 @@ _saveRegsForCall (const iCode *ic, bool saveHLifused, bool dontsaveIY)
       const bool call_preserves_b = ftype->funcAttrs.preserved_regs[B_IDX] && !s1c88IsParmInCall(ftype, "b");
       const bool call_preserves_h = ftype->funcAttrs.preserved_regs[H_IDX] && !s1c88IsParmInCall(ftype, "h");
       const bool call_preserves_l = ftype->funcAttrs.preserved_regs[L_IDX] && !s1c88IsParmInCall(ftype, "l");
-      /* S1C88: of the z80 BC/DE bytes only B exists — it gets a 1-byte slot */
+      /* S1C88: of the dropped BC/DE bytes only B exists — it gets a 1-byte slot */
       const bool push_bc = !isRegDead (B_IDX, ic) && !call_preserves_b;
       const bool push_hl = !isRegDead (H_IDX, ic) && (!call_preserves_h || saveHLifused) || !isRegDead (L_IDX, ic) && (!call_preserves_l || saveHLifused);
       const bool push_iy = !dontsaveIY && (!isRegDead (IYH_IDX, ic) || !isRegDead (IYL_IDX, ic));
@@ -4999,7 +4987,7 @@ genIpush (const iCode *ic)
   /* Registers already loaded by preceding SENDs for this same call hold live
      argument values until the call, but a literal/immediate SEND (e.g. a `char`
      arg) creates no live range, so isRegDead() reports the register free here.
-     The z80 base pushed via DE/BC and never touched those regs; the S1C88
+     The S1C88
      pushes via BA, so using A/B as the push vehicle would clobber an
      already-sent argument. Mark the registers held by preceding SENDs occupied
      so they are excluded from the push below. (genSend does the symmetric scan.) */
@@ -5039,7 +5027,7 @@ genIpush (const iCode *ic)
           cost2 (2, 11, 11, 10, 16, 8, 3, 4);
         }
       else {
-          /* all live: stage in L inside a reserved slot (z80: ex (sp), hl) */
+          /* all live: stage in L inside a reserved slot, hl) */
           emit2 ("push hl");                /* the slot */
           cost2 (1, 11, 11, 10, 16, 8, 3, 4);
           emit2 ("push hl");                /* save the live HL */
@@ -5087,7 +5075,7 @@ genIpush (const iCode *ic)
             d = 2;
           }
 #if 0 // Fails regression tests. Simulator issue regarding flags?
-        // gbz80 flag handling differs from other z80 variants, allowing this hack to push a 16-bit zero.
+        // Push a 16-bit zero via the flag-setup hack.
         
 #endif
         else if (size >= 2 &&
@@ -5098,8 +5086,7 @@ genIpush (const iCode *ic)
             /* S1C88: the free-pair candidates are HL and BA (the byte-
                addressable pairs — genMove and the literal loop below can write
                their halves) and the index pair IY (loadable from any source
-               via genMove_o, incl. 16-bit literals — just not byte-writable).
-               The z80 DE/BC scratch pairs are phantom here. */
+               via genMove_o, incl. 16-bit literals — just not byte-writable). */
             asmop *pair = 0;
 
             if (hl_free)
@@ -5165,8 +5152,8 @@ genIpush (const iCode *ic)
          }
        else if (size >= 2)
          {
-           /* All pairs are live. S1C88 has no `ex (sp), hl` (the z80 trick that
-              both stores the value and restores HL): reserve the slot, save the
+           /* All pairs are live. S1C88 has no `ex (sp), hl` (which would
+              both store the value and restore HL): reserve the slot, save the
               live HL with a second push, store through SP, restore HL. */
            emit2 ("push hl");                /* the argument slot */
            cost2 (1, 11, 11, 10, 16, 8, 3, 4);
@@ -5185,8 +5172,7 @@ genIpush (const iCode *ic)
        else if (aopInReg (IC_LEFT (ic)->aop, size - 1, A_IDX) || aopInReg (IC_LEFT (ic)->aop, size - 1, B_IDX) ||
          aopInReg (IC_LEFT (ic)->aop, size - 1, L_IDX) || aopInReg (IC_LEFT (ic)->aop, size - 1, H_IDX))
          {
-           /* S1C88: native 1-byte register push (the z80 needed the
-              push pair / inc sp dance). */
+           /* S1C88: native 1-byte register push. */
            if (!regalloc_dry_run)
              emit2 ("push %s", aopGet (IC_LEFT (ic)->aop, size - 1, FALSE));
            cost2 (2, 11, 11, 10, 16, 8, 3, 4);
@@ -5275,7 +5261,7 @@ genPointerPush (const iCode *ic)
     UNIMPLEMENTED;
 
   /* S1C88: HL is the only walk pointer; a live HL is stashed in a dead IY
-     (the z80 parked it in DE). */
+    . */
   bool stash_hl = !isRegDead (HL_IDX, ic);
   if (stash_hl)
     {
@@ -5302,8 +5288,7 @@ genPointerPush (const iCode *ic)
     {
       if (i + 1 < size && b_free)
         {
-          /* word: high byte -> B, low -> A, push ba (same stack layout as the
-             z80 push bc: high half at the higher address) */
+          /* word: high byte -> B, low -> A, push ba (high half at the higher address) */
           emit2 ("ld b, !*hl");
           cost2 (1, 7, 6, 6, 8, 6, 2, 2);
           emit2 ("dec hl");
@@ -5494,7 +5479,7 @@ genCall (const iCode *ic)
       if (!hl_free && pair == PAIR_HL)
         {
           /* S1C88: stage the buffer address in BA while restoring HL
-             (the z80 used DE/BC). */
+            . */
           wassert (isPairDead (PAIR_BA, ic));
           emit2 ("ld ba, hl");
           cost2 (2, 0, 0, 0, 0, 0, 0, 0);
@@ -5516,7 +5501,7 @@ genCall (const iCode *ic)
   else if (currFunc && !IFFUNC_ISISR (currFunc->type) &&
     !ic->parmBytes &&
     !_G.stack.pushedHL && !_G.stack.pushedBC && !_G.stack.pushedIY && // If for some reason something got pushed, we don't have the return address in place.
-    (!isFuncCalleeStackCleanup (currFunc->type) || !ic->parmEscapeAlive && ic->op == CALL && 0 /* todo: test and enable depending on optimization goal - as done for stm8 - for z80 and r3ka this will be slower and bigger than without tail call optimization, but it saves RAM */) &&
+    (!isFuncCalleeStackCleanup (currFunc->type) || !ic->parmEscapeAlive && ic->op == CALL && 0 /* todo: test and enable depending on optimization goal (trades code size for RAM) */) &&
     !ic->localEscapeAlive &&
     !IFFUNC_ISBANKEDCALL (dtype) && !IFFUNC_ISZ88DK_SHORTCALL (ftype) &&
     (_G.omitFramePtr))
@@ -6127,8 +6112,6 @@ genEndFunction (iCode *ic)
 
   int poststackadjust = isFuncCalleeStackCleanup (sym->type) ? stackparmbytes : 0;
 
-  /* (The z80 "merge both stack adjustments" fast path was RAB/TLCS90-only —
-     dead on the S1C88 — and emitted the illegal `jp (iy)`; removed.) */
   if (!_G.omitFramePtr && sym->stack > (optimize.codeSize ? 2 : 1))
     {
       emit2 ("ld sp, ix");
@@ -6194,7 +6177,7 @@ genEndFunction (iCode *ic)
 
       /* __z88dk_callee, MAXIMUM mode: the return frame is 3 bytes
          (PCL PCH CB) and only RET can consume it (no jp can restore CB),
-         so the z80 pop-and-jp tricks are gone. Move the whole frame up
+         so pop-and-jp epilogue tricks are gone. Move the whole frame up
          over the parameter area byte-by-byte — top byte (CB) first, since
          the regions overlap when poststackadjust < 3 — then drop SP onto
          the moved frame and fall through to the plain ret. A and HL are
@@ -6257,7 +6240,7 @@ genEndFunction (iCode *ic)
          the SC (flags + interrupt-priority mask) and CB:PC that the interrupt
          sequence pushed — restoring the mask automatically, so no `ei` is
          needed (critical or not), and NMI returns the same way. (No reti/retn:
-         those are z80/SM83-only and illegal on the S1C88.) */
+         not present on the S1C88.) */
       (void) is_nmi;
       emit2 ("rete");
       cost2 (2, 14, 12, 12, 16, 14, 6, 5);
@@ -6331,7 +6314,7 @@ genRet (const iCode *ic)
                      `(hl)`), so this works for any frame offset.  `off` is
                      computed after the push so it includes the saved word. */
                   _push (PAIR_HL);
-                  off = _G.stack.offset + _G.stack.param_offset + _G.stack.pushed + (_G.omitFramePtr ? 0 : 3) /* S1C88 MAX mode: 3-byte CB:PC return frame (z80 had 2) */;
+                  off = _G.stack.offset + _G.stack.param_offset + _G.stack.pushed + (_G.omitFramePtr ? 0 : 3) /* S1C88 MAX mode: 3-byte CB:PC return frame */;
                   setupPairFromSP (PAIR_HL, off);
                   emit2 ("ld iy, !*hl");
                   cost2 (2, 14, 12, 8, 0, 6, 4, 4);
@@ -6360,7 +6343,7 @@ genRet (const iCode *ic)
   else if (IC_LEFT (ic)->aop->type == AOP_LIT)
     {
       unsigned long long lit = ullFromVal (IC_LEFT (ic)->aop->aopu.aop_lit);
-      setupPairFromSP (PAIR_HL, _G.stack.offset + _G.stack.param_offset + _G.stack.pushed + (_G.omitFramePtr ? 0 : 3) /* S1C88 MAX mode: 3-byte CB:PC return frame (z80 had 2) */);
+      setupPairFromSP (PAIR_HL, _G.stack.offset + _G.stack.param_offset + _G.stack.pushed + (_G.omitFramePtr ? 0 : 3) /* S1C88 MAX mode: 3-byte CB:PC return frame */);
       emit2 ("!ldahli");
       regalloc_dry_run_cost += 6;
       emit2 ("ld h, !*hl");
@@ -6376,10 +6359,9 @@ genRet (const iCode *ic)
         }
       while (--size);
     }
-  // gbz80 doesn't have have ldir. Rabbit 2000 to Rabbit 3000 (i.e. r2k and r2ka port) have an ldir wait state bug that affects copies between different types of memory.
   else if (IC_LEFT (ic)->aop->type == AOP_STK || IC_LEFT (ic)->aop->type == AOP_EXSTK || (IC_LEFT (ic)->aop->type == AOP_DIR || IC_LEFT (ic)->aop->type == AOP_IY))
     {
-      setupPairFromSP (PAIR_HL, _G.stack.offset + _G.stack.param_offset + _G.stack.pushed + (_G.omitFramePtr ? 0 : 3) /* S1C88 MAX mode: 3-byte CB:PC return frame (z80 had 2) */);
+      setupPairFromSP (PAIR_HL, _G.stack.offset + _G.stack.param_offset + _G.stack.pushed + (_G.omitFramePtr ? 0 : 3) /* S1C88 MAX mode: 3-byte CB:PC return frame */);
       /* IY = dest (the caller's hidden return-buffer pointer, 2 bytes via [HL]).
          S1C88 has no DE; the 16-bit `ld iy,(hl)` reads the pointer in one go. */
       emit2 ("ld iy, !*hl");
@@ -6423,8 +6405,8 @@ genRet (const iCode *ic)
   else
     {
       /* S1C88: read the caller's hidden buffer pointer in one 16-bit load
-         and write through IY (the z80 walked it with BC). */
-      setupPairFromSP (PAIR_HL, _G.stack.offset + _G.stack.param_offset + _G.stack.pushed + (_G.omitFramePtr ? 0 : 3) /* S1C88 MAX mode: 3-byte CB:PC return frame (z80 had 2) */);
+         and write through IY. */
+      setupPairFromSP (PAIR_HL, _G.stack.offset + _G.stack.param_offset + _G.stack.pushed + (_G.omitFramePtr ? 0 : 3) /* S1C88 MAX mode: 3-byte CB:PC return frame */);
       emit2 ("ld iy, !*hl");
       cost2 (2, 0, 0, 0, 0, 0, 0, 0);
       spillPair (PAIR_IY);
@@ -6741,7 +6723,7 @@ setupToPreserveCarry (asmop *result, asmop *left, asmop *right, const iCode *ic)
 {
   wassert (left && right);
 
-  /* S1C88: the z80 arrangement for three distinct carry-destroying operands
+  /* S1C88: the arrangement for three distinct carry-destroying operands
      (right -> HL, result -> a DE pointer, left via the cached IY extended-
      stack access) needs a third pointer pair we don't have.  Collapse left
      into result first — a carry-free copy ahead of the chain — then run the
@@ -6869,7 +6851,6 @@ genPlus (iCode * ic)
       Safe_free (left);
     }
 
-  // eZ80 has lea.
   
 
   if (!maskedtopbyte && (isPair (IC_RIGHT (ic)->aop) || isPair (IC_LEFT (ic)->aop)) && getPairId (IC_RESULT (ic)->aop) == PAIR_HL)
@@ -6925,7 +6906,7 @@ genPlus (iCode * ic)
   else if (!maskedtopbyte && size == 2 && getPairId (ic->result->aop) == PAIR_HL && isPairDead (PAIR_BA, ic) &&
     (ic->right->aop->type == AOP_LIT || ic->right->aop->type == AOP_IMMD || ic->left->aop->type == AOP_IMMD && (ic->right->aop->type == AOP_HL || ic->right->aop->type == AOP_IY)))
     {
-      /* S1C88: BA is the only 2nd ALU pair (no z80 DE/BC scratch). */
+      /* S1C88: BA is the only 2nd ALU pair. */
       genMove (ASMOP_HL, ic->left->aop, isRegDead (A_IDX, ic), true, isRegDead (IY_IDX, ic));
       genMove (ASMOP_BA, ic->right->aop, isRegDead (A_IDX, ic), false, isRegDead (IY_IDX, ic));
       emit2 ("add hl, ba");
@@ -6937,7 +6918,7 @@ genPlus (iCode * ic)
   if (!maskedtopbyte && IC_RESULT (ic)->aop->type == AOP_EXSTK && size <= 2 && (getPairId (IC_LEFT (ic)->aop) == PAIR_HL || getPairId (IC_RIGHT (ic)->aop) == PAIR_HL) &&
     isPairDead (PAIR_BA, ic) && isPairDead (PAIR_HL, ic))
     {
-      /* S1C88: BA is the only 2nd ALU pair (no z80 DE/BC scratch). */
+      /* S1C88: BA is the only 2nd ALU pair. */
       fetchPair (PAIR_BA, getPairId (IC_LEFT (ic)->aop) == PAIR_HL ? IC_RIGHT (ic)->aop : IC_LEFT (ic)->aop);
       emit2 ("add hl, ba");
       cost2 (1, 11, 7, 2, 8, 8, 1, 1);
@@ -6971,7 +6952,7 @@ genPlus (iCode * ic)
           leftop = IC_LEFT (ic)->aop;
           rightop = IC_RIGHT (ic)->aop;
         }
-      /* S1C88: ADD IY takes BA or HL (the z80 form took BC/DE). */
+      /* S1C88: ADD IY takes BA or HL. */
       pair = getPairId (IC_RIGHT (ic)->aop);
       if (pair != PAIR_HL)
         {
@@ -6992,35 +6973,6 @@ genPlus (iCode * ic)
       goto release;
     }
 
-  /* sm83 special case:
-     ld hl,sp+n trashes C so we can't afford to do it during an
-     add with stack based variables.  Worst case is:
-     ld  hl,sp+left
-     ld  a,(hl)
-     ld  hl,sp+right
-     add (hl)
-     ld  hl,sp+result
-     ld  (hl),a
-     ld  hl,sp+left+1
-     ld  a,(hl)
-     ld  hl,sp+right+1
-     adc (hl)
-     ld  hl,sp+result+1
-     ld  (hl),a
-     So you can't afford to load up hl if either left, right, or result
-     is on the stack (*sigh*)  The alt is:
-     ld  hl,sp+left
-     ld  de,(hl)
-     ld  hl,sp+right
-     ld  hl,(hl)
-     add hl,de
-     ld  hl,sp+result
-     ld  (hl),hl
-     Combinations in here are:
-     * If left or right are in bc then the loss is small - trap later
-     * If the result is in bc then the loss is also small
-   */
-  
 
   // Avoid overwriting operand in h or l when setupToPreserveCarry () loads hl - only necessary if carry is actually used during addition.
   premoved = FALSE;
@@ -7076,7 +7028,7 @@ genPlus (iCode * ic)
         }
       else if (!maskedword && leftop->type == AOP_STL && !i && i + 1 < size && hl_dead && (size <= 2 || leftop->type != AOP_EXSTK /* (hl) would be pointed to result, overwritten by addition here */))
         {
-          /* S1C88: the 2nd ALU pair is BA (not the z80 DE). Move the addend into
+          /* S1C88: the 2nd ALU pair is BA. Move the addend into
              BA and `add hl, ba`; save/restore BA when it isn't dead (never fall
              back to the nonexistent DE). Setting up HL from the AOP_STL address
              is `ld hl,#off; add hl,sp` — it never touches A/B, so BA survives. */
@@ -7204,8 +7156,7 @@ genPlus (iCode * ic)
       else if (!maskedbyte && (!premoved || i) && optimize.codeSize && !started && i == size - 1 && isPairDead (PAIR_HL, ic) && isRegDead (A_IDX, ic) && rightop->type == AOP_LIT && aopInReg (IC_RESULT (ic)->aop, i, L_IDX) && aopInReg (leftop, i, L_IDX))
         {
           /* Top-byte add into L with HL dead: the garbage in B only feeds H,
-             which this result never reads (the z80 played the same trick with
-             an uninitialized B over `add hl, bc`). */
+             which this result never reads. */
           emit2 ("ld a, !immedbyte", (ulFromVal (IC_RIGHT (ic)->aop->aopu.aop_lit)) & 0xffu);
           cost2 (2, 7, 6, 4, 8, 4, 2, 2);
           emit2 ("add hl, ba");
@@ -7479,8 +7430,7 @@ genSub (const iCode *ic, asmop *result, asmop *left, asmop *right)
   size = IC_RESULT (ic)->aop->size;
 
   /* S1C88 native 16-bit subtract. The core has a true 16-bit SUB/SBC on its
-     two ALU pairs (HL, BA) — unlike the z80, which has no 16-bit SUB and forces
-     the byte-wise "sub a,l / sbc a,h" idiom. That idiom is in fact *illegal* on
+     two ALU pairs (HL, BA). The byte-wise "sub a,l / sbc a,h" idiom is *illegal* on
      the S1C88 (the 8-bit ALU source must be A or B, never L/H), so we must emit
      the native pair op whenever the right operand is a register pair.
 
@@ -7770,7 +7720,7 @@ genMultOneChar (const iCode * ic)
 
   /* S1C88: native MLT computes HL <- L * A (unsigned 8x8->16, CE D8,
      2 bytes / 12 cycles; a MODEL1/3 instruction — present on the Pokémon
-     Mini core). Replaces the z80 shift-add loop, which needed the
+     Mini core). Replaces the shift-add loop, which needed a
      nonexistent DE pair and a B counter. Only A, L, H are touched. */
 
   /* A live with a non-operand value? Save it byte-granular — by rSurv the
@@ -7868,8 +7818,7 @@ no_mlt:
 
   
 
-  /* S1C88: BA is the only 2nd 16-bit ALU pair (add hl, ba) — the z80 DE/BC
-     scratch pairs don't exist. For the 8-bit accumulator loop the multiplicand
+  /* S1C88: BA is the only 2nd 16-bit ALU pair (add hl, ba); there are no other scratch pairs. For the 8-bit accumulator loop the multiplicand
      lives in B (add/sub a, b): A is both the accumulator and BA's low byte, so
      it can't also hold the addend. The save/restore is decided after add_in_hl
      is known (below). */
@@ -8381,11 +8330,11 @@ genIfxJump (iCode * ic, char *jval)
         {
           inst = "P";
         }
-      else if (!strcmp (jval, "nv"))	/* S1C88 overflow-clear (replaces z80 parity-odd) */
+      else if (!strcmp (jval, "nv"))	/* S1C88 overflow-clear */
         {
           inst = "NV";
         }
-      else if (!strcmp (jval, "v"))	/* S1C88 overflow-set (replaces z80 parity-even) */
+      else if (!strcmp (jval, "v"))	/* S1C88 overflow-set */
         {
           inst = "V";
         }
@@ -8454,7 +8403,7 @@ genIfxJump (iCode * ic, char *jval)
           inst = "Z";
         }
     }
-  /* Z80 can do a conditional long jump */
+  /* S1C88 conditional long jump (jp cc -> assembler invert-and-skip) */
   if (!regalloc_dry_run)
     emit2 ("jp %s, !tlabel", inst, labelKey2num (jlbl->key));
   cost2 (3, 10.0f, 7.5f,7.0f, 14.0f, 11.0f, 3.5f, 3.0f); // Assume either way equally likely.
@@ -8469,7 +8418,7 @@ _getPairIdName (PAIR_ID id)
 #endif
 
 /* S1C88: emit an 8-bit ALU op `inst a, <src@soffset>` (sub/sbc/cp/and/or/...).
-   Unlike the z80, the S1C88 8-bit ALU can only source A, B, memory or an
+   The S1C88 8-bit ALU can only source A, B, memory or an
    immediate — never L or H. When src's byte is in L or H, route it through B.
    B is *always* saved with push/pop: in a multi-byte op the other (accumulator)
    operand may occupy B mid-operation even though isRegDead() reports B dead
@@ -8571,7 +8520,7 @@ emit3_incdec (enum asminst inst, asmop *aop, int offset, const iCode *ic)
 }
 
 /* S1C88: BIT is `bit {a,b,[hl],[br:ll]},#nn` — a logical AND-with-mask that sets
-   Z = !(operand & mask). The z80 `bit n,r` (test bit n of r) maps to
+   Z = !(operand & mask). A `bit n,r`-style test (bit n of r) maps to
    `bit r,#(1<<n)`: for a single-bit mask the Z result is identical. The operand
    must be A or B (we don't fast-path [HL]); an L/H/[ix+d]/abs operand is copied
    into a free byte reg (A or B) first. LD/PUSH/POP are flag-neutral, so the Z
@@ -8629,7 +8578,7 @@ genCmp (operand * left, operand * right, operand * result, iCode * ifx, int sign
   /* if left & right are bit variables */
   if (left->aop->type == AOP_CRY && right->aop->type == AOP_CRY)
     {
-      /* Can't happen on the Z80 */
+      /* Can't happen on the S1C88 */
       wassertl (0, "Tried to compare two bits");
     }
   else
@@ -8656,7 +8605,7 @@ genCmp (operand * left, operand * right, operand * result, iCode * ifx, int sign
           goto release;
         }
         
-      if (right->aop->type == AOP_LIT && !ullFromVal (right->aop->aopu.aop_lit)) // special case: comparison to 0. Do it here early, so we don't run into sm83 workarounds below.
+      if (right->aop->type == AOP_LIT && !ullFromVal (right->aop->aopu.aop_lit)) // special case: comparison to 0. Do it here early.
         {
           if (!sign)
             {
@@ -8713,7 +8662,7 @@ genCmp (operand * left, operand * right, operand * result, iCode * ifx, int sign
 
           /* S1C88 native 16-bit compare against an immediate. cp {ba,hl},#imm
              sets Z C V N in one instruction, replacing both the unsigned byte
-             chain and — crucially — the z80 signed sign-mapping (xor #0x80 /
+             chain and — crucially — the signed sign-mapping (xor #0x80 /
              rla / ccf / rra), which uses the illegal acc-rotates. Needs the
              whole 16-bit value in an ALU pair (no low bytes stripped). */
           if (size == 2 && offset == 0 &&
@@ -8723,7 +8672,7 @@ genCmp (operand * left, operand * right, operand * result, iCode * ifx, int sign
               /* S1C88: if the operand isn't already in an ALU pair (e.g. it's on
                  the stack), load a copy into a dead HL so we can still use the
                  native `cp hl,#imm` + jrs LT/GE — instead of falling through to
-                 the illegal z80 ccf sign-flip below. */
+                 the illegal ccf sign-flip below. */
               if (lp == PAIR_INVALID && !requiresHL (left->aop) && isPairDead (PAIR_HL, ic))
                 {
                   fetchPair (PAIR_HL, left->aop);
@@ -8744,7 +8693,7 @@ genCmp (operand * left, operand * right, operand * result, iCode * ifx, int sign
             {
               /* S1C88: do a plain byte-wise sub/sbc chain against the immediate
                  (legal: 8-bit ALU source is A + #imm) and branch on the native
-                 S xor V via signed_native at fix: — no z80 xor#0x80 / rl a / ccf /
+                 S xor V via signed_native at fix: — no xor#0x80 / rl a / ccf /
                  rr a sign-flip (ccf is illegal on the S1C88). This covers the
                  long/odd-size cases the native `cp pair,#imm` above can't take.
                  The rare AOP_CRY (bit) result still needs the old sign-mapping. */
@@ -8799,7 +8748,7 @@ genCmp (operand * left, operand * right, operand * result, iCode * ifx, int sign
 
       /* S1C88 native 16-bit compare. The core has a true 16-bit CP that sets
          Z C V N, plus native signed branches (jrs LT/GE test S^V), so a single
-         `cp <pair>,<pair>` replaces the z80 byte-wise sub/sbc idiom — which is
+         `cp <pair>,<pair>` replaces the byte-wise sub/sbc idiom — which is
          illegal here anyway (8-bit ALU source must be A or B, never L/H). We
          need both operands in the two ALU pairs (BA, HL). The fix/release
          blocks below then branch on S/V directly (signed) or the carry
@@ -8886,7 +8835,7 @@ genCmp (operand * left, operand * right, operand * result, iCode * ifx, int sign
             left->aop->regs[A_IDX] < offset + 1 && left->aop->regs[B_IDX] < offset + 1 &&
             (getPartPairId (left->aop, offset) == PAIR_HL || left->aop->type == AOP_LIT || left->aop->type == AOP_IMMD || left->aop->type == AOP_HL || left->aop->type == AOP_IY) && (right->aop->type == AOP_LIT || right->aop->type == AOP_IMMD || right->aop->type == AOP_HL || right->aop->type == AOP_IY))
             {
-              /* S1C88: the 16-bit borrow chain runs through BA (z80: DE). */
+              /* S1C88: the 16-bit borrow chain runs through BA. */
               genMove_o (ASMOP_BA, 0, right->aop, offset, 2, true, getPartPairId (left->aop, offset) != PAIR_HL, true, !offset);
               genMove_o (ASMOP_HL, 0, left->aop, offset, 2, false, true, true, !offset);
               if (!started)
@@ -9273,7 +9222,7 @@ gencjneshort (operand *left, operand *right, symbol *lbl, const iCode *ic)
             }
 
           /* S1C88 native 16-bit equality compare. A 16-bit `cp` on the two ALU
-             pairs (HL, BA) sets Z iff equal, replacing the z80 `cp a,a; sbc hl,
+             pairs (HL, BA) sets Z iff equal, replacing the `cp a,a; sbc hl,
              <bc/de>` idiom — BC/DE aren't S1C88 ALU pairs, so `sbc hl,bc` is
              illegal. Equality is symmetric, so we put the two 16-bit chunks in
              HL and BA (whichever way needs the fewest moves) and compare. At
@@ -9620,7 +9569,7 @@ static void
 jmpTrueOrFalse (iCode * ic, symbol * tlbl)
 {
   // ugly but optimized by peephole
-  // Using emitLabelSpill instead of emitLabel (esp. on sm83)
+  // Using emitLabelSpill instead of emitLabel
   // We could jump there from locations with different values in hl.
   // This should be changed to a more efficient solution that spills
   // only what and when necessary.
@@ -10841,7 +10790,7 @@ shiftR2Left2Result (const iCode *ic, operand *left, int offl, operand *result, i
   // If the leading bits are all the same, we can shift the other way, and use efficient 16-bit addition for shifts.
   else if (shCount < 8 &&
     aopInReg (left->aop, 0, HL_IDX) && aopInReg (result->aop, 0, H_IDX) && isRegDead (L_IDX, ic) && isRegDead (A_IDX, ic) &&
-    shCount >= 5 - !optimize.codeSpeed) // Smaller code size for 4 and above, but at least for Z80(N), only faster from 5.
+    shCount >= 5 - !optimize.codeSpeed) // Smaller code size for 4 and above.
     {
       emit3 (A_XOR, ASMOP_A, ASMOP_A);
       emit2 ("add hl, hl");
@@ -11115,7 +11064,7 @@ genSwap (iCode * ic)
           idxarray[0] = result->aop->aopu.aop_reg[1]->rIdx;
           idxarray[1] = result->aop->aopu.aop_reg[0]->rIdx;
           idxarray[2] = -1;
-          z80_init_reg_asmop (&swapped_result_aop, idxarray);
+          s1c88_init_reg_asmop (&swapped_result_aop, idxarray);
           genMove (&swapped_result_aop, left->aop, isRegDead (A_IDX, ic), isPairDead (PAIR_HL, ic), true);
           break;
         }
@@ -11157,13 +11106,13 @@ genSwap (iCode * ic)
           idxarray[2] = result->aop->aopu.aop_reg[0]->rIdx;
           idxarray[3] = result->aop->aopu.aop_reg[1]->rIdx;
           idxarray[4] = -1;
-          z80_init_reg_asmop(&swapped_result_aop, idxarray);
+          s1c88_init_reg_asmop(&swapped_result_aop, idxarray);
           genMove (&swapped_result_aop, left->aop, isRegDead (A_IDX, ic), isPairDead (PAIR_HL, ic), true);
           break;
         }
       if (operandsEqu (result, left) && left->aop->type == AOP_STK && spOffset (left->aop->aopu.aop_stk) == 0 && isPairDead (PAIR_HL, ic) && isPairDead (PAIR_BA, ic))
         { /* result & left are top of stack and both scratch pairs are free
-             (the z80 used pop hl; ex (sp), hl; push hl) */
+            , hl; push hl) */
           _pop (PAIR_HL);
           _pop (PAIR_BA);
           _push (PAIR_HL);
@@ -11188,7 +11137,7 @@ genSwap (iCode * ic)
         }
       else
         {
-          /* S1C88 temp-pair candidates: BA, HL, IY (the z80 had BC/DE). */
+          /* S1C88 temp-pair candidates: BA, HL, IY. */
           asmop *tmp = NULL;
           PAIR_ID tmppair;
           bool pushed = false;
@@ -11291,7 +11240,7 @@ shiftL1Left2Result (operand *left, int offl, operand *result, int offr, unsigned
 {
   if (!shCount)
     cheapMove (result->aop, offr, left->aop, offl, isRegDead (A_IDX, ic));
-  // add hl, hl is cheap in code size. On Rabbits it is also fastest.
+  // add hl, hl is cheap in code size.
   else if (aopSame (result->aop, offr, left->aop, offr, 1) && !offr && shCount == 4 && isPairDead (PAIR_HL, ic) && isRegDead (A_IDX, ic) &&
     (result->aop->type == AOP_DIR || result->aop->type == AOP_HL || result->aop->type == AOP_IY))
     {
@@ -11559,7 +11508,7 @@ genLeftShift (const iCode *ic)
     countreg = B_IDX;
   /* S1C88: when all four byte GPRs (A/B/L/H) hold the value, count, or result —
      e.g. int<<int with value=BA, count=HL, result reusing HL — there is no free
-     byte register for the counter (the z80 had C as a 5th). Use IY instead:
+     byte register for the counter. Use IY instead:
      `dec iy` sets Z (16-bit dec sets Z V N), so `dec iy; jr nz` is a valid loop. */
   else if (!IY_RESERVED && isPairDead (PAIR_IY, ic) &&
     result->aop->regs[IYL_IDX] < 0 && result->aop->regs[IYH_IDX] < 0 &&
@@ -11811,7 +11760,7 @@ genrshOne (operand *result, operand *left, int shCount, int is_signed, const iCo
   else if (result->aop->type == AOP_REG && (aopInReg (result->aop, 0, A_IDX) || aopInReg (result->aop, 0, B_IDX)))
     {
       /* S1C88 shifts only a/b/(hl) — shift in the destination register only when
-         it is A or B. (z80 could `srl` any reg; `srl l`/`srl h` are illegal here.) */
+         it is A or B. */
       cheapMove (result->aop, 0, left->aop, 0, a_dead);
 
       while (shCount--)
@@ -11981,9 +11930,7 @@ genRightShift (const iCode * ic)
   aopOp (result, ic, true, false);
   aopOp (left, ic, false, false);
     
-  /* Count-register selection — an S1C88 divergence from the z80 base. The z80
-     could shift any register in place, so it safely fell back to A as the loop
-     counter. On the S1C88 only a/b/(hl) shift, so the multi-byte shift body
+  /* Count-register selection — an S1C88 constraint: only a/b/(hl) shift, so the multi-byte shift body
      routes the value's L/H (and memory) bytes through A as scratch
      (emit3_shift) — using A as the counter clobbers it mid-body and the loop
      never terminates. So the count must be a dead byte register the value
@@ -13134,7 +13081,7 @@ genPointerGet (const iCode *ic)
 
 
   if ((IY_RESERVED) && requiresHL (result->aop) && size > 1 && result->aop->type != AOP_REG)
-    UNIMPLEMENTED; /* z80 used a DE walk pointer; no S1C88 spare under --reserve-iy */
+    UNIMPLEMENTED; /* no S1C88 spare pointer under --reserve-iy */
 
   
   if ((left->aop->type == AOP_IMMD || left->aop->type == AOP_LIT && !rightval) && size == 1 && aopInReg (result->aop, 0, A_IDX) && !bit_field)
@@ -13635,8 +13582,7 @@ genPackBits (sym_link * etype, operand * right, int pair, const iCode * ic)
           regalloc_dry_run_cost += (pair == PAIR_IX || pair == PAIR_IY) ? 3 : 1;
           return;
         }
-      /* (z80's nibble-aligned rld/rrd fast path removed — the S1C88 has no
-         rld/rrd; nibble fields use the general and/or-mask merge below.) */
+      /* (the S1C88 has no rld/rrd; nibble fields use the general and/or-mask merge below.) */
       else
         {
           /* Case with a bit-field length <8 and arbitrary source */
@@ -13838,7 +13784,7 @@ genPointerSet (iCode *ic)
 
   if (IY_RESERVED && !(isRegOrLit (right->aop) || right->aop->type == AOP_STK))
     UNIMPLEMENTED;  /* reserve-regs-iy + a value that needs HL to read: no third pointer
-                       exists (the z80 picked the phantom DE here) — the s19 documented limit */
+                       exists — the s19 documented limit */
   if (isPair (result->aop) && isPairDead (getPairId (result->aop), ic) && !(size > 1 && sameRegs (result->aop, right->aop)))
     pairId = getPairId (result->aop);
 
@@ -14007,8 +13953,7 @@ genPointerSet (iCode *ic)
       bool save_hl = false;
       if (isLitWord (right->aop))
         {
-          /* HL is the only scratch pair for the staged literal (the z80
-             fell back to the phantom DE/BC here) — save a live HL. */
+          /* HL is the only scratch pair for the staged literal — save a live HL. */
           pairId = PAIR_HL;
           if (!isPairDead (PAIR_HL, ic))
             {
@@ -14317,8 +14262,6 @@ genAssign (const iCode *ic)
   size = result->aop->size;
   offset = 0;
 
-  // SM83 has special instruction for access to addresses 0xff00 to 0xffff, so use them here, when possible
-  
 
   if (isPair (result->aop) && getPairId (result->aop) != PAIR_IY ||
     isPair (right->aop) && result->aop->type == AOP_IY && size == 2)
@@ -14704,7 +14647,7 @@ genEndCritical (const iCode * ic)
     }
 }
 
-/* (The z80 genArrayInit/__initrleblock machinery was deleted: the port sets
+/* (The genArrayInit/__initrleblock machinery was deleted: the port sets
    arrayInitializerSuppported = FALSE, so ARRAYINIT iCodes are never generated.) */
 
 /* Load source -> HL and dest -> IY without clobbering each other (the S1C88
@@ -14836,7 +14779,7 @@ genBuiltInMemcpy (const iCode *ic, int nparams, operand **pparams)
   /* Variable (runtime) count: the same native byte loop, with the count held
      in the borrowed frame pointer IX (16-bit counter) and a `cp ix,#0` zero
      guard (a byte loop entered with count==0 would otherwise wrap to 65536,
-     exactly like z80 `ldir` with bc==0). */
+     exactly like a block copy with count==0). */
   {
     bool s_hl = !isPairDead (PAIR_HL, ic);
     bool s_iy = !isPairDead (PAIR_IY, ic);
@@ -15441,10 +15384,10 @@ genBuiltIn (iCode *ic)
 }
 
 /*-------------------------------------------------------------------------------------*/
-/* genZ80iCode - generate code for Z80 based controllers for a single iCode instruction*/
+/* genS1C88iCode - generate S1C88 code for a single iCode instruction           */
 /*-------------------------------------------------------------------------------------*/
 static void
-genZ80iCode (iCode * ic)
+genS1C88iCode (iCode * ic)
 {
   genLine.lineElement.ic = ic;
 
@@ -15724,7 +15667,7 @@ dryS1C88iCode (iCode * ic)
   initGenLineElement ();
   _G.omitFramePtr = s1c88_should_omit_frame_ptr;
 
-  genZ80iCode (ic);
+  genS1C88iCode (ic);
 
   destroy_line_list ();
   freeTrace (&_G.trace.aops);
@@ -15749,7 +15692,7 @@ dryS1C88iCode (iCode * ic)
 
 #ifdef DEBUG_DRY_COST
 static void
-dryZ80Code (iCode * lic)
+dryS1C88Code (iCode * lic)
 {
   iCode *ic;
 
@@ -15764,13 +15707,13 @@ dryZ80Code (iCode * lic)
 #endif
 
 /*-------------------------------------------------------------------------------------*/
-/* genS1C88Code - generate code for Z80 based controllers for a block of instructions    */
+/* genS1C88Code - generate S1C88 code for a block of instructions                        */
 /*-------------------------------------------------------------------------------------*/
 void
 genS1C88Code (iCode * lic)
 {
 #ifdef DEBUG_DRY_COST
-  dryZ80Code (lic);
+  dryS1C88Code (lic);
 #endif
 
   iCode *ic;
@@ -15809,7 +15752,7 @@ genS1C88Code (iCode * lic)
       //regalloc_dry_run_cost = 0;
       regalloc_dry_run_cost_bytes = 0;
       regalloc_dry_run_cost_states = 0;
-      genZ80iCode (ic);
+      genS1C88iCode (ic);
 
 #if 0 // Helpful to debug "Unbalanced stack" errors.
       printf("After ic %d (op %d): _G.stack.pushed: %d\n", ic->key, ic->op, _G.stack.pushed);
