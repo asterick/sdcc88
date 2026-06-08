@@ -17,16 +17,14 @@ Legend: **S/M/L** = rough effort.
 
 ## Known bugs
 
-- **Float subtraction (#8) — open, deprioritized/parked.** All float subtraction (and opposite-sign add)
-  corrupts the low mantissa bits: `10.0 - 4.0` → `0x40C00182` not `0x40C00000`. `__fssub` is `-((-a)+b)`,
-  routing through the `_fsadd` *different-sign* path; the algorithm + all isolated 32-bit ops compile
-  correctly, so it's a register-pressure / spill bug in the full `_fsadd` compile, not a library issue.
-  Float is rare on the Pokémon Mini, so this is parked behind everything else. If revisited, re-add the
-  subtract cases to `tests/diff/cases/float.c` (the regression test). *(Related: `has_mulint2long` is off in
-  `main.c`, so int×int→long widens to 32-bit and calls `__mullong`; writing the `__mul*int2*long` asm would
-  give a smaller/faster widen AND unblock `_fsmul` — but it's a code-size nicety, not correctness.)*
-
-There are **no other known correctness bugs** — the differential suite is clean.
+**None.** The differential suite is clean across integer, pointer, struct/union, function-pointer, long-long,
+and **float** code (add / subtract / multiply / divide / compares / int↔float casts, all exact-operand). The
+last open correctness bug — **#8 float subtraction** (`10.0-4.0` → `0x40C00182`) — is **FIXED**: it was a
+register/move-ordering bug in `genUminusFloat` (the `-a1` sign-flip inside `__fssub` loaded the top byte into
+A before spilling the low word, dropping byte 0 on the HLBA layout). Fix: copy the low bytes before the sign
+flip. Regression: the subtraction / opposite-sign block in `tests/diff/cases/float.c`. *(Note: a full
+cancellation `a-a` yields softfloat `-0.0` where hardware gives `+0.0` — a library zero-sign convention, not
+a bug; harmless since `-0.0 == +0.0`.)*
 
 ---
 
@@ -36,8 +34,8 @@ The highest-value ongoing work. Each new `tests/diff/cases/*.c` (+ a `tests/emu/
 behaviour) is run through `corpus-check` + `emu-test` + `diff-test`; the suite has caught several real
 **silent** miscompiles that byte-identical assembly never could (struct-arg register-drop, the `cp ba,hl`
 pointer-compare peephole gap, the long-long/struct return-ABI off-by-one). Covered: arith, bitfields, calls,
-control, longlong, memory, ptrarith, switch, structargs, fnptr2, unions, float *(except the parked subtract)*
-— plus the emu ABI cases. **Still untested (pick any; new territory is also fair game):**
+control, longlong, memory, ptrarith, switch, structargs, fnptr2, unions, float — plus the emu ABI cases.
+**Still untested (pick any; new territory is also fair game):**
 
 - **#11-libc** — `mem*`/`str*` differential (memcpy / memmove / memset / strcmp / strlen …) run through the lib.
 - **#11-longshift** — 32-bit shifts/rotates by a *variable* count + long-division edge values (beyond
@@ -55,6 +53,10 @@ Workflow: add the case, run the three gates, fix what surfaces, add an emu/diff 
   `push b`/`pop b` register-preservation noise. ~5 insns/site when it fires.
 - **[S] #12-far-idiom.** Tighten the `__far` EP=0 deref sequences and (now that #14b relaxation landed) the
   `bcall`/`bjump` slot idioms.
+- **[S] int×int→long widening.** `has_mulint2long` is off in `main.c`, so int×int→long widens to 32-bit and
+  calls `__mullong`. Writing the hand `__muluint2ulong`/`__mulsint2slong` asm + enabling the flag gives a
+  smaller/faster widening multiply (`arith.c`'s `widemul` cases will exercise it automatically). Code-size
+  nicety, not correctness.
 - **[S] #12 residual cleanup.** Prune the dead z80-mnemonic tokens (`rlca`/`scf`/`daa`/…) from multi-token
   `same()` lists in `peeph.def` (byte-identical). Refining `cost2`'s cycle numbers to exact S1C88 counts is
   **low value** for this target — the allocator cost is bytes-dominated (cycles discounted 64–512×; see the

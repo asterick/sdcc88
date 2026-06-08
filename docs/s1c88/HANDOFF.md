@@ -42,7 +42,7 @@ _Last updated: 2026-06-08._
    keep mining new C constructs (`#11-libc`, `#11-longshift`, anything untested), code-size peephole work
    (`#12-flag-reuse` byte-combine peephole, `#12-far-idiom`), the deferred linker cross-module relaxation
    (`#14c`), the `UNIMPLEMENTED`-boundary lift (`#16`), and the z80-lineage cleanup remainder (`#20 D`).
-   The one known bug is **float subtraction (#8)**, parked — low-value for this target.
+   There are **no known correctness bugs** — the differential suite (including float) is clean.
 
 ### Watch-outs (load-bearing)
 

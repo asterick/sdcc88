@@ -7700,20 +7700,24 @@ genUminusFloat (const iCode *ic, operand *result, operand *op)
 {
   emitDebug ("; genUminusFloat");
 
-  /* for this we just need to flip the
-     first bit then copy the rest in place */
-     
+  /* Flip the sign bit (the MSB of the top byte) and copy the rest in place.
+     Copy the LOW bytes FIRST: flipping the top byte routes through A, and on
+     the HLBA layout A holds byte 0 (a low mantissa byte).  Loading the top byte
+     into A before the low copy clobbers byte 0, so the copy then reads garbage —
+     that was the #8 float-subtract miscompile (`neg = -a1` dropped a1's low byte,
+     corrupting every `__fssub` result).  A may only be used as a copy scratch
+     when op's byte 0 is NOT itself in A. */
+
   if (!isRegDead (A_IDX, ic))
     _push (PAIR_AF);
 
-  cheapMove (ASMOP_A, 0, op->aop, MSB32, true);
+  genMove_o (result->aop, 0, op->aop, 0, op->aop->size - 1, !aopInReg (op->aop, 0, A_IDX), false, true, true);
 
+  cheapMove (ASMOP_A, 0, op->aop, MSB32, true);
   emit2 ("xor a,!immedbyte", 0x80u);
   cost2 (2, 7);
   cheapMove (result->aop, MSB32, ASMOP_A, 0, true);
 
-  genMove_o (result->aop, 0, op->aop, 0, op->aop->size - 1, !aopInReg (result->aop, MSB32, A_IDX), false, true, true);
-  
   if (!isRegDead (A_IDX, ic))
     _pop (PAIR_AF);
 }

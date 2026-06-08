@@ -155,4 +155,6 @@ The repo's harnesses run compiled code on the vendored emulator core:
   `docs/s1c88/abi-decision.md` ("Known codegen boundaries").
 - **`common-bank overflow` from `romgen`.** Plain `const` data outgrew the common bank — see §4
   (use `__far const` for large tables).
-- **Float subtraction** is a known miscompile and float is deprioritized for this target (TODO #8).
+
+Single-precision `float` works (add / subtract / multiply / divide / compares / int↔float casts), but is
+software-emulated and slow — fine for occasional math, not for hot loops on the Pokémon Mini.

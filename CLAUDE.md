@@ -27,13 +27,13 @@ and builds the compiler.
 > — plus the production `crt0`, `s1c88.lib`, and `<pm.h>` device header are all in place. Codegen is
 > functionally complete (all numbered ABI tasks closed; native `DIV`/`MLT`; 3-byte banked function pointers;
 > S1C88 **MAXIMUM-mode** call model), every gate green (corpus 20/20 byte-identical, emu-test 16/16,
-> diff-test 12, run-tests 50/50), and the differential-mining suite is clean.
+> diff-test 12, run-tests 50/50), and the differential-mining suite is **clean with no known correctness
+> bugs** (integer / pointer / struct / union / fnptr / long-long / float all verified).
 >
-> The one known bug is **deprioritized** — the `_fsadd` different-sign float-subtract miscompile (TODO #8;
-> float is low-value here). Ongoing work on the existing source base is the **forward backlog in
-> `docs/s1c88/TODO.md`**: more differential coverage (#11), code-size peephole work (#12, yardstick
-> `size-check.sh`), the deferred linker cross-module relaxation (#14c), the `UNIMPLEMENTED`-boundary lift
-> (#16), and the z80-lineage cleanup remainder (#20 D).
+> Ongoing work on the existing source base is the **forward backlog in `docs/s1c88/TODO.md`**: more
+> differential coverage (#11), code-size peephole work (#12, yardstick `size-check.sh`), the deferred linker
+> cross-module relaxation (#14c), the `UNIMPLEMENTED`-boundary lift (#16), and the z80-lineage cleanup
+> remainder (#20 D).
 > Design/ABI: **`docs/s1c88/abi-decision.md`**; resume state: **`docs/s1c88/HANDOFF.md`**;
 > end-user guide: **`docs/s1c88/building-roms.md`**; the toolchain: `docs/s1c88/{sdas88-retarget,banked-branch}.md`.
 
