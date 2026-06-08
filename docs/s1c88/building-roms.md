@@ -144,3 +144,15 @@ The repo's harnesses run compiled code on the vendored emulator core:
 - `scripts/driver-smoke.sh` — the full `sdcc -ms1c88 game.c` → `.min` → boot path.
 - `scripts/emu-test.sh` — the execution test cases.
 - `scripts/corpus-check.sh` — byte-identical codegen + clean assembly.
+
+## 7. Limitations
+
+- **`Unimplemented` build error.** The codegen has a few register-pressure corners (mostly under
+  `--reserve-regs-iy`) where it stops with `Unimplemented` rather than emit wrong code. It is a **loud
+  trap, never a silent miscompile** — if a build *succeeds*, the code is correct. Workarounds: drop
+  `--reserve-regs-iy`, or simplify the offending expression (split a wide bitwise/arith op, or reduce the
+  number of simultaneously-live pointers). The boundary categories are cataloged in
+  `docs/s1c88/abi-decision.md` ("Known codegen boundaries").
+- **`common-bank overflow` from `romgen`.** Plain `const` data outgrew the common bank — see §4
+  (use `__far const` for large tables).
+- **Float subtraction** is a known miscompile and float is deprioritized for this target (TODO #8).

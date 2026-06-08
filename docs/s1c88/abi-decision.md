@@ -420,3 +420,36 @@ byte-verified, and is wired into `scripts/validate-s1c88.sh` as the codegen vali
 extensions (`bcall`/`bjump`, the `R_S1C88_BANK` relocation) live in `s1c88_banked_branch.patch`; the
 linker (`scripts/build-sdld.sh` → `sdldz80`) + the C `romgen` complete the assemble→link→`.min` pipeline. See
 [sdas88-retarget.md](sdas88-retarget.md) and [banked-branch.md](banked-branch.md).
+
+---
+
+## Known codegen boundaries (the `UNIMPLEMENTED` traps) — TODO #16
+
+`gen.c` has ~66 `UNIMPLEMENTED` sites. The macro is **not** a silent miscompile path:
+
+```c
+#define UNIMPLEMENTED do { wassertl (regalloc_dry_run, "Unimplemented"); cost (4000, 4000.0f); } while(0)
+```
+
+During the register allocator's **dry run** it just assigns a huge cost (4000) so the allocator
+**steers around** the path; it only `wassertl`-**aborts loudly** if the *real* emission is forced into
+it (no cheaper alternative existed). So these are **loud traps, never wrong code** — a program either
+compiles correctly or fails at build time with `Unimplemented`. Most are unreachable in practice (the
+cost steering wins); they bite only under extreme register/pointer pressure.
+
+**The boundary categories** (from the named sites):
+
+| Category | Where | Trigger shape |
+|---|---|---|
+| **No spare pointer under `--reserve-regs-iy`** | `genPointerGet`/`genPointerSet`/`genFarPointer*` | `--reserve-regs-iy` removes IY from the allocator; a multi-byte read/write that needs a *third* pointer pair (HL + the access + a live operand) has nowhere to go |
+| **Register pressure in multi-byte ALU** | `genEor`/`genPlus`/`genAnd`/`genSub`/`genOr` | a wide (≥2-byte) bitwise/arith op where both ALU pairs (BA, HL) and A/B are simultaneously tied up |
+| **Value spans A+B and spills into L/H** | `genCmp`/compare paths | a compare whose operand occupies *both* A and B and also needs L/H — no legal ALU source left |
+| **Permutation cycle through A** | `genMove_o` | a register-shuffle cycle that routes through A but isn't the plain `A<->B` swap (the only one with a native `ex a,b`) |
+| **Giant struct return** | `genReceive` (struct-by-value) | returning a struct **> 255 bytes** — the byte-copy loop counter is 8-bit |
+| **HL-restore vs return-in-HL conflict** | `genRet` | a callee that must both restore a saved HL *and* return its result in HL |
+
+**Status: documented (this table). The "lift" is a future target** — systematically construct a
+triggering C snippet for each, classify reachable-vs-cost-avoided, *fix* the cheap reachable ones
+(most are "find one more scratch slot" cases), and delete the genuinely-impossible guards. The cost
+steering makes triggers hard to hand-write (that difficulty *is* the evidence they rarely fire), so the
+lift is a real research pass, not a quick edit. None is a correctness risk today.

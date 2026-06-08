@@ -111,9 +111,16 @@ Legend: **S/M/L** = rough effort. Items are roughly dependency-ordered within ea
 
 ## C. Known limitations — fix or formally document
 
-16. **`UNIMPLEMENTED` traps.** Audit + document the pathological shapes that bail loudly (e.g.
-    `--reserve-regs-iy` + >127-byte frame + multi-byte pointer read; shift/cast corners). Loud traps
-    today, not silent miscompiles — but users should know the boundaries.
+16. **`UNIMPLEMENTED` traps — ✅ DOCUMENTED; lift is a future target.** The ~66 `UNIMPLEMENTED` sites are
+    **loud traps, never silent miscompiles** (`wassertl(regalloc_dry_run,…) + cost(4000)` steers the
+    allocator away; only a forced real-emit aborts). The boundary categories are now cataloged in
+    `abi-decision.md` ("Known codegen boundaries"): no-spare-pointer under `--reserve-regs-iy`, register
+    pressure in multi-byte ALU (genEor/genPlus/genAnd/…), a value spanning A+B that spills into L/H, a
+    permutation cycle through A that isn't the `A<->B` swap, giant (>255-byte) struct return, and the
+    HL-restore-vs-return-in-HL conflict. **Future lift:** construct a triggering C snippet per site,
+    classify reachable-vs-cost-avoided, fix the cheap reachable ones, delete the impossible guards — a real
+    research pass (the cost steering makes triggers hard to hand-write, which is itself evidence they
+    rarely fire).
 17. **CPOINTER (code-space `const` data pointers) — ✅ DONE (documented + guarded).** Investigation found
     the original premise wrong: plain `const` pointers are **2-byte near** (not 3-byte), and the
     `aop->code` flag is vestigial. Plain `const` data lives in the common bank (near deref, correct because
