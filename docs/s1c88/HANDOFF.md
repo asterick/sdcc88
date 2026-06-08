@@ -6,10 +6,10 @@ steps under **NEXT ACTION**. Everything needed to continue is here or linked fro
 > **▶ The forward-looking work list is [`TODO.md`](TODO.md)** — the critical path to a *usable*
 > toolchain (driver wiring, real crt0, target lib, device headers, packaging) plus the
 > quality/coverage backlog (float diff module, `__critical`/nested-IRQ, peephole tuning).
-> Suggested next step: **the critical-path TODO Section A (#1–#7) is DONE (session 26)** — the
-> toolchain is usable end to end (`scripts/setup-sdk.sh`; `sdcc -ms1c88 game.c` → `romgen` →
-> bootable `.min`; `examples/hello`; `docs/s1c88/building-roms.md`). Next is **Section B** quality
-> work — highest value: **B8 the float/softfloat differential module** (largest unexecuted surface).
+> Suggested next step: Section A (#1–#7) is DONE, and **Section B #8/#9/#10 are done (session 26)** —
+> float diff module, volatile/MMIO coverage, `__critical` execution. **The one OPEN correctness bug:
+> the `_fsadd` different-sign miscompile (all float subtraction) — see TODO #8.** Fixing it is the
+> highest-value next step; then nested-IRQ coverage (#10 follow-up) and the remaining Section B/C items.
 
 _Last updated: 2026-06-07 (session 26: **the usable-toolchain critical path (TODO Section A,
 #1–#7) is COMPLETE — `sdcc -ms1c88 game.c` now builds a bootable Pokémon Mini ROM end to end**.

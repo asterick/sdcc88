@@ -37,12 +37,14 @@
 typedef uint8_t  u8;  typedef int8_t  i8;
 typedef uint16_t u16; typedef int16_t i16;
 typedef uint32_t u32; typedef int32_t i32;
+typedef float    f32;     /* IEEE 754 binary32 — same layout as the target's float */
 static void diff_putc(char c) { putchar((unsigned char)c); }
 #else
 /* sdcc88: char=8, int=16, long=32 — width-exact to the host typedefs above */
 typedef unsigned char u8;  typedef signed char i8;
 typedef unsigned int  u16; typedef int          i16;
 typedef unsigned long u32; typedef long         i32;
+typedef float         f32;
 #define DIFF_CHAR_OUT (*(volatile unsigned char *)0x1FF8)
 static void diff_putc(char c) { DIFF_CHAR_OUT = (unsigned char)c; }
 #endif
@@ -88,6 +90,23 @@ static void diff_e4(const char *tag, u32 v)
 #define EMIT_I16(tag, x) diff_e2((tag), (u32)(u16)(i16)(x))
 #define EMIT_U32(tag, x) diff_e4((tag), (u32)(x))
 #define EMIT_I32(tag, x) diff_e4((tag), (u32)(i32)(x))
+
+/* EMIT_F32 emits the 32-bit IEEE-754 bit pattern of a float, so the comparison is
+   BIT-EXACT. Both sides store binary32 little-endian, so reinterpreting the float
+   as a u32 yields the same value; diff_e4 then prints it big-endian.
+   SOUNDNESS (float): only emit operations whose operands AND result are EXACTLY
+   representable in binary32 (e.g. small integers, halves, quarters, exact quotients
+   like 10.0/4.0). SDCC's softfloat is not bit-IEEE for results that need rounding,
+   so a rounding-dependent result would diverge as a *library* difference, not a
+   codegen bug. Exact-value ops still fully exercise the float ABI / support-call
+   wiring / byte order — which is what we're testing. */
+static void diff_ef(const char *tag, f32 v)
+{
+    union { f32 f; u32 u; } pun;
+    pun.f = v;
+    diff_e4(tag, pun.u);
+}
+#define EMIT_F32(tag, x) diff_ef((tag), (f32)(x))
 
 void diff_run(void);
 

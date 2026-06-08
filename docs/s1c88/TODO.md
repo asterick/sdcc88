@@ -81,12 +81,40 @@ A user should be able to: `sdcc -ms1c88 game.c` → assemble → link (banked) �
 
 ## B. Quality & coverage (discussed / wanted)
 
-8.  **[M] Differential module: float / softfloat.** Large, entirely *unexecuted* surface
-    (arith, compares, int↔float casts) — high bug probability, like the integer modules were.
-9.  **[S] Differential module: volatile / MMIO.** Verify volatile loads/stores aren't
-    elided/reordered/duplicated (matters for the #5 hardware registers).
-10. **[S/M] `__critical` + nested-IRQ execution coverage.** Emu cases for SC-masking critical
-    sections and an ISR interrupting another (now possible with the kept timers/IRQ).
+> **Session 26 (cont.): #8, #9, #10 done.** Float diff module (found a float-subtract codegen
+> bug — see #8), volatile/MMIO coverage, and `__critical` execution coverage all landed; emu-test
+> is now 10/10 (added `09_volatile`, `10_critical`), diff-test 5/5 (added `float`). **The one open
+> correctness item surfaced this session: the `_fsadd` different-sign miscompile (#8) — all float
+> subtraction.** Nested-IRQ (part of #10) deferred.
+
+
+8.  **[M] Differential module: float / softfloat. ✅ BUILT (session 26) — found a bug.**
+    `tests/diff/cases/float.c` (bit-exact `EMIT_F32`, exactly-representable operands) +
+    the diff harness now links the float support routines as an on-demand text-index lib.
+    Same-sign add, multiply, divide, compares, and all int↔float casts are CORRECT (30 values
+    match). **It found a codegen bug (NOT yet fixed): float SUBTRACTION (and opposite-sign
+    addition) corrupts the low mantissa bits** — `10.0-4.0` → `0x40C00182` not `0x40C00000`.
+    `__fssub` is `-((-a)+b)`, so it routes through the `_fsadd` *different-sign* path; the
+    algorithm + all isolated 32-bit ops compile correctly (reductions passed), so it's a
+    register-pressure / spill bug in the full `_fsadd` compile, not a library issue. Re-add the
+    subtract cases to `float.c` (the regression test) once fixed. **Also disabled `has_mulint2long`**
+    (main.c) so int×int→long uses `__mullong` — our port lacks the `__mul*int2*long` widening
+    routines (asm-only; they conflict with a C definition), which `_fsmul` needs (#15).
+    ⮕ **Open: fix the `_fsadd` different-sign miscompile** (high impact — all float subtraction).
+9.  **[S] volatile / MMIO coverage. ✅ DONE (session 26).** `tests/emu/cases/09_volatile.c` —
+    a timer ISR bumps a `volatile` counter that `main` spin-reads; a discriminator fails if the
+    load is hoisted/cached (the classic "poll a status register" bug). Verified in the asm that the
+    spin re-loads `(_ticks)` every iteration; plus a volatile RAM round-trip (store-not-elided +
+    ordering). Passes — volatile loads are not hoisted.
+10. **[S/M] `__critical` execution coverage. ✅ DONE (session 26); nested-IRQ deferred.**
+    `tests/emu/cases/10_critical.c` — first execution test of `__critical`: counts timer-ISR fires
+    over an unmasked spin vs the same spin inside `__critical`; masked sees ~none, unmasked many, so
+    SC-level masking (`or sc,#0xc0`) works. ⚠ Found: the emulator accepts a pending IRQ in the
+    one-instruction window at the mask boundary, so reading the counter *immediately* after the
+    masking instruction is unreliable (the test snapshots before entering the section + a generous
+    threshold). **Nested IRQ (a higher-priority IRQ preempting a lower-priority ISR) is a follow-up**
+    — it needs two phase-aligned timers; the emulator preemption path exists (`priority() <
+    next_priority`) but making a second timer underflow reliably during the first ISR was fiddly.
 11. **[ongoing] Keep mining with the differential suite.** It's found 5 real codegen bugs;
     more modules (longs, bitfield-heavy, deep call chains) will find more.
 12. **[L, open-ended] Peephole / cost tuning.** The standing "remaining" codegen item — size

@@ -911,7 +911,11 @@ PORT s1c88_port =
   { -1, 0, 0, 5, 0, 3, 0 },
   { 
     -1,                         /* shifts never use support routines */
-    true,                       /* use support routine for int x int -> long multiplication */
+    false,                      /* int x int -> long: use full __mullong, NOT a __mul*int2*long
+                                   widening routine. Those ship only as per-port hand asm (they
+                                   conflict with a C definition — SDCC pre-declares them), and the
+                                   s1c88 port doesn't provide them; __mullong is already in the lib.
+                                   (Re-enable + add asm widening routines for code size — TODO #15.) */
     false,                      /* do not use support routine for unsigned long x unsigned char -> unsigned long long multiplication */
   },
   { s1c88_emitDebuggerSymbol },

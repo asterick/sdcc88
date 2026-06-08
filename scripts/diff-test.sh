@@ -44,18 +44,24 @@ make -s -C "$EMU" || { echo "!! runner build FAILED"; exit 1; }
 
 OUT="$(mktemp -d)"; trap 'rm -rf "$OUT"' EXIT
 
-# --- crt0 + runtime support library (16- and 32-bit div/mod/mul), via OUR port ---
+# --- crt0 + runtime support library, via OUR port (self-hosting). Built into a
+#     text-index library (rt.lib) so each case pulls only the modules it references
+#     (and their transitive deps) — float pulls ~25 routines, int cases pull none. ---
 "$SDAS" -o "${OUT}/crt0.rel" "${EMU}/crt0.asm" || { echo "!! crt0 assemble FAILED"; exit 1; }
-RT_SRCS="_mulint _mullong _divuint _divsint _moduint _modsint _divulong _divslong _modulong _modslong"
-RT_RELS=""
-for r in $RT_SRCS; do
+RT_INT="_mulint _mullong _divuint _divsint _moduint _modsint _divulong _divslong _modulong _modslong"
+RT_FLOAT="_fsadd _fssub _fsmul _fsdiv _fseq _fslt _fscmp \
+          _fsget1arg _fsget2args _fsnormalize _fsreturnval _fsrshift _fsswapargs \
+          _fs2schar _fs2sint _fs2slong _fs2uchar _fs2uint _fs2ulong \
+          _schar2fs _sint2fs _slong2fs _uchar2fs _uint2fs _ulong2fs"
+: > "${OUT}/rt.lib"
+for r in $RT_INT $RT_FLOAT; do
   if ! cc -E -P -x c -I "${SDCC}/device/include" -D_SDCC_NO_ASM_LIB_FUNCS \
         "${SDCC}/device/lib/${r}.c" > "${OUT}/${r}.i" 2>"${OUT}/err" \
      || ! "$SDCCBIN" -ms1c88 --c1mode -o "${OUT}/${r}.asm" < "${OUT}/${r}.i" 2>"${OUT}/err" \
      || ! "$SDAS" -o "${OUT}/${r}.rel" "${OUT}/${r}.asm" > "${OUT}/err" 2>&1; then
     echo "!! runtime ${r} build FAILED:"; sed 's/^/    /' "${OUT}/err" | head -10; exit 1
   fi
-  RT_RELS="${RT_RELS} ${OUT}/${r}.rel"
+  echo "$r" >> "${OUT}/rt.lib"
 done
 
 pass=0; fail=0
@@ -85,7 +91,7 @@ for src in "${DIFF}"/cases/*.c; do
     echo "ASSEMBLE-FAIL"; sed 's/^/    /' "${OUT}/err" | head -10; fail=$((fail+1)); continue
   fi
   if ! "$SDLD" -nwxi -b _CODE=0x4000 -b _HOME=0x2100 -b _DATA=0x1000 \
-        "${OUT}/${b}.ihx" "${OUT}/crt0.rel" "${OUT}/${b}.rel" ${RT_RELS} > "${OUT}/err" 2>&1 \
+        "${OUT}/${b}.ihx" "${OUT}/crt0.rel" "${OUT}/${b}.rel" -k "${OUT}" -l rt > "${OUT}/err" 2>&1 \
      || grep -q "Undefined Global" "${OUT}/err"; then
     echo "LINK-FAIL"; grep -E "Undefined Global|ASlink" "${OUT}/err" | sort -u | sed 's/^/    /'
     fail=$((fail+1)); continue
