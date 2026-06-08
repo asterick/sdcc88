@@ -1,17 +1,23 @@
 #!/usr/bin/env bash
 #
-# build.sh — build sdcc88: SDCC 4.5.0 retargeted to the Epson S1C88 (Pokémon Mini).
+# build.sh — build the complete sdcc88 SDK: SDCC 4.5.0 retargeted to the Epson S1C88 (Pokémon Mini).
 #
 # Strategy: sdcc88 is an OVERLAY on upstream SDCC, built with SDCC's own autotools build system
 # (configure + make) rather than a reimplemented build. This script fetches SDCC, drops our
-# src/s1c88 port into its tree, registers the port, and builds the `sdcc` compiler driver.
+# src/s1c88 port into its tree, registers the port, and builds the whole toolchain end to end:
+# the `sdcc` compiler driver, the sdcpp preprocessor, the sdas88/sdldz80/romgen binary tools, and
+# the target runtime (crt0 + s1c88.lib + device headers). After it, `build/sdcc-4.5.0/` is a usable
+# SDK: `sdcc -ms1c88 game.c -o game.ihx && romgen game.ihx game.min` builds a bootable ROM.
+#
+# (The per-component build-*.sh scripts under scripts/ still exist — the test/smoke scripts call
+# them lazily — but you no longer need to run them by hand; build.sh does the whole SDK.)
 #
 # Requirements (install once, e.g. on Debian/Ubuntu/WSL):
 #   sudo apt-get install -y build-essential flex bison m4 gawk libboost-dev zlib1g-dev
 #
 # Usage:
-#   ./build.sh           # incremental: fetch (cached), overlay, configure (once), make
-#   ./build.sh --fresh   # wipe build/ and start clean
+#   ./build.sh           # incremental: fetch (cached), overlay, configure (once), build the SDK
+#   ./build.sh --fresh   # wipe build/ and rebuild the whole SDK from scratch
 #
 set -euo pipefail
 
@@ -84,13 +90,25 @@ grep -qx s1c88 ports.all   2>/dev/null || echo s1c88 >> ports.all
 grep -qx s1c88 ports.build 2>/dev/null || echo s1c88 >> ports.build
 ./config.status --file=src/s1c88/Makefile:src/s1c88/Makefile.in
 
-# 7. Build the sdcc compiler driver (with the s1c88 port). We build only src/ — not SDCC's bundled
-#    sdcpp preprocessor, which is a heavyweight GCC tree (and needs sdbinutils). End-to-end C
-#    compilation additionally needs a preprocessor; see CLAUDE.md.
-echo ">> make"
+# 7. Build the sdcc compiler driver (with the s1c88 port). This builds src/ only — the codegen.
+echo ">> make (sdcc compiler driver)"
 make -C src
 
+# 8. Build the rest of the SDK: the preprocessor + binary toolchain + runtime, so that the result
+#    is a complete, usable Pokémon Mini SDK (not just the codegen). Each step is its own idempotent
+#    component script — they are also invoked lazily by the test/smoke scripts — and is a fast no-op
+#    once built, so re-running build.sh after the first full build only re-makes the compiler above.
+#    The heavy one is sdcpp (a GCC-cpp fork); --fresh rebuilds it. Order matters: the runtime is
+#    compiled through both the sdcc driver and sdas88, so it must come last.
+echo ">> sdcpp (preprocessor)";        "${REPO}/scripts/build-sdcpp.sh"
+echo ">> sdas88 (assembler)";          "${REPO}/scripts/build-sdas.sh" as88
+echo ">> sdldz80 (linker)";            "${REPO}/scripts/build-sdld.sh"
+echo ">> romgen (.ihx -> .min)";       "${REPO}/scripts/build-romgen.sh"
+echo ">> runtime (crt0 + s1c88.lib + headers)"; "${REPO}/scripts/build-runtime.sh"
+
 echo
-echo ">> built: ${SDCC}/src/sdcc"
+echo ">> SDK ready under ${SDCC}/"
 "${SDCC}/src/sdcc" --version 2>&1 | head -3 || true
-echo ">> port available as: ${SDCC}/src/sdcc -ms1c88 ..."
+echo ">>   compiler : ${SDCC}/src/sdcc -ms1c88 ..."
+echo ">>   bin/      : sdcpp, sdas88, sdldz80, romgen (+ sdcc-family tools)"
+echo ">>   try       : make -C examples/hello run"
