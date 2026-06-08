@@ -40,7 +40,7 @@ CRT0="${REPO}/device/lib/s1c88/crt0.s"
 OUT="$(mktemp -d)"; trap 'rm -rf "$OUT"' EXIT
 
 [ -x "$SDAS" ] && [ -x "$SDLD" ] || { echo "!! build sdas88 + sdldz80 first (scripts/build-sdas.sh as88; scripts/build-sdld.sh)" >&2; exit 2; }
-[ -f "${LIBDIR}/s1c88.lib" ] || { echo "!! runtime not installed — run scripts/build-runtime.sh (or setup-sdk.sh)" >&2; exit 2; }
+[ -f "${LIBDIR}/s1c88.lib" ] || { echo "!! runtime not installed — run scripts/build-runtime.sh (or ./build.sh)" >&2; exit 2; }
 [ -f "${SDCC}/config.status" ] || { echo ">> not configured — run ./build.sh first" >&2; exit 1; }
 
 # --- overlay + build the compiler (same as corpus-check / size-check / dev.sh) ---
