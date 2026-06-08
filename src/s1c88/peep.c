@@ -1073,6 +1073,8 @@ isRegPair(const char *what)
 {
   if(strlen(what) != 2)
     return FALSE;
+  if(strcmp(what, "ba") == 0)	/* S1C88: B:A is a real splittable pair (b high, a low) */
+    return TRUE;
   if(strcmp(what, "bc") == 0)
     return TRUE;
   if(strcmp(what, "de") == 0)
@@ -1300,8 +1302,10 @@ bool s1c88canSplitReg (const char *reg, char dst[][16], int nDst)
   int i;
   if (nDst < 0 || nDst > 2)
     return FALSE;
-  if (!strcmp (reg, "bc") || !strcmp (reg, "de") || !strcmp (reg, "hl"))
+  if (!strcmp (reg, "ba") || !strcmp (reg, "bc") || !strcmp (reg, "de") || !strcmp (reg, "hl"))
     {
+      /* split into the two named byte registers, high (reg[0]) then low (reg[1]):
+         ba -> b,a   bc -> b,c   de -> d,e   hl -> h,l */
       for (i = 0; i < nDst; ++i)
         {
           dst[i][0] = reg[i];

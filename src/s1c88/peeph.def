@@ -30,16 +30,7 @@ replace restart {
 	; common peephole 0a removed redundant load from %1 into %1.
 } if notVolatile(%1)
 
-//TODO: works for the other ports, but slows at least some of them down
-replace restart {
-	ld	%2, %1
-	ld	%3, %4
-	ld	%1, %2
-} by {
-	ld	%2, %1
-	ld	%3, %4
-	; common peephole 0b removed redundant load from %2 back into %1.
-}if isPort('sm83'), notSame(%1 '(hl+)' '(hl-)'), notSame(%2 '(hl+)' '(hl-)'), operandsNotRelated(%3 %1), operandsNotRelated(%3 %2), notVolatile(%1), notVolatile(%2), 
+// (peephole 0b removed — its `isPort('sm83')` gate never matches s1c88; #12-peep-audit.)
 
 replace restart {
 	ld	%1, %2
@@ -65,11 +56,9 @@ replace restart {
 	; common peephole 2c removed %1 %2 due to unused result.
 } if same(%1 'dec' 'inc'), same(%2 'bc' 'de' 'hl' 'sp' 'ix' 'iy'), notUsed(%2)
 
-replace restart {
-	%1
-} by {
-	; common peephole 2d removed %1 due to unused result.
-} if same(%1 'rlca' 'rla' 'rrca' 'rra'), notUsed('a' 'hf' 'nf' 'cf')
+// (peephole 2d removed — it matched only z80 implied-accumulator rotates
+// rlca/rla/rrca/rra; the s1c88 codegen emits the operand forms rlc a/rl a/etc.,
+// so the rule could never fire.  #12-peep-audit.)
 
 replace restart {
 	ld	%1, %2 + %3
@@ -431,7 +420,7 @@ replace restart {
 	ld	%2, a
 	ld	%3, #%1
 	push	%4
-} if unusedReg(%4 'bc' 'de' 'hl'), canSplitReg(%4 %2 %3), notUsed('a')
+} if unusedReg(%4 'hl' 'ba'), canSplitReg(%4 %2 %3), notUsed('a')
 
 replace restart {
 	push	af
@@ -444,7 +433,7 @@ replace restart {
 	ld	%2, a
 	ld	%3, #0x00
 	push	%4
-} if unusedReg(%4 'bc' 'de' 'hl'), canSplitReg(%4 %2 %3), notUsed('af')
+} if unusedReg(%4 'hl' 'ba'), canSplitReg(%4 %2 %3), notUsed('af')
 
 replace restart {
 	push	%1
@@ -516,7 +505,7 @@ replace restart {
 	ld	%5, %2 (%3)
 	; common peephole 44a combined pushing of %1 and %2 (%3).
 	push	%6
-} if unusedReg(%6 'bc' 'de' 'hl'), canSplitReg(%6 %4 %5), canAssign(%4 %1), notUsed('a')
+} if unusedReg(%6 'hl' 'ba'), canSplitReg(%6 %4 %5), canAssign(%4 %1), notUsed('a')
 
 replace restart {
 	ld	a, (%1)
@@ -532,7 +521,7 @@ replace restart {
 	ld	%5, a
 	; common peephole 44b combined pushing of (%1) and (%2).
 	push	%6
-} if unusedReg(%6 'bc' 'de' 'hl'), notSame(%6 %1 %2), canSplitReg(%6 %4 %5)
+} if unusedReg(%6 'hl' 'ba'), notSame(%6 %1 %2), canSplitReg(%6 %4 %5)
 
 replace restart {
 	ld	%1, #%2
@@ -560,7 +549,7 @@ replace restart {
 	ld	%4, %1 (%3)
 	ld	%5, %2 (%3)
 	push	%6
-} if unusedReg(%6 'bc' 'de' 'hl'), canSplitReg(%6 %4 %5), notUsed('a')
+} if unusedReg(%6 'hl' 'ba'), canSplitReg(%6 %4 %5), notUsed('a')
 
 replace restart {
 	ld	a, (hl)
@@ -578,7 +567,7 @@ replace restart {
 	ld	a, (hl)
 	ld	%3, a
 	push	%4
-} if same(%1 'inc' 'dec'), unusedReg(%4 'bc' 'de'), canSplitReg(%4 %2 %3), notUsed('a')
+} if same(%1 'inc' 'dec'), unusedReg(%4 'bc' 'de' 'ba'), canSplitReg(%4 %2 %3), notUsed('a')
 
 replace restart {
 	ld	a, (%5)
@@ -594,7 +583,7 @@ replace restart {
 	ld	a, (%6)
 	ld	%3, a
 	push	%4
-} if same(%5 'hl' 'hl+' 'hl-'), same(%6 'hl' 'hl+' 'hl-'), unusedReg(%4 'bc' 'de'), canSplitReg(%4 %2 %3)
+} if same(%5 'hl' 'hl+' 'hl-'), same(%6 'hl' 'hl+' 'hl-'), unusedReg(%4 'bc' 'de' 'ba'), canSplitReg(%4 %2 %3)
 
 replace restart {
 	ld	%1, %4
@@ -617,7 +606,7 @@ replace restart {
 	%4	hl
 	ld	%2, (hl)
 	push	%3
-} if same(%4 'inc' 'dec'), unusedReg(%3 'de' 'bc'), canSplitReg(%3 %2 %1), notUsed('hl')
+} if same(%4 'inc' 'dec'), unusedReg(%3 'de' 'bc' 'ba'), canSplitReg(%3 %2 %1), notUsed('hl')
 
 replace restart {
 	ld	%3, %1
@@ -626,7 +615,7 @@ replace restart {
 	; common peephole 49a pushed %2 instead of %3.
 	ld	%2, %1
 	push	%2
-} if same(%3 'ix' 'iy'), notUsed(%3), unusedReg(%2 'bc' 'de' 'hl'), canAssign(%2 %1)
+} if same(%3 'ix' 'iy'), notUsed(%3), unusedReg(%2 'hl' 'ba'), canAssign(%2 %1)
 
 replace restart {
 	pop	%1
@@ -1236,27 +1225,9 @@ replace restart {
 // 96d needs no notUsed('f') (cf. 96a-c): push/pop are flag-neutral, so reordering
 // inc/dec hl around them leaves the net flag state unchanged even on the S1C88.
 
-// check if constant loaded into (hl) is the same that's loaded into the second register
-replace {
-	ld	(hl), #%2
-	ld	%1, #%3
-} by {
-	; common peephole 97a reused constant loaded into register pair. %2 %3
-	ld	%1, #%3
-	ld	(hl), %5
-} if same(%1 'bc' 'de'), operandsLiteral(%2 %3), canSplitReg(%1 %4 %5), immdInRange(0x00 0xff '&' %3 0xff %7), immdInRange(0 0 '-' %7 %2 %8)
-// ., ., ., ., get second byte, compare second byte with %2
-
-// check if constant loaded into (hl) is the same that's loaded into the first register
-replace {
-	ld	(hl), #%2
-	ld	%1, #%3
-} by {
-	; common peephole 97b reused constant loaded into register pair.
-	ld	%1, #%3
-	ld	(hl), %4
-} if same(%1 'bc' 'de'), operandsLiteral(%2 %3), canSplitReg(%1 %4 %5), immdInRange(0x00 0xff '/' %3 0xff %6), immdInRange(0x00 0xff '&' %6 0xff %7), immdInRange(0 0 '-' %7 %2 %8)
-// ., ., ., ., bit shift, get second byte, compare second byte with %2
+// (peepholes 97a/97b removed — both gated on `same(%1 'bc' 'de')`, register
+// pairs the s1c88 allocator never produces (the model is BA+HL only), so neither
+// could fire.  #12-peep-audit.)
 
 replace restart {
 	ld	%1, a

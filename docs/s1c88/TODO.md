@@ -116,8 +116,20 @@ Legend: **S/M/L** = rough effort. Items are roughly dependency-ordered within ea
       gates); `snapshot` re-blesses. Makes every peephole/cost (#12) and relaxation (#14) win visible and
       monotone — and since the baseline is tracked, size changes show up in git diffs. *Use it: run before
       a change, make the change, run again, read the delta column.*
-    - **#12-peep-audit** — audit `peeph.def` for rules inherited from z80 that are wrong or suboptimal on the
-      S1C88 (z80-cost-based shortenings, dead-variant guards, mnemonic assumptions). Remove/retarget.
+    - **#12-peep-audit** — ✅ DONE (first pass). Audited `peeph.def` (238 rules) for z80-inherited rules that
+      are dead or mis-targeted on the S1C88. **Removed 4 provably-dead rules:** 0b (`isPort('sm83')` — never
+      our port), 2d (matched only the z80 implied-accumulator rotates `rlca/rla/rrca/rra`; the codegen emits
+      the operand forms `rlc a`/`rl a`/…), and 97a/97b (gated on `same(%1 'bc' 'de')` — pairs the BA+HL model
+      never produces). Corpus stayed byte-identical, confirming deadness. **The real win — enabled BA as a
+      scratch pair:** the inherited byte-split / register-pair rules listed z80's `bc`/`de` as scratch pairs,
+      which don't exist on the S1C88, so they could only ever use `hl` (and 570/586/609, which need a
+      *non-hl* scratch, NEVER fired). Added `ba` to `isRegPair` + `s1c88canSplitReg` (peep.c) and retargeted
+      the nine `unusedReg`/`canSplitReg` lists to the real pairs (`'hl' 'ba'`, or `… 'ba'` where `hl` is the
+      live pointer). This resurrected 3 dead rules and let 6 more fall back to BA when HL is busy —
+      e.g. `ld a,#x ; ld b,#0` → `ld ba,#x`. **−20 B on the corpus (8452→8432)**, all verified correct
+      (emu 16/16, diff 12/12, clean assembly, rom/crt0/driver smokes); corpus + size baselines re-blessed.
+      (`unusedReg` accepts only 2–3 candidates — watch that when extending a list.) Follow-ups: `#12-flag-reuse`,
+      `#12-redundant-moves`, and pruning the residual dead z80-mnemonic tokens from multi-token `same()` lists.
     - **#12-redundant-moves** — eliminate redundant `ld`/pair-move/load-after-store sequences the current
       rules miss (e.g. `ld a,X ; ld X,a`, reload of a just-stored value, dead pair shuffles).
     - **#12-flag-reuse** — drop redundant compare-to-zero / `or a,a` when a preceding op already set Z/N
