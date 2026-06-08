@@ -8381,13 +8381,13 @@ genIfxJump (iCode * ic, char *jval)
         {
           inst = "P";
         }
-      else if (!strcmp (jval, "po"))
+      else if (!strcmp (jval, "nv"))	/* S1C88 overflow-clear (replaces z80 parity-odd) */
         {
-          inst = "PO";
+          inst = "NV";
         }
-      else if (!strcmp (jval, "pe"))
+      else if (!strcmp (jval, "v"))	/* S1C88 overflow-set (replaces z80 parity-even) */
         {
-          inst = "PE";
+          inst = "V";
         }
       else if (!strcmp (jval, "lt"))	/* S1C88 native signed less-than */
         {
@@ -8434,13 +8434,13 @@ genIfxJump (iCode * ic, char *jval)
         {
           inst = "M";
         }
-      else if (!strcmp (jval, "po"))
+      else if (!strcmp (jval, "nv"))	/* false of overflow-clear = overflow-set */
         {
-          inst = "PE";
+          inst = "V";
         }
-      else if (!strcmp (jval, "pe"))
+      else if (!strcmp (jval, "v"))	/* false of overflow-set = overflow-clear */
         {
-          inst = "PO";
+          inst = "NV";
         }
       else if (!strcmp (jval, "lt"))	/* S1C88 native signed: false when >= */
         {
@@ -8928,19 +8928,23 @@ genCmp (operand * left, operand * right, operand * result, iCode * ifx, int sign
         }
 
 fix:
-      /* There is no good signed compare in the Z80, so we need workarounds */
+      /* Signed compare. The S1C88 has native signed-condition branches, so the
+         common cases need no workaround; only an AOP_CRY (bit) result still needs
+         a sign-correction fixup. */
       if (sign)
         {
           {
               /* The S1C88 has native signed-condition branches (jrs LT/GE test
-                 S xor V), and the byte/word subtract above already left S and V
+                 N xor V), and the byte/word subtract above already left N and V
                  set correctly for the signed compare — so we branch on those
-                 flags directly and skip the z80 PO/xor sign-correction entirely.
+                 flags directly and skip the sign-correction entirely.
                  For an ifx the result is a conditional branch (signed_native ->
                  genIfxJump(ifx, "lt")); for a boolean result we materialise 0/1
                  from the same condition (signed_native_bool, handled in the
                  release block).  Only the rare AOP_CRY (bit) result still needs
-                 the z80 fixup. */
+                 the sign-correction fixup: when the subtract overflowed (V) the
+                 high byte's sign bit is inverted vs. the true ordering, so flip
+                 it — skipped via NV (overflow-clear) when there was no overflow. */
               if (!(result->aop->type == AOP_CRY && result->aop->size))
                 {
                   if (ifx)
@@ -8951,7 +8955,7 @@ fix:
               else if (!regalloc_dry_run)
                 {
                   symbol *tlbl = newiTempLabel (NULL);
-                  emit2 ("jp PO, !tlabel", labelKey2num (tlbl->key));
+                  emit2 ("jp NV, !tlabel", labelKey2num (tlbl->key));
                   cost2 (2, 12, 8, 5, 12, 12, 3, 3); // Assume no overflow.
                   emit2 ("xor a, !immedbyte", 0x80u);
                   cost (2, 0); // Assume no overflow.

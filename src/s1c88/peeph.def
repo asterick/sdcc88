@@ -2494,8 +2494,10 @@ replace {
 // out-of-range / external ones fall through to jrl (3 bytes).
 //
 // Conditional forms convert only for the basic flags c/nc/z/nz — jrl/jrs encode
-// just those; the signed po/p/m/pe come from the genCmp synthesis and will be
-// retargeted there (they stay as `jp` for now, still flagged by the validator).
+// just those; the S1C88 signed/flag conditions (lt/ge/gt/le/v/nv/p/m/f0..) are
+// CE-page short-only and stay as `jp <cc>`, which the assembler lowers via its
+// invert-and-skip path (jrs <inv>,+4 ; jrl).  (No z80 parity po/pe — genCmp now
+// emits the native S1C88 overflow conditions v/nv directly.)
 // The notSame() guards keep the computed jp hl / jp (iy) / call (iy) forms from
 // being mis-rewritten into a relative branch.
 

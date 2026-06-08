@@ -189,7 +189,9 @@ z80MightReadFlagCondition(const char *cond, const char *what)
   while(isspace (*cond))
     cond++;
 
-  if(!STRNCASECMP(cond, "po", 2) || !STRNCASECMP(cond, "pe", 2))
+  /* S1C88 v/nv test the overflow flag, modeled as the z80 P/V token "pf"
+     ("vf" aliases to it).  (Replaces the z80 parity conditions po/pe.) */
+  if(tolower(cond[0]) == 'v' || !STRNCASECMP(cond, "nv", 2))
     return !strcmp(what, "pf");
   if(tolower(cond[0]) == 'm' || tolower(cond[0]) == 'p')
     return !strcmp(what, "sf");
