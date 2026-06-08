@@ -132,8 +132,21 @@ Legend: **S/M/L** = rough effort. Items are roughly dependency-ordered within ea
       `#12-redundant-moves`, and pruning the residual dead z80-mnemonic tokens from multi-token `same()` lists.
     - **#12-redundant-moves** — eliminate redundant `ld`/pair-move/load-after-store sequences the current
       rules miss (e.g. `ld a,X ; ld X,a`, reload of a just-stored value, dead pair shuffles).
-    - **#12-flag-reuse** — drop redundant compare-to-zero / `or a,a` when a preceding op already set Z/N
-      (the S1C88 sets Z/C/V/N broadly — more reuse than the z80 model assumes).
+    - **#12-flag-reuse** — ✅ DONE (model fix; one peephole opportunity noted). The peephole flag-WRITE
+      analysis (`peep.c` `s1c88SurelyWritesFlag`) carried the z80 model: it claimed 16-bit `inc`/`dec`
+      "do not affect flags" and 16-bit `add hl,X` does not set Z/S/P. **On the S1C88, 16-bit INC/DEC set
+      Z V N and 16-bit ADD/SUB set Z C V N** (`instruction-set.md` §16-bit arithmetic). That under-reporting
+      was both a latent stale-flag-reuse hazard (an earlier flag could be wrongly treated as surviving a
+      16-bit op that actually clobbers it — the same class as the #11-ptrcmp gap) AND an optimization
+      blocker. Fixed the model to report those writes accurately (SP forms conservatively excluded — their
+      per-flag manual cells are unverified and the codegen doesn't rely on them). This is strictly safer
+      (more-accurate clobber detection prevents wrong reuse) and unblocked a real shrink: a dead no-op
+      `add hl,#0` whose flags are immediately clobbered by a following `add hl,ba` is now removable
+      (`14_mixed` −3 B; corpus 8432→8429). Verified emu 16/16, diff 12/12, clean assembly, smokes green;
+      baselines re-blessed. **Remaining opportunity (follow-up):** the post-16-bit-add byte-combine zero
+      test — `add hl,X ; ld a,h ; ld b,l ; or a,b ; jr Z` (the `(a+b)?` / function-result-test idiom) — is
+      now provably redundant (the `add` set Z), but capturing it needs a dedicated peephole that sees past
+      the `push b`/`pop b` register-preservation noise; ~5 insns/site when it fires.
     - **#12-cost-accuracy** — replace the inherited z80 cycle numbers in `cost2(...)` with real S1C88 counts
       so the allocator's cost-driven decisions match the target (overlaps the #20-A `cost2` collapse).
     - **#12-far-idiom** — tighten the `__far` EP=0 deref sequences and the `bcall`/`bjump` slots (ties into

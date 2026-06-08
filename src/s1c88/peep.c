@@ -684,18 +684,36 @@ s1c88SurelyWritesFlag(const lineNode *pl, const char *what)
 
   if(ISINST(pl->line, "inc") || ISINST(pl->line, "dec"))
     {
-      // 8-bit inc affects all flags other than c.
-      if (strlen(pl->line + 4) == 1 || // 8-bit register
-        !strcmp(pl->line + 4, "(hl)") ||
+      const char *arg = pl->line + 4;
+      // 8-bit inc/dec affects all flags other than c.
+      if (strlen(arg) == 1 || // 8-bit register
+        !strcmp(arg, "(hl)") ||
         !strcmp(pl->line + 6, "(ix)") ||
         !strcmp(pl->line + 6, "(iy)"))
         return (!!strcmp(what, "cf"));
-      return false; // 16-bit inc does not affect flags.
+      // S1C88 (unlike z80) 16-bit inc/dec of a GPR pair sets Z V N, leaves C.
+      // SP arithmetic is excluded (its flag effect is not relied upon and the
+      // manual's per-flag SP cells are unverified) — assume no write there.
+      if (!strcmp(arg, "ba") || !strcmp(arg, "hl") || !strcmp(arg, "ix") || !strcmp(arg, "iy"))
+        return (!!strcmp(what, "cf"));
+      return false; // inc/dec sp (or unknown): conservatively no flag write.
     }
 
   if(ISINST(pl->line, "add"))
-    return (argCont(pl->line + 4, "a") ||
-           (!!strcmp(what, "zf") && !!strcmp(what, "sf") && !!strcmp(what, "pf")));
+    {
+      const char *arg = pl->line + 4;
+      while (isspace ((unsigned char) *arg))
+        arg++;
+      // 8-bit `add a, X` sets Z C V N; S1C88 16-bit `add hl,X`/`add ba,X` ALSO
+      // set Z C V N (z80's add hl,rr sets only C — this is the divergence that
+      // makes the post-add byte-combine zero-test redundant on the S1C88).
+      if ((arg[0] == 'a' && arg[1] == ',') ||
+          !strncmp(arg, "hl,", 3) || !strncmp(arg, "hl ,", 4) ||
+          !strncmp(arg, "ba,", 3) || !strncmp(arg, "ba ,", 4))
+        return true;
+      // add sp,X (or unknown): conservatively don't claim Z/S/P.
+      return (!!strcmp(what, "zf") && !!strcmp(what, "sf") && !!strcmp(what, "pf"));
+    }
 
   if(ISINST(pl->line, "ldd") ||
     ISINST(pl->line, "lddr") ||
