@@ -1,5 +1,5 @@
-/** @file z80/z80.h
-    Common definitions for the the z80-related ports.
+/** @file s1c88.h
+    Common definitions for the Epson S1C88 port (derived from the z80 port).
 */
 #include "common.h"
 #include "ralloc.h"
@@ -17,12 +17,12 @@ typedef struct
     int legacyBanking;
     int nmosZ80;
   }
-Z80_OPTS;
+S1C88_OPTS;
 
-extern Z80_OPTS s1c88_opts;
+extern S1C88_OPTS s1c88_opts;
 
-/* sdcc88 is a SINGLE-VARIANT port: the z80 sub-port predicate machinery
-   (IS_Z80/IS_SM83/IS_RAB/...) is GONE — every variant-gated branch was
+/* sdcc88 is a SINGLE-VARIANT port: the inherited multi-variant sub-port
+   predicate machinery is GONE — every variant-gated branch was
    constant-folded away (task #7a). HAS_IYL_INST survives only until the
    IYL/IYH_IDX removal (#7c): the S1C88 IX/IY are not byte-addressable. */
 #define HAS_IYL_INST (options.allow_undoc_inst)

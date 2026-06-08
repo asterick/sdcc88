@@ -1,10 +1,10 @@
-/** @file z80/support.c
+/** @file support.c
  */
 #include "s1c88.h"
 #include <math.h>
 
 int
-s1c88_convertFloat (Z80_FLOAT * f, double native)
+s1c88_convertFloat (S1C88_FLOAT * f, double native)
 {
   unsigned long mantissa, exponent;
   double f2;

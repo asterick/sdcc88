@@ -1,5 +1,5 @@
 /*-------------------------------------------------------------------------
-  main.c - Z80 specific definitions.
+  main.c - Epson S1C88 port definitions (sdcc88; derived from the z80 port).
 
   Michael Hope <michaelh@juju.net.nz> 2001
   Copyright (C) 2021, Sebastian 'basxto' Riedel <sdcc@basxto.de>
@@ -57,10 +57,10 @@ static char _s1c88_defaultRules[] = {
 
 
 
-Z80_OPTS s1c88_opts;
+S1C88_OPTS s1c88_opts;
 
 
-static OPTION _z80_options[] = {
+static OPTION _s1c88_options[] = {
   {0, OPTION_CALLEE_SAVES_BC, &s1c88_opts.calleeSavesBC, "Force a called function to always save BC"},
   {0, OPTION_PORTMODE,        NULL, "Determine PORT I/O mode (z80/z180)"},
   {0, OPTION_BO,              NULL, "<num> use code bank <num>"},
@@ -128,7 +128,7 @@ extern PORT s1c88_port;
 
 #include "mappings.i"
 
-static builtins _z80_builtins[] = {
+static builtins _s1c88_builtins[] = {
   {"__builtin_memcpy", "vg*", 3, {"vg*", "Cvg*", "Ui"}},
   {"__builtin_strcpy", "cg*", 2, {"cg*", "Ccg*"}},
   {"__builtin_strncpy", "cg*", 3, {"cg*", "Ccg*", "Ui"}},
@@ -142,7 +142,7 @@ extern void s1c88_init_asmops (void);
 extern reg_info *regsS1C88;
 
 static void
-_z80_init (void)
+_s1c88_init (void)
 {
   switch (_G.asmType)
     {
@@ -560,7 +560,7 @@ _finaliseOptions (void)
   port->mem.default_local_map = data;
   port->mem.default_globl_map = data;
   /* S1C88: IX/IY are index-only (never byte-allocated), so num_regs stays at
-     A,B,L,H regardless of the z80 --reserve-iy option. */
+     A,B,L,H regardless of the --reserve-iy option. */
 
   _setValues ();
 }
@@ -660,7 +660,7 @@ _getRegByName (const char *name)
 }
 
 static void
-_z80_genAssemblerStart (FILE * of)
+_s1c88_genAssemblerStart (FILE * of)
 {
   if (!options.noOptsdccInAsm)
     {
@@ -795,7 +795,7 @@ oclsExpense (struct memmap *oclass)
     " {z80extraobj}"
 */
 
-static const char *_z80LinkCmd[] = {
+static const char *_s1c88LinkCmd[] = {
   "sdldz80", "-nf", "$1", "$L", NULL
 };
 
@@ -805,7 +805,7 @@ static const char *_gnuLdCmd[] = {
 };
 */
 /* $3 is replaced by assembler.debug_opts resp. port->assembler.plain_opts */
-static const char *_z80AsmCmd[] = {
+static const char *_s1c88AsmCmd[] = {
   "sdas88", "$l", "$3", "$2", "$1.asm", NULL
 };
 
@@ -817,7 +817,7 @@ static const char *_GnuAsmCmd[] = {
 };
 */
 static const char *const _crt[] = { "crt0.rel", NULL, };
-static const char *const _libs_z80[] = { "s1c88", NULL, };
+static const char *const _libs_s1c88[] = { "s1c88", NULL, };
 
 /* Globals */
 PORT s1c88_port =
@@ -834,7 +834,7 @@ PORT s1c88_port =
     NULL,                       /* model == target */
   },
   {                             /* Assembler */
-    _z80AsmCmd,
+    _s1c88AsmCmd,
     NULL,
     "-plosgffwy",               /* Options with debug */
     "-plosgffw",                /* Options without debug */
@@ -842,13 +842,13 @@ PORT s1c88_port =
     ".asm"
   },
   {                             /* Linker */
-    _z80LinkCmd,                //NULL,
+    _s1c88LinkCmd,                //NULL,
     NULL,                       //LINKCMD,
     NULL,
     ".rel",
     1,                          /* needLinkerScript */
     _crt,                       /* crt */
-    _libs_z80,                  /* libs */
+    _libs_s1c88,                  /* libs */
   },
   {                             /* Peephole optimizer */
     _s1c88_defaultRules,
@@ -907,7 +907,7 @@ PORT s1c88_port =
   /* stack: direction, bank_overhead, isr_overhead, call_overhead 5 =
      3-byte CB:PC return frame (S1C88 MAXIMUM mode — every call pushes CB
      and RET pops it; PokeMini-verified) + 2-byte saved IX frame pointer.
-     (The z80 value 4 assumed 2-byte minimum-mode frames — wrong for the
+     (The inherited value 4 assumed 2-byte minimum-mode frames — wrong for the
      Pokémon Mini, whose 2MB banked ROM requires max mode.) */
   { -1, 0, 0, 5, 0, 3, 0 },
   { 
@@ -929,9 +929,9 @@ PORT s1c88_port =
     9,                          /* sizeofDispatch - Assumes operand allocated to register e or c*/
   },
   "_",
-  _z80_init,
+  _s1c88_init,
   _parseOptions,
-  _z80_options,
+  _s1c88_options,
   NULL,
   _finaliseOptions,
   _setDefaultOptions,
@@ -940,7 +940,7 @@ PORT s1c88_port =
   _getRegByName,
   NULL,
   _keywords,
-  _z80_genAssemblerStart,
+  _s1c88_genAssemblerStart,
   NULL,                         /* no genAssemblerEnd */
   0,                            /* no local IVT generation code */
   0,                            /* no genXINIT code */
@@ -962,7 +962,7 @@ PORT s1c88_port =
   0,                            /* leave == */
   FALSE,                        /* Array initializer support. */
   0,                            /* no CSE cost estimation yet */
-  _z80_builtins,                /* builtin functions */
+  _s1c88_builtins,                /* builtin functions */
   GPOINTER,                     /* treat unqualified pointers as "generic" pointers */
   1,                            /* reset labelKey to 1 */
   1,                            /* globals & local statics allowed */

@@ -182,7 +182,7 @@ assign_cost(const assignment &a, unsigned short int i, const G_t &G, const I_t &
   if(!right || !IS_SYMOP(right) || !result || !IS_SYMOP(result) || POINTER_GET(ic) || POINTER_SET(ic))
     return(default_instruction_cost(a, i, G, I));
 
-  reg_t byteregs[4] = {-1, -1, -1, -1}; // Todo: Change this when sdcc supports variables larger than 4 bytes in register allocation for z80.
+  reg_t byteregs[4] = {-1, -1, -1, -1}; // Todo: Change this when sdcc supports variables larger than 4 bytes in register allocation.
 
   operand_map_t::const_iterator oi, oi_end;
 
@@ -749,12 +749,12 @@ static bool HLinst_ok(const assignment &a, unsigned short int i, const G_t &G, c
     (IS_VALOP(right) || operand_in_reg(right, ia, i, G) && !(exstk && operand_on_stack(ic->left, a, i, G)) && (!isOperandInDirSpace(ic->left) || getSize(operandType(ic->left)) == 1)))
     return(true);
 
-  // Due to lack of ex hl, (sp), the generic push code generation fallback doesn't work for gbz80, so we need to be able to use hl if we can't just push a pair or use a.
+  // Due to lack of ex hl, (sp), the generic push code generation fallback needs to be able to use hl if we can't just push a pair or use a.
   
 
   
 
-  // For some operations, the gbz80 stack access using hl will trash the value there.
+  // For some operations, stack access using hl will trash the value there.
   
   
 
@@ -796,7 +796,7 @@ static bool HLinst_ok(const assignment &a, unsigned short int i, const G_t &G, c
     return(true); // Uses inc hl.
 
   if(ic->op == '+' && getSize(operandType(result)) == 2 && !IS_TRUE_SYMOP (result) &&
-    (result_only_HL || operand_in_reg(result, REG_IYL, ia, i, G) && operand_in_reg(result, REG_IYH, ia, i, G))) // Can use ld rr, (nn) instead of (hl). (The z80 BC/DE-free clause was always true here.)
+    (result_only_HL || operand_in_reg(result, REG_IYL, ia, i, G) && operand_in_reg(result, REG_IYH, ia, i, G))) // Can use ld rr, (nn) instead of (hl).
     return(true);
 
   if(ic->op == '+' && getSize(operandType(result)) <= 2 && result_only_HL && !isOperandInDirSpace(ic->result))
@@ -862,7 +862,7 @@ static bool HLinst_ok(const assignment &a, unsigned short int i, const G_t &G, c
   if(exstk && !result_only_HL && (operand_on_stack(left, a, i, G) || operand_on_stack(right, a, i, G)) && ic->op == '+')
     return(false);
 
-  if ((!POINTER_SET(ic) && !POINTER_GET(ic) && ((ic->op == '=' || ic->op == CAST || ic->op == UNARYMINUS || ic->op == RIGHT_OP || IS_BITWISE_OP(ic) || (ic->op == '+' && getSize(operandType(IC_RESULT(ic))) == 1) || (ic->op == '+'))))) // addition on gbz80 might need to use add hl, rr.
+  if ((!POINTER_SET(ic) && !POINTER_GET(ic) && ((ic->op == '=' || ic->op == CAST || ic->op == UNARYMINUS || ic->op == RIGHT_OP || IS_BITWISE_OP(ic) || (ic->op == '+' && getSize(operandType(IC_RESULT(ic))) == 1) || (ic->op == '+'))))) // addition might need to use add hl, rr.
     return(true);
 
   if((ic->op == '<' || ic->op == '>') && (IS_ITEMP(left) || IS_OP_LITERAL(left) || IS_ITEMP(right) || IS_OP_LITERAL(right))) // Todo: Fix for large stack.
@@ -1046,7 +1046,7 @@ static bool IYinst_ok(const assignment &a, unsigned short int i, const G_t &G, c
 template <class G_t, class I_t>
 bool DEinst_ok(const assignment &a, unsigned short int i, const G_t &G, const I_t &I)
 {
-  return(true); // The z80 DE pair does not exist on the S1C88; nothing to constrain.
+  return(true); // No second scratch pair to constrain on the S1C88.
 }
 
 template <class G_t, class I_t>
@@ -1323,8 +1323,8 @@ static float rough_cost_estimate(const assignment &a, unsigned short int i, cons
           c += 2.0f;
     }
 
-  // An artificial ordering of assignments (the z80 version keyed this on DE
-  // being unused, which was always true here; keep the constant terms so the
+  // An artificial ordering of assignments (the inherited version keyed this on
+  // DE being unused, which was always true here; keep the constant terms so the
   // cost values stay bit-identical).
   c += 0.001f;
   c += 0.0001f;

@@ -18,8 +18,8 @@
    Foundation, 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
 -------------------------------------------------------------------------*/
 
-#ifndef Z80GEN_H
-#define Z80GEN_H
+#ifndef S1C88GEN_H
+#define S1C88GEN_H
 
 typedef enum
 {

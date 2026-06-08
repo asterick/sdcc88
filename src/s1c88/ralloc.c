@@ -1,4 +1,4 @@
-/** @name Z80 Register allocation functions.
+/** @name S1C88 register allocation functions.
     @author Michael Hope
 
     Note: much of this is ripped straight from Sandeep's mcs51 code.
@@ -7,7 +7,7 @@
     hardware.  It allocates based on usage and how long the variable
     lives into registers or temporary memory on the stack.
 
-    On the Z80 hl and ix and a are reserved for the code generator,
+    On the S1C88 hl and ix and a are reserved for the code generator,
     leaving bc and de for allocation.  iy is unusable due to currently
     as it's only addressable as a pair.  The extra register pressure
     from reserving hl is made up for by how much easier the sub
@@ -105,7 +105,7 @@ reg_info s1c88_regs[] = {
 reg_info *regsS1C88;
 
 /** Number of usable registers (all but C) */
-#define Z80_MAX_REGS ((sizeof (s1c88_regs) / sizeof (s1c88_regs[0]))-1)
+#define S1C88_MAX_REGS ((sizeof (s1c88_regs) / sizeof (s1c88_regs[0]))-1)
 
 void s1c88SpillThis (symbol *);
 static void freeAllRegs ();
@@ -274,7 +274,7 @@ s1c88SpillThis (symbol * sym)
   /* if this is rematerializable or has a spillLocation
      we are okay, else we need to create a spillLocation
      for it */
-  if (!(sym->remat || sym->usl.spillLoc) || (sym->usl.spillLoc && !sym->usl.spillLoc->onStack)) // z80 port currently only supports on-stack spill locations in code generation.
+  if (!(sym->remat || sym->usl.spillLoc) || (sym->usl.spillLoc && !sym->usl.spillLoc->onStack)) // the port currently only supports on-stack spill locations in code generation.
     createStackSpil (sym);
   else
     D (D_ALLOC, ("Already has spilllocation %p, %s\n", sym->usl.spillLoc, sym->usl.spillLoc->name));
@@ -419,7 +419,7 @@ s1c88_rUmaskForOp_internal (const operand * op)
   if (sym->isspilt || !sym->nRegs)
     return NULL;
 
-  rumask = newBitVect (Z80_MAX_REGS);
+  rumask = newBitVect (S1C88_MAX_REGS);
 
   for (j = 0; j < sym->nRegs; j++)
     {
@@ -445,7 +445,7 @@ s1c88_rUmaskForOp (const operand * op)
 bitVect *
 s1c88_regsUsedIniCode (iCode * ic)
 {
-  bitVect *rmask = newBitVect (Z80_MAX_REGS);
+  bitVect *rmask = newBitVect (S1C88_MAX_REGS);
 
   /* of all other cases */
   if (IC_LEFT (ic))
@@ -1247,7 +1247,7 @@ s1c88_ralloc (ebbIndex *ebbi)
   setToNull ((void *) &_G.totRegAssigned);
   _G.stackExtend = _G.dataExtend = 0;
 
-  _G.nRegs = Z80_MAX_REGS;
+  _G.nRegs = S1C88_MAX_REGS;
 
   /* change assignments this will remove some
      live ranges reducing some register pressure */

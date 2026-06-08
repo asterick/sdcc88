@@ -37,7 +37,7 @@ enum
      assigns these four (num_regs == 4).  Pairs are adjacent, low byte first:
      BA = A:B, HL = L:H.  IYL/IYH are never allocated (IY is not byte-
      addressable) but are load-bearing as ASMOP_IY's byte-wise
-     representation; the z80 phantom C/D/E are gone. */
+     representation; the phantom C/D/E are gone. */
   A_IDX = 0,
   B_IDX,
   L_IDX,
