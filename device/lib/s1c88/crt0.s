@@ -5,12 +5,12 @@
 ; environment, then calls _main. Assembled to crt0.rel; the sdcc driver links
 ; it first (port->linker.crt = "crt0.rel").
 ;
-; LAYOUT. The cartridge header lives at the very start of _CODE, and crt0 is linked
-; first, so with `-b _CODE=0x2100` (the driver's default code_loc) the header sits at
-; physical 0x2100 (cartridge byte 0; see docs/s1c88/banked-branch.md). Keeping the
-; header in _CODE (rather than a separate area) means the driver only has to pin
-; _CODE + _DATA — no extra -b for the header, and it dodges the sdas88 quirk where an
-; unpinned _CODE (implicit area 0 of every module) would land at address 0.
+; LAYOUT. The cartridge header is an ABSOLUTE area pinned at physical 0x2100 (cartridge
+; byte 0; see docs/s1c88/banked-branch.md), so its watermarks and vector slots sit at
+; exact addresses that the linker cannot move (robust to a future bjump-relaxation
+; pass).  The actual code is the relocatable _CODE area, which the driver pins right
+; after the header via code_loc (default 0x21D0) — the reset trampoline bjumps to
+; __start there.  ABS areas carry their own address, so no extra -b is needed.
 ;
 ; ROM header (hardware/BIOS-checked fields):
 ;   0x2100  "PM"                      2-byte cartridge marker
@@ -52,9 +52,10 @@
 	.globl	l__INITIALIZER
 
 	;----------------------------------------------------------------
-	; Area order. crt0 (linked first) establishes it: _CODE first so
-	; the header is area 0 at the pinned base; ROM init areas next;
-	; RAM areas last.
+	; Area order (relocatable code/data).  The cartridge header is a
+	; separate ABS area (below) at fixed addresses; _CODE holds the actual
+	; code and is pinned by the driver AFTER the header (code_loc, default
+	; 0x21D0).  _HOME must chain into ROM (else library home-code -> RAM).
 	;----------------------------------------------------------------
 	.area	_CODE
 	.area	_HOME			; codegen/library home code — must chain into ROM
@@ -73,44 +74,81 @@ __sdcc_fptr::
 	.ds	2
 
 	;================================================================
-	; Cartridge header — first bytes of _CODE (pinned @ 0x2100)
+	; Cartridge header — an ABSOLUTE area, so every watermark and vector
+	; slot is pinned to an EXACT address (not merely contiguous 6-byte
+	; bjumps in a relocatable area).  A future linker bjump-size-relaxation
+	; pass operates on relocatable code and skips ABS areas, so these
+	; addresses can never shift: the BIOS dispatch (slot N at 0x2102 + 6*N)
+	; and the 0x21A4 NINTENDO check stay put no matter how the trampolines
+	; are optimized.  Each `.org` hard-pins one element (and asserts its
+	; address at assembly time).
+	;================================================================
+	.area	_HEADER (ABS)
+
+	.org	0x2100
+	.ascii	"PM"			; cartridge marker
+	.org	0x2102 + 6 * 0
+	bjump	__start			; vector 0 (reset) -> startup
+	.org	0x2102 + 6 * 1
+	bjump	_irq_v1
+	.org	0x2102 + 6 * 2
+	bjump	_irq_v2
+	.org	0x2102 + 6 * 3
+	bjump	_irq_v3
+	.org	0x2102 + 6 * 4
+	bjump	_irq_v4
+	.org	0x2102 + 6 * 5
+	bjump	_irq_v5
+	.org	0x2102 + 6 * 6
+	bjump	_irq_v6
+	.org	0x2102 + 6 * 7
+	bjump	_irq_v7
+	.org	0x2102 + 6 * 8
+	bjump	_irq_v8
+	.org	0x2102 + 6 * 9
+	bjump	_irq_v9
+	.org	0x2102 + 6 * 10
+	bjump	_irq_v10
+	.org	0x2102 + 6 * 11
+	bjump	_irq_v11
+	.org	0x2102 + 6 * 12
+	bjump	_irq_v12
+	.org	0x2102 + 6 * 13
+	bjump	_irq_v13
+	.org	0x2102 + 6 * 14
+	bjump	_irq_v14
+	.org	0x2102 + 6 * 15
+	bjump	_irq_v15
+	.org	0x2102 + 6 * 16
+	bjump	_irq_v16
+	.org	0x2102 + 6 * 17
+	bjump	_irq_v17
+	.org	0x2102 + 6 * 18
+	bjump	_irq_v18
+	.org	0x2102 + 6 * 19
+	bjump	_irq_v19
+	.org	0x2102 + 6 * 20
+	bjump	_irq_v20
+	.org	0x2102 + 6 * 21
+	bjump	_irq_v21
+	.org	0x2102 + 6 * 22
+	bjump	_irq_v22
+	.org	0x2102 + 6 * 23
+	bjump	_irq_v23
+	.org	0x2102 + 6 * 24
+	bjump	_irq_v24
+	.org	0x2102 + 6 * 25
+	bjump	_irq_v25
+	.org	0x2102 + 6 * 26
+	bjump	_irq_v26
+	.org	0x2102 + 6 * 27		; = 0x21A4
+	.ascii	"NINTENDO"		; BIOS watermark (required)
+
+	;================================================================
+	; Startup — in _CODE (relocatable), which the driver pins after the
+	; header via code_loc (default 0x21D0).
 	;================================================================
 	.area	_CODE
-	.ascii	"PM"			; 0x2100 cartridge marker
-
-	bjump	__start			; 0x2102 reset vector -> startup
-	bjump	_irq_v1			; 0x2108 (vector 1)
-	bjump	_irq_v2
-	bjump	_irq_v3
-	bjump	_irq_v4
-	bjump	_irq_v5
-	bjump	_irq_v6
-	bjump	_irq_v7
-	bjump	_irq_v8
-	bjump	_irq_v9
-	bjump	_irq_v10
-	bjump	_irq_v11
-	bjump	_irq_v12
-	bjump	_irq_v13
-	bjump	_irq_v14
-	bjump	_irq_v15
-	bjump	_irq_v16
-	bjump	_irq_v17
-	bjump	_irq_v18
-	bjump	_irq_v19
-	bjump	_irq_v20
-	bjump	_irq_v21
-	bjump	_irq_v22
-	bjump	_irq_v23
-	bjump	_irq_v24
-	bjump	_irq_v25
-	bjump	_irq_v26		; 0x219E (vector 26)
-
-	.ascii	"NINTENDO"		; 0x21A4 BIOS watermark (required)
-
-	;================================================================
-	; Startup (immediately after the header, still in _CODE)
-	;================================================================
 __start::
 	; SP is left as the BIOS set it on reset — crt0 does not touch the stack.
 	ld	a, #0x00

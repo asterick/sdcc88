@@ -36,10 +36,10 @@ cc -E -P -x c "${OUT}/t.c" > "${OUT}/t.i"
 "$SDCCBIN" -ms1c88 --c1mode -o "${OUT}/t.asm" < "${OUT}/t.i" || { echo "!! compile FAILED"; exit 1; }
 "$SDAS" -o "${OUT}/t.rel" "${OUT}/t.asm" || { echo "!! assemble FAILED"; exit 1; }
 
-# link: crt0 first (header is the front of _CODE @ 0x2100), RAM @ 0x1000; pull s1c88.lib.
+# link: header is a fixed ABS area @ 0x2100; _CODE goes after it @ 0x21D0; RAM @ 0x1000.
 # (SP is set by the BIOS / the runner's mini-BIOS on reset; crt0 doesn't touch it.)
 LIBDIR="${SDCC}/share/sdcc/lib/s1c88"
-"$SDLD" -nwxi -b _CODE=0x2100 -b _DATA=0x1000 -k "$LIBDIR" -l s1c88 \
+"$SDLD" -nwxi -b _CODE=0x21D0 -b _DATA=0x1000 -k "$LIBDIR" -l s1c88 \
     "${OUT}/t.ihx" "${OUT}/crt0.rel" "${OUT}/t.rel" > "${OUT}/err" 2>&1 || {
   echo "!! LINK FAILED"; grep -E "Undefined|ASlink" "${OUT}/err" | sort -u | sed 's/^/    /'; exit 1; }
 

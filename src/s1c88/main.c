@@ -575,10 +575,11 @@ _setDefaultOptions (void)
   options.float_rent = 1;
   options.noRegParams = 0;
   /* Default code and data locations — the Pokémon Mini common-area memory map.
-     _CODE starts at the cartridge base 0x2100 (crt0 puts the "PM" header at the
-     very front of _CODE; see device/lib/s1c88/crt0.s); _DATA is near RAM at 0x1000
-     (RAM spans 0x1000-0x1FFF). The driver pins these via {z80bases} -> -b_CODE/-b_DATA. */
-  options.code_loc = 0x2100;
+     The cartridge header is a separate ABS area pinned at 0x2100 (in crt0); _CODE
+     holds the code and is pinned just AFTER the 208-byte header at 0x21D0 (the
+     conventional PM entry; the reset trampoline bjumps to __start here). _DATA is
+     near RAM at 0x1000 (RAM spans 0x1000-0x1FFF). Pinned via {z80bases} -> -b. */
+  options.code_loc = 0x21D0;
   options.allow_undoc_inst = false;
 
   options.data_loc = 0x1000;
