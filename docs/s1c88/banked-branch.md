@@ -447,6 +447,26 @@ for same-area branches + the linker `R_BYT3` rtofst fix). `size-check.sh` measur
 (corpus **150 B**; `scripts/corpus/relax.baseline`). The history that led here is kept below because it
 documents two real, subtle bugs.
 
+> **⚠ KNOWN ISSUE — stale symbol tables under #14c (2026-06-09, NOT yet fixed).** #14c is a pure
+> **emit-time** reflow: it shifts the emitted ROM bytes down by `rlxDelta()` but **never updates the
+> linker's symbol/area address model** (by design — `relr3` needs the original addresses for the
+> record/PCR math). Consequence: `.map` / `.sym` / `.noi` (NoICE) / `.lst` report the **pre-relax**
+> address for every symbol located *after* a dropped `ld nb` in its bank — off by the cumulative
+> reclaim before it (e.g. a user `_irq_v1` reads `0x21EA` in the map but is emitted at `0x21E4`).
+> **The generated code is correct** — verified by reading ROM bytes: a cart-vector-table `bjump`'s
+> disp resolves to exactly where the handler is *emitted* (its `R3_SYM` target gets `reli -=
+> rlxDelta(reli)` at lkrloc3.c:757 while the ABS source `pc` is correctly not shifted, :710). Only the
+> *debug metadata* lies. This is invisible to the test suite twice over: (1) default IRQ vectors are a
+> packed block of identical 1-byte `rete`s, so even a wrong landing returns; (2) emu-test installs ISR
+> vectors directly in low RAM (`*(volatile unsigned int *)0x0010 = &handler`), bypassing the `0x2102`
+> trampoline entirely — so the `bjump`-dispatch path has **no execution coverage at all**. Symptom that
+> surfaced it: cross-referencing vector `bjump` disps against the `.map` shows phantom "jumps to strange
+> locations" (the disp is right, the map is stale). **Fix (TODO):** delta-adjust symbol addresses when
+> the linker writes the symbol-table outputs (apply the same `rlxDelta()` the emit path uses), and add a
+> test that links a real trampoline-dispatched handler and asserts the disp *and* the map address both
+> resolve to where the handler is emitted. (Was briefly mis-diagnosed as a `bjump` mis-jump; the ROM-byte
+> check above disproved that.)
+
 **Split-slot reclaim done (132 → 150 B):** the slots stage (i) skipped were *split slots* (`ld nb`'s
 `CE C4` straddling a `.rel` T-record boundary). Fixed at the source — `sdas88` reserves the `ld nb`
 (and the signed-cc `jrs +7` hop) atomically in one T-record via `outchk(scc>=0 ? 6 : 3, 5)`, so the

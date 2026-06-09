@@ -98,6 +98,18 @@ Workflow: add the case, run the three gates, fix what surfaces, add an emu/diff 
   `SDLD_NO_VECREORDER=1`. `vec-reorder-smoke.sh` locks the placement + the +3 disp. Design: `banked-branch.md`
   §10 "#14d".
 
+- **[M] #14e — fix stale symbol tables under #14c relaxation (debug-info bug, code is correct).** #14c
+  reflows the emitted ROM down by `rlxDelta()` but never updates the linker's symbol/area model, so
+  `.map`/`.sym`/`.noi`/`.lst` report **pre-relax** addresses — off by the cumulative reclaim for any symbol
+  past a drop in its bank (e.g. a user `_irq_v1` reads `0x21EA` in the map but is emitted at `0x21E4`). The
+  generated **code is correct** (vector `bjump` disps resolve to where handlers are actually emitted —
+  verified by ROM-byte inspection); only the debug metadata lies, which reads as "jumps to strange locations"
+  when disps are cross-referenced against the map. Fix: delta-adjust symbol addresses at symbol-table emit
+  (`lkmain.c`/`lksym`/`lknoice` — apply the same `rlxDelta()`). Add a test linking a real trampoline-dispatched
+  handler that asserts both the disp and the map address resolve to the handler's emitted location (the
+  `0x2102` `bjump`-dispatch path currently has **zero** execution coverage — emu-test installs vectors
+  directly in low RAM). Full write-up: `banked-branch.md` §10 "KNOWN ISSUE".
+
 ---
 
 ## Codegen-boundary lift (#16) — future research pass
