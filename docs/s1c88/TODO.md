@@ -81,9 +81,13 @@ Workflow: add the case, run the three gates, fix what surfaces, add an emu/diff 
     (rel files + `library()` modules, relocation on, output suppressed before `lkfopen()`) collecting
     `rlxIsDrop[]` in the emit pass's exact order; `freelibraryindex()` guarded off while measuring.
     Proven byte-identical with `SDLD_RELAX=1` (run-tests 50/50, emu 16/16, diff 12/12, hello cmp-clean).
-  - **⬜ Stage (i) emit Step 2 (next):** the mutating half — apply `delta` to area/areax/bank/symbol
-    addresses (skip absolute areas); gated by `SDLD_RELAX_EMIT`, drop `rtflg` on the `ld nb` bytes
-    (`rtofst += 3`); kept `carl` + `R_PCR` self-heal. Prove on emu-test + diff-test, re-baseline corpus.
+  - **⚠ Stage (i) emit Step 2 — WIP (gated `SDLD_RELAX_EMIT`, default-off, ROMs still wrong).** Pipeline
+    wired: `s1c88RelaxApplyShift()` (delta shift) + emit `rtflg` byte-drops. Areas/areaxes + areax-relative
+    symbols shift correctly (`_CODE` 153→138, post-areas move down), but emu 0/16 under emit — two address
+    holes: (1) linker boundary symbols `s_/l_<area>` (`s_axp==NULL`, crt0 init/bss) keep stale values;
+    (2) per-record T-record load addresses still encode the original offset (intra-areax drops misposition
+    later records). **Fix (next):** delta()-adjust addresses AT EMIT (record load addr, symval, area refs,
+    PCR base+target; absolute ⇒ delta 0) instead of pre-shifting structs. See banked-branch.md §14c.
   - **⬜ (ii)** iterate to fixpoint; **⬜ (iii)** trampoline/`cars` refinement.
 
 ---

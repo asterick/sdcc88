@@ -418,10 +418,26 @@ it re-walks the rel files + `library()` modules with relocation on but output su
 emit pass replays it. `library()`'s `freelibraryindex()` is guarded off while measuring so
 the emit pass can reload the same modules; slot order is identical because both runs use the
 same `nxtline` + `library` path. Proven **byte-identical** with the sweep on (hello cmp-clean;
-run-tests 50/50, emu 16/16, diff-test 12/12 with `SDLD_RELAX=1`). **Remaining (Step 2):** the
-mutating half — apply `delta` to area/areax/bank/symbol addresses (skipping absolute areas)
-and, gated by `SDLD_RELAX_EMIT`, clear `rtflg` on the dropped `ld nb` bytes (`rtofst += 3`) so
-the kept `carl` + `R_PCR` disp16 self-heal; prove on emu-test + diff-test, then re-baseline.
+run-tests 50/50, emu 16/16, diff-test 12/12 with `SDLD_RELAX=1`).
+
+**Emit half, Step 2 — mutating reflow, ⚠ WIP (known-incomplete, `SDLD_RELAX_EMIT`, default-off).**
+The pipeline is wired end to end: after the measure sweep, `s1c88RelaxApplyShift()` moves the
+address model down by `delta(addr)` and the emit pass clears `rtflg` on the dropped `ld nb`
+bytes (`rtofst += 3`). Verified working: **areas/areaxes shrink and shift correctly** (e.g.
+`_CODE` 153→138 B, `_HOME`/`_GSINIT` 0x2269→0x225A, `_DATA` unchanged), and areax-relative
+symbols shift. **But emitted ROMs are still wrong** (emu 0/16 under `SDLD_RELAX_EMIT`) because
+two address-bearing entities are not yet reflowed:
+1. **Linker boundary symbols** (`s_<area>`/`l_<area>`, `s_axp == NULL`) that crt0's init/bss
+   loops read — the symbol-shift loop skips them, so they keep stale pre-shrink values.
+2. **Per-record T-record load addresses** — they still encode the *original* areax offset, so a
+   record after an intra-areax drop sits 3 bytes too high (the `rtflg` byte-drop only compacts
+   *within* a record, not the next record's stated address).
+
+**The corrected approach** (next step): stop pre-shifting structs and instead `delta()`-adjust
+every address *at the point it is emitted* — the record load address, `symval` results
+(R3_SYM), area refs (R3_AREA), and both the target and the pc-relative base of the `R_PCR` —
+treating absolute-area addresses as `delta == 0`. That handles boundary symbols and per-record
+addresses uniformly. Prove on emu-test + diff-test, then make it default and re-baseline.
 
 ### Validation (every step)
 

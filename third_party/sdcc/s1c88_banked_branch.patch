@@ -116,7 +116,7 @@
   *              expr *  esp             pointer to expr structure
 --- a/sdas/linksrc/lkrloc3.c
 +++ b/sdas/linksrc/lkrloc3.c
-@@ -54,6 +54,288 @@
+@@ -54,6 +54,353 @@
   *
   */
  
@@ -402,10 +402,75 @@
 +                ok ? "OK (areas don't over-shrink; reclaim balances)" : "FAILED");
 +}
 +
++/*
++ * sdcc88 #14c Stage (i) emit Step 2 — apply the shrink plan to the address model.
++ *
++ * Move every RELOCATABLE areax/area/symbol DOWN by delta(addr) = 3 bytes per
++ * dropped `ld nb` below it; the emit pass then removes those bytes (rtflg) so
++ * the layout matches.  Absolute areas (the hardware-fixed vector table) never
++ * move — their slots were excluded from the plan and delta() at their (low)
++ * addresses is 0, but we skip them explicitly.  Symbols carry an areax-relative
++ * s_addr (absolute = areax->a_addr + s_addr), so they are shifted FIRST, using
++ * the still-old areax bases, before the areax/area bases are themselves moved.
++ * Only runs under SDLD_RELAX_EMIT.  Design: banked-branch.md §14c "Stage (i)".
++ */
++void
++s1c88RelaxApplyShift(void)
++{
++        struct area *ar;
++        struct areax *ax;
++        int h;
++
++        if (!rlxEmitOn() || rlxDropN == 0)
++                return;
++        if (rlxDropN > 1)
++                qsort(rlxDrop, rlxDropN, sizeof(a_uint), rlxCmpAddr);
++
++        /* 1. symbols — areax-relative; shift by the in-areax drop count, using
++         *    the OLD areax base (areax bases are not moved until step 2). */
++        for (h = 0; h < NHASH; h++) {
++                struct sym *sp;
++                for (sp = symhash[h]; sp; sp = sp->s_sp) {
++                        a_uint base, abs_old;
++                        if (sp->s_axp == NULL)
++                                continue;
++                        if (sp->s_axp->a_bap && (sp->s_axp->a_bap->a_flag & A3_ABS))
++                                continue;
++                        base    = sp->s_axp->a_addr;
++                        abs_old = base + sp->s_addr;
++                        sp->s_addr -= (rlxDelta(abs_old) - rlxDelta(base));
++                }
++        }
++
++        /* 2. areax + area bases and sizes (relocatable areas only). */
++        for (ar = areap; ar; ar = ar->a_ap) {
++                if (ar->a_flag & A3_ABS)
++                        continue;
++                for (ax = ar->a_axp; ax; ax = ax->a_axp)
++                        ax->a_addr -= rlxDelta(ax->a_addr);
++                ar->a_size -= (rlxDelta(ar->a_addr + ar->a_size) - rlxDelta(ar->a_addr));
++                ar->a_addr -= rlxDelta(ar->a_addr);
++        }
++
++        /* KNOWN-INCOMPLETE (SDLD_RELAX_EMIT is experimental, default-off): this
++         * shifts areas/areaxes and areax-relative symbols correctly, but two
++         * address-bearing entities are NOT yet reflowed, so emitted ROMs are
++         * wrong:
++         *   (a) linker boundary symbols (s_<area>/l_<area>, s_axp == NULL) that
++         *       crt0's init/bss loops read — they keep stale pre-shrink values;
++         *   (b) per-record T-record load addresses, which still encode the
++         *       ORIGINAL areax offset, so records after an intra-areax drop are
++         *       positioned 3 bytes too high (the rtflg byte-drop only compacts
++         *       WITHIN a record, not the next record's stated address).
++         * The robust fix is to delta()-adjust every address at the point it is
++         * emitted (record load address, symval, area refs, PCR base+target)
++         * rather than pre-shifting structs — see banked-branch.md §14c. */
++}
++
  /*)Function VOID        reloc3(c)
   *
   *                      int c           process code
-@@ -370,6 +652,72 @@
+@@ -370,6 +717,72 @@
                          reli = a[rindex]->a_addr;
                  }
  
@@ -480,12 +545,13 @@
                   */
 --- a/sdas/linksrc/lkmain.c
 +++ b/sdas/linksrc/lkmain.c
-@@ -24,6 +24,12 @@
+@@ -24,6 +24,13 @@
  
  #include "aslink.h"
  
 +/* sdcc88 #14c relaxation hooks (defined in lkrloc3.c) */
 +extern int s1c88RelaxAnyOn(void);
++extern void s1c88RelaxApplyShift(void);
 +extern int s1c88_relax_measure;
 +extern int rlxMeasureIdx;
 +extern int rlxEmitIdx;
@@ -493,7 +559,7 @@
  /*)Module       lkmain.c
   *
   *      The module lkmain.c contains the functions which
-@@ -315,6 +321,7 @@
+@@ -315,6 +322,7 @@
                  filep = linkp->f_flp;
                  hp = NULL;
                  radix = 10;
@@ -501,11 +567,11 @@
  
                  /* sdld specific */
                  if (TARGET_IS_8051)
-@@ -399,6 +406,42 @@
-                         /* end sdld specific */
- 
+@@ -375,6 +383,45 @@
+                         NoICEfopen();
+ #endif
                          /*
-+                         * sdcc88 #14c: relaxation MEASURE sweep.
++                         * sdcc88 #14c: relaxation MEASURE sweep + shift.
 +                         *
 +                         * Re-walk the rel files + libraries with relocation
 +                         * enabled but BEFORE lkfopen() — output files aren't
@@ -514,8 +580,10 @@
 +                         * (one rlxIsDrop[] entry per banked slot) in the exact
 +                         * order the emit pass below will replay.  library()'s
 +                         * freelibraryindex() is guarded off while measuring so
-+                         * the real emit pass can reload the same modules.
-+                         * Read-only: no addresses or bytes change here.
++                         * the real emit pass can reload the same modules.  Then
++                         * (only under SDLD_RELAX_EMIT) shift the address model by
++                         * the plan, so map()/summary and the emit pass below all
++                         * see the final relaxed layout.
 +                         */
 +                        if (s1c88RelaxAnyOn()) {
 +                                struct lfile *save_cfp = cfp, *save_filep = filep;
@@ -537,14 +605,15 @@
 +                                cfp = save_cfp; sfp = save_sfp; filep = save_filep;
 +                                hp = save_hp; pass = save_pass; radix = save_radix;
 +                                uflag = save_uflag;
-+                                /* (stage (i) emit: address shift goes here, before map/lkfopen) */
++
++                                s1c88RelaxApplyShift();   /* no-op unless SDLD_RELAX_EMIT */
 +                        }
 +
 +                        /*
-                          * Open output file(s)
+                          * Output Link Map.
                           */
-                         lkfopen();
-@@ -456,6 +499,17 @@
+                         map();
+@@ -456,6 +503,17 @@
                  CreateAOMF51();
          }
  
