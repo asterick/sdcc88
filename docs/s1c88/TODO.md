@@ -53,10 +53,15 @@ The highest-value ongoing work. Each new `tests/diff/cases/*.c` (+ a `tests/emu/
 behaviour) is run through `corpus-check` + `emu-test` + `diff-test`; the suite has caught several real
 **silent** miscompiles that byte-identical assembly never could (struct-arg register-drop, the `cp ba,hl`
 pointer-compare peephole gap, the long-long/struct return-ABI off-by-one). Covered: arith, bitfields, calls,
-control, longlong, memory, ptrarith, switch, structargs, fnptr2, unions, float — plus the emu ABI cases.
+control, longlong, memory, ptrarith, switch, structargs, fnptr2, unions, float, libc — plus the emu ABI cases.
 **Still untested (pick any; new territory is also fair game):**
 
-- **#11-libc** — `mem*`/`str*` differential (memcpy / memmove / memset / strcmp / strlen …) run through the lib.
+- ✅ **#11-libc — DONE** (`tests/diff/cases/libc.c`, 78 values): the s1c88.lib string/memory subset vs host
+  libc — memmove (both overlap directions), memcmp/memchr, strcpy/strncpy (zero-pad + truncate), strcat/
+  strncat, strcmp/strncmp, strchr/strrchr, strstr — plus memcpy/memset via `__builtin_*` (their only target
+  form; no lib member). Sign-normalized `*cmp` and pointer-offset results keep the impl-defined corners
+  sound. No miscompiles surfaced. **Note:** `strlen` is absent on the target (no lib source, no builtin) — a
+  gap to fill if user code needs it, not a test gap.
 - ✅ **#11-longshift — DONE** (`tests/diff/cases/longshift.c`): exhaustive variable-count shifts (every
   count 0..width-1 for 16/32/64-bit, vs arith.c's 6 samples) + rotates + long-division edges. Found one
   silent miscompile — the 32-bit variable-left-shift IY-counter bug above (**#11-longshift-iy**, deferred;
