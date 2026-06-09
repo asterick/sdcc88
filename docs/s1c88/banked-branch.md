@@ -332,18 +332,20 @@ already relaxed assembler-side (#14b) and carry no such reloc — so the linker'
 already has the exact resolved displacement + bank for every #14c candidate. `relt3()` in
 `linksrc/lkrloc3.c` now tallies each slot (same-bank cars-range → reclaim 4 B; same-bank
 carl-range → 3 B; cross-bank → blocked, the bank switch is mandatory) and `lkmain.c` prints
-the summary at end-of-link. It is **gated behind the `SDLD_RELAX_REPORT=1` env var and
-changes no output byte** (corpus stays byte-identical; all gates green). Run it on any link:
+the summary at end-of-link. It excludes slots in **absolute areas** (`A3_ABS`) — the IRQ/reset vector table is
+hardware-fixed and can never be relaxed — and is **gated behind the `SDLD_RELAX_REPORT=1`
+env var, changing no output byte** (corpus stays byte-identical; all gates green). Run it
+on any link:
 
 ```bash
-SDLD_RELAX_REPORT=1 make -C examples/hello      # 29 slots, all same-bank carl-range, 87 B reclaimable
+SDLD_RELAX_REPORT=1 make -C examples/hello   # 29 slots: 27 hardware-fixed vectors, 2 reclaimable (6 B)
 ```
 
-This is the inventory the reflow stages (i–iii) consume, and it answers whether they're
-worth building. First data point: `examples/hello` (498 B ROM) has **87 B reclaimable**,
-and — notably — every slot is in `carl` range, so the *simple* stage-(i) shrink (drop
-`ld nb`, keep the 3-byte relative branch) captures the entire opportunity there; the harder
-`cars`/trampoline refinement (stages ii–iii) adds nothing for that program. (Patch:
+This is the inventory the reflow stages (i–iii) consume. Key first-data correction: in
+`examples/hello` **27 of the 29 slots are the hardware-fixed vector table**, so only **2
+slots / 6 B** are genuinely reclaimable — the naïve "87 B" first reading was 81 B of
+untouchable vectors. On a larger program (≈2.5 KB code, many distinct library calls) the
+honest figure is ~13 reclaimable slots / ~40 B. (Patch:
 `third_party/sdcc/s1c88_banked_branch.patch`, applied by `build-sdld.sh`.)
 
 #### Stage (i) — the validated reflow mechanism (design, ahead of implementation)
@@ -395,6 +397,22 @@ addresses and only shrink slots already in range there (shrinking only pulls tar
 closer, so an in-range slot stays in range — monotone, no iteration needed; that's stage
 ii). Skip split slots. Gate behind `SDLD_RELAX=1`, default off (corpus stays byte-identical
 until it's proven on emu-test + diff-test, then re-baseline).
+
+**Measure + plan engine — ✅ DONE (read-only).** The first half of stage (i): during the
+existing relocation pass `rlxPlanSlot()` (lkrloc3.c) collects the conservative drop plan
+(same-bank, in `carl` range with margin, `ld nb` not split across a T-record, **and not in
+an absolute area**), then `s1c88RelaxPredict()` derives `delta(addr)` and the predicted
+post-relax area layout with self-checks (no area over-shrinks; total reclaimed balances
+`3 × drops`). It mutates nothing and emits nothing — `SDLD_RELAX=1` only prints the plan, so
+all gates stay green. It already paid for itself by surfacing two bugs the naïve emit would
+have shipped: (1) the conservative plan was including the **27 hardware-fixed vector slots**
+(emit would have corrupted the vector table) — fixed by the `A3_ABS` exclusion, which also
+corrected the Stage-0 report's over-count; and (2) confirmed the **T-record-split** slots
+are correctly skipped (on the 2.5 KB sample, 13 reclaimable but 12 planned — the 13th split).
+Run: `SDLD_RELAX=1 make -C examples/hello`. **Remaining for stage (i):** the emit half — the
+3-pass driver (measure → shift → emit), applying `delta` to area/areax/bank/symbol addresses
+and clearing `rtflg` on the dropped `ld nb` bytes (`rtofst += 3`), proven on emu-test +
+diff-test, then re-baseline the corpus.
 
 ### Validation (every step)
 

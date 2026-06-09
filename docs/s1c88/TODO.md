@@ -70,10 +70,17 @@ Workflow: add the case, run the three gates, fix what surfaces, add an emu/diff 
   plan".)
   - **✅ Stage 0 (opportunity report) DONE.** `linksrc/lkrloc3.c` tallies every cross-module
     `R_S1C88_BANK` slot at link time and `lkmain.c` prints the reclaimable-bytes summary; gated behind
-    `SDLD_RELAX_REPORT=1`, read-only (corpus byte-identical). Run: `SDLD_RELAX_REPORT=1 make -C examples/hello`.
-    First data: hello = **87 B reclaimable**, all `carl`-range ⇒ the simple stage-(i) shrink captures it all.
-    Remaining = the reflow itself: **(i)** single-pass shrink + address/symbol/reloc reflow, **(ii)** iterate,
-    **(iii)** trampoline/`cars` refinement. Stage 0 is the inventory those consume.
+    `SDLD_RELAX_REPORT=1`, read-only (corpus byte-identical). Excludes hardware-fixed vector slots
+    (absolute areas). Honest hello figure: 27 fixed vectors + **2 reclaimable (6 B)**.
+  - **✅ Stage (i) measure + plan engine DONE (read-only).** `rlxPlanSlot()`/`s1c88RelaxPredict()` build
+    the conservative drop plan (same-bank, `carl`-range, `ld nb` not split, not absolute), derive
+    `delta(addr)` + predicted layout, and self-check (no over-shrink; reclaim balances `3×drops`).
+    `SDLD_RELAX=1`, mutates/emits nothing → gates green. Caught two latent emit bugs (vector inclusion;
+    confirmed split-slot skip). Run: `SDLD_RELAX=1 make -C examples/hello`.
+  - **⬜ Stage (i) emit half (next):** the 3-pass driver (measure → shift → emit) — apply `delta` to
+    area/areax/bank/symbol addresses, clear `rtflg` on dropped `ld nb` bytes (`rtofst += 3`); the kept
+    `carl` + its `R_PCR` disp16 self-heal. Prove on emu-test + diff-test, re-baseline the corpus.
+  - **⬜ (ii)** iterate to fixpoint; **⬜ (iii)** trampoline/`cars` refinement.
 
 ---
 

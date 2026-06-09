@@ -116,7 +116,7 @@
   *              expr *  esp             pointer to expr structure
 --- a/sdas/linksrc/lkrloc3.c
 +++ b/sdas/linksrc/lkrloc3.c
-@@ -54,6 +54,94 @@
+@@ -54,6 +54,242 @@
   *
   */
  
@@ -139,6 +139,7 @@
 +static long rlxNSameFar;                /* same-bank, out of carl range (0)     */
 +static long rlxNCross;                  /* cross-bank, ld nb stays (blocked)    */
 +static long rlxNCrossShort;             /* ...of which the branch fits cars (1) */
++static long rlxNFixed;                  /* slots in absolute areas (vectors)    */
 +static long rlxBytes;                   /* estimated reclaimable bytes          */
 +
 +static int
@@ -159,11 +160,16 @@
 + * displacement convention is immaterial to a bytes-on-the-table estimate.
 + */
 +static VOID
-+rlxAccount(long tgt, long abank, int tbank, int cbank)
++rlxAccount(long tgt, long abank, int tbank, int cbank, int absarea)
 +{
 +        long dshort, dlong;
 +
 +        rlxNTotal++;
++        if (absarea) {
++                /* hardware-fixed vector slot — not reclaimable */
++                rlxNFixed++;
++                return;
++        }
 +        if (tbank == 0 || tbank == cbank) {
 +                /* same bank: drop the 3-byte `ld nb`, keep a relative branch
 +                 * starting where CE was (abank-2). */
@@ -200,6 +206,7 @@
 +                return;
 +        fprintf(stderr, "[relax-report] cross-module banked-branch slots (R_S1C88_BANK):\n");
 +        fprintf(stderr, "[relax-report]   total seen           : %ld\n", rlxNTotal);
++        fprintf(stderr, "[relax-report]   hardware-fixed (abs) : %ld  (vector table — NOT reclaimable)\n", rlxNFixed);
 +        fprintf(stderr, "[relax-report]   same-bank, cars range: %ld  (reclaim 4B each)\n", rlxNSameJrs);
 +        fprintf(stderr, "[relax-report]   same-bank, carl range: %ld  (reclaim 3B each)\n", rlxNSameJrl);
 +        fprintf(stderr, "[relax-report]   same-bank, unreachable: %ld (reclaim 0)\n", rlxNSameFar);
@@ -208,10 +215,151 @@
 +        fprintf(stderr, "[relax-report]   est. reclaimable     : %ld bytes  (#14c stages 1-3 upper bound)\n", rlxBytes);
 +}
 +
++/*
++ * sdcc88 #14c Stage (i) — measure + plan engine (READ-ONLY this increment).
++ *
++ * Builds the conservative single-pass shrink plan (which cross-module banked
++ * slots would drop their 3-byte `ld nb`), then derives the resulting address
++ * shift delta(addr) and the predicted post-relax area layout, with internal
++ * self-checks on the model.  It does NOT yet mutate addresses or emit bytes —
++ * that is the next increment, which needs the 3-pass driver in lkmain.c.
++ * Enabling SDLD_RELAX=1 only PRINTS the plan, so output stays byte-identical
++ * and every gate stays green.  Design: docs/s1c88/banked-branch.md §14c
++ * "Stage (i)".
++ */
++#define RLX_CARL_MARGIN 256             /* keep pre/post-shrink range decision in agreement */
++
++static int     rlx14c = -1;             /* SDLD_RELAX enabled? (lazy)             */
++static a_uint *rlxDrop;                 /* abank (bank-byte addr) of each planned drop */
++static int     rlxDropN, rlxDropCap;
++
++static int
++rlxOn14c(void)
++{
++        if (rlx14c < 0) {
++                char *e = getenv("SDLD_RELAX");
++                rlx14c = (e != NULL && *e != '\0' && *e != '0') ? 1 : 0;
++        }
++        return rlx14c;
++}
++
++/*
++ * Record a conservative stage-(i) drop candidate.  abank = address of the
++ * [bank] byte in `CE C4 [bank] <carl|jrl> <disp16>`.  The slot drops its
++ * 3-byte `ld nb` iff: same bank (else the bank switch is mandatory); the whole
++ * `ld nb` lies in THIS T-record (rtp-2 >= rtofst — else it splits across an
++ * already-emitted record); and the kept `carl` (which moves to abank-2)
++ * comfortably reaches the target (margin so a pre-shrink in-range decision
++ * still holds in the smaller post-shrink layout — monotone safety).
++ */
++static VOID
++rlxPlanSlot(long tgt, long abank, int tbank, int cbank, int rtp, int rtofst)
++{
++        long disp;
++
++        if (!(tbank == 0 || tbank == cbank))
++                return;
++        if (rtp - 2 < rtofst)
++                return;
++        disp = tgt - (abank - 2 + 3);           /* carl opcode @abank-2, +3 (op+disp16) */
++        if (disp < -(32768 - RLX_CARL_MARGIN) || disp > (32767 - RLX_CARL_MARGIN))
++                return;
++        if (rlxDropN == rlxDropCap) {
++                rlxDropCap = rlxDropCap ? rlxDropCap * 2 : 64;
++                rlxDrop = (a_uint *) realloc(rlxDrop, rlxDropCap * sizeof(a_uint));
++                if (rlxDrop == NULL) { rlxDropCap = rlxDropN = 0; return; }
++        }
++        rlxDrop[rlxDropN++] = (a_uint) abank;
++}
++
++static int
++rlxCmpAddr(const void *a, const void *b)
++{
++        a_uint x = *(const a_uint *) a, y = *(const a_uint *) b;
++        return (x < y) ? -1 : (x > y) ? 1 : 0;
++}
++
++/*
++ * delta(addr) = bytes removed strictly before addr = 3 * (#drops with abank <
++ * addr).  Each drop removes the 3 `ld nb` bytes ending at abank; an instruction
++ * or symbol is never inside an `ld nb`, so the count is exact.  rlxDrop[] is
++ * sorted ascending by s1c88RelaxPredict() before this is used.
++ */
++static a_uint
++rlxDelta(a_uint addr)
++{
++        int lo = 0, hi = rlxDropN;              /* lower_bound of addr in rlxDrop[] */
++        while (lo < hi) {
++                int mid = (lo + hi) / 2;
++                if (rlxDrop[mid] < addr) lo = mid + 1; else hi = mid;
++        }
++        return (a_uint) (3 * lo);
++}
++
++/*
++ * Print the stage-(i) plan + predicted post-relax layout, and self-check the
++ * model.  Read-only: walks the area list applying delta() arithmetically; it
++ * does not touch a_addr/a_size.  Called once at end-of-link from lkmain.c.
++ */
++VOID
++s1c88RelaxPredict(void)
++{
++        struct area *ap2;
++        a_uint origrom = 0, newrom = 0;
++        int ok = 1;
++
++        if (!rlxOn14c())
++                return;
++        if (rlxDropN > 1)
++                qsort(rlxDrop, rlxDropN, sizeof(a_uint), rlxCmpAddr);
++
++        fprintf(stderr, "[relax-plan] stage-(i) conservative drops: %d slots (%d bytes)\n",
++                rlxDropN, 3 * rlxDropN);
++        if (getenv("SDLD_RELAX_DEBUG")) {
++                int di;
++                for (ap2 = areap; ap2; ap2 = ap2->a_ap)
++                        fprintf(stderr, "[relax-dbg] area %-10s base=0x%06lx size=%lu flag=0x%x\n",
++                                ap2->a_id, (unsigned long) ap2->a_addr, (unsigned long) ap2->a_size, ap2->a_flag);
++                for (di = 0; di < rlxDropN; di++)
++                        fprintf(stderr, "[relax-dbg] drop[%d] abank=0x%06lx\n", di, (unsigned long) rlxDrop[di]);
++        }
++
++        for (ap2 = areap; ap2; ap2 = ap2->a_ap) {
++                a_uint base = ap2->a_addr, size = ap2->a_size;
++                a_uint dn, nbase, nsize;
++                if (size == 0)
++                        continue;
++                dn    = rlxDelta(base + size) - rlxDelta(base);   /* dropped within area */
++                nbase = base - rlxDelta(base);
++                nsize = size - dn;
++                origrom += size;
++                newrom  += nsize;
++                if (dn > size) {                                  /* area cannot over-shrink */
++                        ok = 0;
++                        fprintf(stderr, "[relax-plan]  !! area %s: dropped %lu > size %lu\n",
++                                ap2->a_id, (unsigned long) dn, (unsigned long) size);
++                }
++                if (dn)
++                        fprintf(stderr, "[relax-plan]   %-8s 0x%06lx..+%lu  ->  0x%06lx..+%lu  (-%lu)\n",
++                                ap2->a_id, (unsigned long) base, (unsigned long) size,
++                                (unsigned long) nbase, (unsigned long) nsize, (unsigned long) dn);
++        }
++        /* every planned drop must land in exactly one area => total reclaimed == 3*N */
++        if (origrom - newrom != (a_uint) (3 * rlxDropN)) {
++                ok = 0;
++                fprintf(stderr, "[relax-plan]  !! reclaimed %lu != 3*%d (a drop fell outside all areas)\n",
++                        (unsigned long) (origrom - newrom), rlxDropN);
++        }
++        fprintf(stderr, "[relax-plan]   predicted code: %lu -> %lu bytes (%lu reclaimed)\n",
++                (unsigned long) origrom, (unsigned long) newrom, (unsigned long) (origrom - newrom));
++        fprintf(stderr, "[relax-plan]   model self-check: %s\n",
++                ok ? "OK (areas don't over-shrink; reclaim balances)" : "FAILED");
++}
++
  /*)Function VOID        reloc3(c)
   *
   *                      int c           process code
-@@ -370,6 +458,38 @@
+@@ -370,6 +606,48 @@
                          reli = a[rindex]->a_addr;
                  }
  
@@ -231,11 +379,21 @@
 +                if (mode & 0x800) {
 +                        int tbank = (int) ((reli >> 16) & 0xFF);
 +                        int cbank = (int) (((pc + (rtp - rtofst)) >> 16) & 0xFF);
++                        /* A slot in an ABSOLUTE area (A3_ABS) is hardware-fixed
++                         * — the IRQ/reset vector table — and must NEVER be
++                         * relaxed (the CPU jumps to fixed offsets) nor counted
++                         * as reclaimable. */
++                        int absarea = (ap != NULL) && (ap->a_flag & A3_ABS);
 +                        /* sdcc88 #14c Stage 0: read-only relaxation tally. */
 +                        if (rlxOn())
 +                                rlxAccount((long) reli,
 +                                           (long) (pc + (rtp - rtofst)),
-+                                           tbank, cbank);
++                                           tbank, cbank, absarea);
++                        /* sdcc88 #14c Stage (i): read-only conservative drop plan. */
++                        if (rlxOn14c() && !absarea)
++                                rlxPlanSlot((long) reli,
++                                            (long) (pc + (rtp - rtofst)),
++                                            tbank, cbank, rtp, (int) rtofst);
 +                        /* Leave rtflg set on these bytes so lkout() emits them. */
 +                        if ((tbank == 0 || tbank == cbank) && rtp - 2 >= (int) rtofst) {
 +                                rtval[rtp-2] = 0xFF;    /* nop (was CE)   */
@@ -252,15 +410,19 @@
                   */
 --- a/sdas/linksrc/lkmain.c
 +++ b/sdas/linksrc/lkmain.c
-@@ -456,6 +456,13 @@
+@@ -456,6 +456,17 @@
                  CreateAOMF51();
          }
  
-+        /* sdcc88 #14c Stage 0: print the cross-module relaxation-opportunity
-+         * report (no-op unless SDLD_RELAX_REPORT is set). Defined in lkrloc3.c. */
++        /* sdcc88 #14c: print the cross-module relaxation-opportunity report
++         * (Stage 0, SDLD_RELAX_REPORT) and the conservative shrink plan +
++         * predicted layout (Stage (i), SDLD_RELAX). Both read-only / no-op
++         * unless their env var is set. Defined in lkrloc3.c. */
 +        {
 +                extern VOID s1c88RelaxReport(void);
++                extern VOID s1c88RelaxPredict(void);
 +                s1c88RelaxReport();
++                s1c88RelaxPredict();
 +        }
 +
          lkexit(lkerr ? ER_ERROR : ER_NONE);
