@@ -1,0 +1,11 @@
+# Build artifacts (see `make clean`) — only hello.c / Makefile / README.md are tracked.
+*.ihx
+*.min
+*.asm
+*.rel
+*.lst
+*.sym
+*.map
+*.lk
+*.noi
+*.mem
