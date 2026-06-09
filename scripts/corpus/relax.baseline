@@ -10,7 +10,7 @@
 10_varargs 3
 11_float 27
 12_arrays 0
-13_swap 6
+13_swap 9
 14_mixed 3
 15_stack 18
 16_mult 6
@@ -18,4 +18,4 @@
 18_jumptab 0
 19_far 0
 20_div 18
-TOTAL 150
+TOTAL 153

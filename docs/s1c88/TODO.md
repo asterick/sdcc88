@@ -80,10 +80,16 @@ Workflow: add the case, run the three gates, fix what surfaces, add an emu/diff 
   `push b`/`pop b` register-preservation noise. ~5 insns/site when it fires.
 - **[S] #12-far-idiom.** Tighten the `__far` EP=0 deref sequences and (now that #14b relaxation landed) the
   `bcall`/`bjump` slot idioms.
-- **[S] int×int→long widening.** `has_mulint2long` is off in `main.c`, so int×int→long widens to 32-bit and
-  calls `__mullong`. Writing the hand `__muluint2ulong`/`__mulsint2slong` asm + enabling the flag gives a
-  smaller/faster widening multiply (`arith.c`'s `widemul` cases will exercise it automatically). Code-size
-  nicety, not correctness.
+- **✅ int×int→long widening — DONE (−72 B corpus, 8424→8352).** `has_mulint2long` is now ON in `main.c`,
+  so a 16×16→32 product lowers to the dedicated `__mulsint2slong`/`__muluint2ulong` instead of widening both
+  operands to 32 bits and calling `__mullong`. The routines are repo-owned C built on the native 8×8 `MLT`
+  (`device/lib/s1c88/_mul{u,s}int2*long.c`); the unsigned one is signed-fixup reused by the signed one. Two
+  gotchas handled: (1) the middle-end symbol is `___mul*int2*long` (3 underscores), which **no C function
+  name can emit** — so the math is plain-named C and an in-module sdas `=` alias exports the mangled symbol;
+  (2) with the flag on, a partial product assigned to a **32-bit** result would re-trigger the widening
+  substitution and recurse — so the four 8×8 products stay in 16-bit (`unsigned int`) result context and the
+  widen happens via adds/shifts. `13_swap` −72 B; only int×int→long users pull the routines (no other corpus
+  program regressed). Validated: diff/arith 6132 values, emu 16/16, corpus re-blessed.
 - **[S] #12 residual cleanup.** Prune the dead z80-mnemonic tokens (`rlca`/`scf`/`daa`/…) from multi-token
   `same()` lists in `peeph.def` (byte-identical). Refining `cost2`'s cycle numbers to exact S1C88 counts is
   **low value** for this target — the allocator cost is bytes-dominated (cycles discounted 64–512×; see the

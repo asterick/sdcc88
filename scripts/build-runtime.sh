@@ -44,6 +44,8 @@ echo ">> assembling crt0 -> ${LIBDIR}/crt0.rel"
 # Compiler-emitted helpers (mandatory: link fails without them):
 LIB_INT="_divsint _divuint _modsint _moduint _mulint"
 LIB_LONG="_divslong _divulong _modslong _modulong _mullong"
+# int*int->long widening multiplies (has_mulint2long, main.c) — repo-owned sources:
+LIB_WIDEMUL="_muluint2ulong _mulsint2slong"
 # libc subset for user code (the codegen inlines mem*/str* as builtins, but user
 # code may call them as real functions):
 LIB_LIBC="_memmove _memcmp _memchr _strcpy _strncpy _strcat _strncat _strcmp _strncmp _strchr _strrchr _strlen _strstr"
@@ -51,7 +53,7 @@ LIB_LIBC="_memmove _memcmp _memchr _strcpy _strncpy _strcat _strncat _strcmp _st
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 echo ">> building s1c88.lib members (compiled through the s1c88 port)"
 members=""
-for r in $LIB_INT $LIB_LONG $LIB_LIBC; do
+for r in $LIB_INT $LIB_LONG $LIB_WIDEMUL $LIB_LIBC; do
   # Prefer a repo-owned source (e.g. _strlen.c, which upstream SDCC 4.5.0 lacks)
   # over the fetched SDCC device/lib copy.
   src="${REPO}/device/lib/s1c88/${r}.c"

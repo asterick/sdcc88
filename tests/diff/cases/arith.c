@@ -99,13 +99,11 @@ static void casts(u8 a8, i8 s8, u16 a16, i16 s16, u32 a32)
  * and multiply. Sound for the differential check because both operands are
  * widened, so the product always fits in 32 bits (host and target agree).
  *
- * On this port `has_mulint2long` is off (main.c), so the middle end does NOT
- * lower these to a __mul*int2*long widening support call — it widens to 32-bit
- * and calls __mullong. This therefore covers the widen-then-32x32-multiply
- * codegen (the cast + support-call sequence), distinct from the plain u32*u32
- * binop matrix. (If the optimized widening-call path is ever enabled — it needs
- * hand-written __muluint2ulong/__mulsint2slong asm, see TODO #15 — these cases
- * will then exercise that call instead, still soundly.) */
+ * On this port `has_mulint2long` is ON (main.c), so the middle end lowers a
+ * 16-bit*16-bit->32 product to the dedicated __mulsint2slong / __muluint2ulong
+ * widening routines (device/lib/s1c88/_mul{u,s}int2*long.c) instead of widening
+ * both operands to 32 bits and calling __mullong. These cases exercise that path
+ * across the value matrix below (incl. negatives and MIN/MAX edges). */
 static void widemul(u16 a, u16 b, i16 s, i16 t)
 {
     EMIT_U32("u16*u16>u32", (u32)a * (u32)b);   /* both operands cast */
