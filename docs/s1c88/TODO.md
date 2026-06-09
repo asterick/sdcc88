@@ -81,13 +81,12 @@ Workflow: add the case, run the three gates, fix what surfaces, add an emu/diff 
     (rel files + `library()` modules, relocation on, output suppressed before `lkfopen()`) collecting
     `rlxIsDrop[]` in the emit pass's exact order; `freelibraryindex()` guarded off while measuring.
     Proven byte-identical with `SDLD_RELAX=1` (run-tests 50/50, emu 16/16, diff 12/12, hello cmp-clean).
-  - **⚠ Stage (i) emit Step 2 — WIP (gated `SDLD_RELAX_EMIT`, default-off, ROMs still wrong).** Pipeline
-    wired: `s1c88RelaxApplyShift()` (delta shift) + emit `rtflg` byte-drops. Areas/areaxes + areax-relative
-    symbols shift correctly (`_CODE` 153→138, post-areas move down), but emu 0/16 under emit — two address
-    holes: (1) linker boundary symbols `s_/l_<area>` (`s_axp==NULL`, crt0 init/bss) keep stale values;
-    (2) per-record T-record load addresses still encode the original offset (intra-areax drops misposition
-    later records). **Fix (next):** delta()-adjust addresses AT EMIT (record load addr, symval, area refs,
-    PCR base+target; absolute ⇒ delta 0) instead of pre-shifting structs. See banked-branch.md §14c.
+  - **⚠ Stage (i) emit Step 2 — WIP (`SDLD_RELAX_EMIT`, default-off; emu-clean, diff partial).** Emit-time
+    `delta()` reflow (no struct pre-shift): recompacts each record's load address + PCR base via `pc`, and
+    shifts R3_SYM by `delta(reli)` and R3_AREA by `delta(base+addend)` (read from rtval; bank-local; absolute
+    areas fixed). Boundary symbols + signed-cc trampolines handled. **emu 16/16** under emit; default-off
+    50/50 byte-identical. **Remaining:** diff 7/12 — 5 heavy-runtime cases (float/fnptr2/ptrarith/arith/
+    longlong) still crash; fnptr tables verified correct, so a separate not-yet-found bug. See banked-branch.md.
   - **⬜ (ii)** iterate to fixpoint; **⬜ (iii)** trampoline/`cars` refinement.
 
 ---

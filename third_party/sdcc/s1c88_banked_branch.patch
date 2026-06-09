@@ -116,7 +116,7 @@
   *              expr *  esp             pointer to expr structure
 --- a/sdas/linksrc/lkrloc3.c
 +++ b/sdas/linksrc/lkrloc3.c
-@@ -54,6 +54,353 @@
+@@ -54,6 +54,335 @@
   *
   */
  
@@ -306,6 +306,17 @@
 +                return 0;
 +        if (rtp - 2 < rtofst)
 +                return 0;
++        /* Do not drop the `ld nb` of a SIGNED-cc trampoline.  The assembler
++         * precedes it with a FIXED `jrs <inv-scc>, +7` hop (CE E0+cc 07) sized
++         * to skip the whole 6-byte banked branch on the not-taken path; removing
++         * the 3-byte `ld nb` would leave that +7 overshooting the shrunk branch.
++         * The hop is a literal, not a relocation, so the linker can't fix it.
++         * The pattern is exact (always CE / E0..E7 / 07), so this never misses a
++         * real trampoline; a chance byte match merely forgoes one slot's shrink. */
++        if (rtp - 5 >= rtofst &&
++            rtval[rtp - 5] == 0xCE && (rtval[rtp - 4] & 0xF8) == 0xE0 &&
++            rtval[rtp - 3] == 0x07)
++                return 0;
 +        disp = tgt - (abank - 2 + 3);           /* carl opcode @abank-2, +3 (op+disp16) */
 +        if (disp < -(32768 - RLX_CARL_MARGIN) || disp > (32767 - RLX_CARL_MARGIN))
 +                return 0;
@@ -325,21 +336,32 @@
 +        return (x < y) ? -1 : (x > y) ? 1 : 0;
 +}
 +
++/* lower_bound: first index i with rlxDrop[i] >= key (rlxDrop sorted ascending). */
++static int
++rlxLowerBound(a_uint key)
++{
++        int lo = 0, hi = rlxDropN;
++        while (lo < hi) {
++                int mid = (lo + hi) / 2;
++                if (rlxDrop[mid] < key) lo = mid + 1; else hi = mid;
++        }
++        return lo;
++}
++
 +/*
-+ * delta(addr) = bytes removed strictly before addr = 3 * (#drops with abank <
-+ * addr).  Each drop removes the 3 `ld nb` bytes ending at abank; an instruction
-+ * or symbol is never inside an `ld nb`, so the count is exact.  rlxDrop[] is
-+ * sorted ascending by s1c88RelaxPredict() before this is used.
++ * delta(addr) = bytes removed strictly before addr WITHIN addr's code bank =
++ * 3 * (#drops d with bank(d)==bank(addr) and d < addr).  Banked code lives at
++ * (bank<<16)|logic and each 32 KB bank is a fixed physical region, so a drop in
++ * one bank must never shift addresses in another — the count is restricted to
++ * the same bank.  Each drop removes the 3 `ld nb` bytes ending at its abank; an
++ * instruction or symbol is never inside an `ld nb`, so the count is exact.
++ * rlxDrop[] is sorted ascending before this is used.
 + */
 +static a_uint
 +rlxDelta(a_uint addr)
 +{
-+        int lo = 0, hi = rlxDropN;              /* lower_bound of addr in rlxDrop[] */
-+        while (lo < hi) {
-+                int mid = (lo + hi) / 2;
-+                if (rlxDrop[mid] < addr) lo = mid + 1; else hi = mid;
-+        }
-+        return (a_uint) (3 * lo);
++        a_uint bankbase = addr & ~(a_uint) 0xFFFF;      /* (bank<<16) */
++        return (a_uint) (3 * (rlxLowerBound(addr) - rlxLowerBound(bankbase)));
 +}
 +
 +/*
@@ -403,77 +425,98 @@
 +}
 +
 +/*
-+ * sdcc88 #14c Stage (i) emit Step 2 — apply the shrink plan to the address model.
++ * sdcc88 #14c Stage (i) emit Step 2 — finalize the shrink plan.
 + *
-+ * Move every RELOCATABLE areax/area/symbol DOWN by delta(addr) = 3 bytes per
-+ * dropped `ld nb` below it; the emit pass then removes those bytes (rtflg) so
-+ * the layout matches.  Absolute areas (the hardware-fixed vector table) never
-+ * move — their slots were excluded from the plan and delta() at their (low)
-+ * addresses is 0, but we skip them explicitly.  Symbols carry an areax-relative
-+ * s_addr (absolute = areax->a_addr + s_addr), so they are shifted FIRST, using
-+ * the still-old areax bases, before the areax/area bases are themselves moved.
-+ * Only runs under SDLD_RELAX_EMIT.  Design: banked-branch.md §14c "Stage (i)".
++ * The reflow does NOT pre-shift the linker's address structs (doing so loses the
++ * old addresses needed to compact per-record T-record positions, and mishandles
++ * boundary/length symbols).  Instead every address is delta()-adjusted at the
++ * point it is emitted in relr3 (record load address + PCR base via `pc`, and
++ * R3_SYM / R3_AREA targets).  So this routine only sorts the drop list that
++ * delta() binary-searches.  Called after the measure sweep, before emit.
 + */
 +void
-+s1c88RelaxApplyShift(void)
++s1c88RelaxSortPlan(void)
 +{
-+        struct area *ar;
-+        struct areax *ax;
-+        int h;
-+
-+        if (!rlxEmitOn() || rlxDropN == 0)
-+                return;
 +        if (rlxDropN > 1)
 +                qsort(rlxDrop, rlxDropN, sizeof(a_uint), rlxCmpAddr);
++}
 +
-+        /* 1. symbols — areax-relative; shift by the in-areax drop count, using
-+         *    the OLD areax base (areax bases are not moved until step 2). */
-+        for (h = 0; h < NHASH; h++) {
-+                struct sym *sp;
-+                for (sp = symhash[h]; sp; sp = sp->s_sp) {
-+                        a_uint base, abs_old;
-+                        if (sp->s_axp == NULL)
-+                                continue;
-+                        if (sp->s_axp->a_bap && (sp->s_axp->a_bap->a_flag & A3_ABS))
-+                                continue;
-+                        base    = sp->s_axp->a_addr;
-+                        abs_old = base + sp->s_addr;
-+                        sp->s_addr -= (rlxDelta(abs_old) - rlxDelta(base));
-+                }
-+        }
-+
-+        /* 2. areax + area bases and sizes (relocatable areas only). */
-+        for (ar = areap; ar; ar = ar->a_ap) {
-+                if (ar->a_flag & A3_ABS)
-+                        continue;
-+                for (ax = ar->a_axp; ax; ax = ax->a_axp)
-+                        ax->a_addr -= rlxDelta(ax->a_addr);
-+                ar->a_size -= (rlxDelta(ar->a_addr + ar->a_size) - rlxDelta(ar->a_addr));
-+                ar->a_addr -= rlxDelta(ar->a_addr);
-+        }
-+
-+        /* KNOWN-INCOMPLETE (SDLD_RELAX_EMIT is experimental, default-off): this
-+         * shifts areas/areaxes and areax-relative symbols correctly, but two
-+         * address-bearing entities are NOT yet reflowed, so emitted ROMs are
-+         * wrong:
-+         *   (a) linker boundary symbols (s_<area>/l_<area>, s_axp == NULL) that
-+         *       crt0's init/bss loops read — they keep stale pre-shrink values;
-+         *   (b) per-record T-record load addresses, which still encode the
-+         *       ORIGINAL areax offset, so records after an intra-areax drop are
-+         *       positioned 3 bytes too high (the rtflg byte-drop only compacts
-+         *       WITHIN a record, not the next record's stated address).
-+         * The robust fix is to delta()-adjust every address at the point it is
-+         * emitted (record load address, symval, area refs, PCR base+target)
-+         * rather than pre-shifting structs — see banked-branch.md §14c. */
++/* True when the emit pass should delta-adjust addresses (emit on, not the
++ * measure sweep, and there is something to drop). */
++static int
++rlxAdjusting(void)
++{
++        return rlxEmitOn() && !s1c88_relax_measure && rlxDropN > 0;
 +}
 +
  /*)Function VOID        reloc3(c)
   *
   *                      int c           process code
-@@ -370,6 +717,72 @@
-                         reli = a[rindex]->a_addr;
-                 }
+@@ -324,6 +653,19 @@
+          */
+         pcb = 1;
  
++        /* sdcc88 #14c Stage (i) emit: compact this record's load address by the
++         * same-bank `ld nb` drops below it.  pc is the record's absolute address
++         * (areax base + this record's offset, already stored in rtval[0..]); a
++         * second adb_xb() with the negative delta re-reads that value, subtracts
++         * the drop bytes, stores it back, and returns it — so the emitted load
++         * address AND the PC-relative base (pc + offset, used by R_PCR) move
++         * together.  Skipped for absolute areas (fixed vectors) and in measure. */
++        if (rlxAdjusting() && ap != NULL && !(ap->a_flag & A3_ABS)) {
++                a_uint d = rlxDelta(pc);
++                if (d)
++                        pc = adb_xb((a_uint) (0 - d), 0);
++        }
++
+         #if 0
+         printf("area %d base address: 0x%x size: 0x%x rtbase: 0x%x\n", aindex,
+                 a[aindex]->a_addr, a[aindex]->a_size, rtbase);
+@@ -354,6 +696,18 @@
+                                 return;
+                         }
+                         reli = symval(s[rindex]);
++                        /* #14c emit: shift the target down by the same-bank drops
++                         * below it.  Applied to EVERY symbol — including the
++                         * s_axp==NULL boundary symbols (s_<area>/l_<area>) that
++                         * crt0's init/bss loops read — because delta() is exactly
++                         * 0 for anything that must not move: RAM, the vector
++                         * table, MMIO, and small l_<area> lengths all sit below
++                         * the relaxed code region (0x21D0+), and delta is
++                         * bank-local.  (Assumes relocatable code is the only
++                         * thing in/above the drop range, which holds for the PM
++                         * memory map.) */
++                        if (rlxAdjusting())
++                                reli -= rlxDelta(reli);
+                 }
+ /* sdld specific */
+                 else if ((IS_R_J11(mode) || IS_R_J19(mode)) && (rindex == 0xFFFF)) {
+@@ -368,6 +722,92 @@
+                                 return;
+                         }
+                         reli = a[rindex]->a_addr;
++                        /* #14c emit: an AREA reference resolves to base + addend,
++                         * where the addend (the area-relative offset) sits in
++                         * rtval and is added by adb below.  Shift by delta of the
++                         * FULL target, not the area base — a target deep in the
++                         * areax sits past intra-areax drops the base doesn't see
++                         * (static functions relocate this way).  For a 16-bit
++                         * word the addend is rtval[rtp..rtp+1]; byte selections
++                         * (the page/bank byte) are bank-invariant, so delta(base)
++                         * suffices there. */
++                        if (rlxAdjusting()) {
++                                a_uint addend;
++                                if (!(mode & R3_BYTE))
++                                        addend = rtval[rtp] | (rtval[rtp + 1] << 8);        /* 16-bit word */
++                                else if (mode & R_BYT3)
++                                        addend = rtval[rtp] | (rtval[rtp + 1] << 8) |
++                                                 (rtval[rtp + 2] << 16);                    /* 24-bit byte-select */
++                                else
++                                        addend = 0;     /* 1-byte: full target unknowable; base delta */
++                                reli -= rlxDelta((reli + addend) & a_mask);
++                        }
++                }
++
 +/* sdcc88: S1C88 banked-branch bank field (R_S1C88_BANK = 0x800).  The slot is
 + *   CE C4 [bank] <carl|jrl> <disp16>
 + * with [bank] a SINGLE in-place byte at rtp (sdas88 emits it via outr1be(), 6
@@ -538,11 +581,9 @@
 +                                rtval[rtp]   = tbank;   /* ld nb,#bank */
 +                        }
 +                        continue;
-+                }
-+
+                 }
+ 
                  /*
-                  * R3_PCR addressing
-                  */
 --- a/sdas/linksrc/lkmain.c
 +++ b/sdas/linksrc/lkmain.c
 @@ -24,6 +24,13 @@
@@ -551,7 +592,7 @@
  
 +/* sdcc88 #14c relaxation hooks (defined in lkrloc3.c) */
 +extern int s1c88RelaxAnyOn(void);
-+extern void s1c88RelaxApplyShift(void);
++extern void s1c88RelaxSortPlan(void);
 +extern int s1c88_relax_measure;
 +extern int rlxMeasureIdx;
 +extern int rlxEmitIdx;
@@ -606,7 +647,7 @@
 +                                hp = save_hp; pass = save_pass; radix = save_radix;
 +                                uflag = save_uflag;
 +
-+                                s1c88RelaxApplyShift();   /* no-op unless SDLD_RELAX_EMIT */
++                                s1c88RelaxSortPlan();     /* sort drop list; emit does the address shift */
 +                        }
 +
 +                        /*

@@ -420,24 +420,31 @@ the emit pass can reload the same modules; slot order is identical because both 
 same `nxtline` + `library` path. Proven **byte-identical** with the sweep on (hello cmp-clean;
 run-tests 50/50, emu 16/16, diff-test 12/12 with `SDLD_RELAX=1`).
 
-**Emit half, Step 2 — mutating reflow, ⚠ WIP (known-incomplete, `SDLD_RELAX_EMIT`, default-off).**
-The pipeline is wired end to end: after the measure sweep, `s1c88RelaxApplyShift()` moves the
-address model down by `delta(addr)` and the emit pass clears `rtflg` on the dropped `ld nb`
-bytes (`rtofst += 3`). Verified working: **areas/areaxes shrink and shift correctly** (e.g.
-`_CODE` 153→138 B, `_HOME`/`_GSINIT` 0x2269→0x225A, `_DATA` unchanged), and areax-relative
-symbols shift. **But emitted ROMs are still wrong** (emu 0/16 under `SDLD_RELAX_EMIT`) because
-two address-bearing entities are not yet reflowed:
-1. **Linker boundary symbols** (`s_<area>`/`l_<area>`, `s_axp == NULL`) that crt0's init/bss
-   loops read — the symbol-shift loop skips them, so they keep stale pre-shrink values.
-2. **Per-record T-record load addresses** — they still encode the *original* areax offset, so a
-   record after an intra-areax drop sits 3 bytes too high (the `rtflg` byte-drop only compacts
-   *within* a record, not the next record's stated address).
+**Emit half, Step 2 — mutating reflow, ⚠ WIP (`SDLD_RELAX_EMIT`, default-off; emu-clean, diff partial).**
+The reflow uses **emit-time `delta()`** — no struct pre-shift (which loses the old addresses the
+record/PCR math needs and mishandles boundary/length symbols). Every address is adjusted at the
+point it is emitted in `relr3`:
+- **record load address + PCR base** — `pc` (the record's absolute address) is recompacted by a
+  second `adb_xb(-delta(pc), 0)`, which also fixes the per-record stated address;
+- **R3_SYM targets** — `reli -= delta(reli)`, applied to *every* symbol (delta is 0 for RAM /
+  vectors / MMIO / small `l_<area>` lengths since they sit below the relaxed code region, so the
+  `s_axp == NULL` boundary symbols crt0 reads are handled without special-casing);
+- **R3_AREA targets** — an area ref resolves to `base + addend`, so it shifts by `delta(base +
+  addend)` (the addend read from `rtval`: 16-bit word, or 24-bit for `R_BYT3` byte-selects) — NOT
+  `delta(base)`, which would undershift static-function pointers deep in an areax;
+- **`delta()` is bank-local** — a drop in one 32 KB bank never shifts another;
+- **absolute areas** (the fixed vector table) are left unshifted; their slots are excluded from
+  the plan and the `pc` recompaction skips them.
+Two correctness traps from earlier are fixed: **signed-cc trampolines** (`jrs <inv-scc>,+7 ; ld
+nb ; jrl`) are excluded from dropping (the fixed `+7` hop can't be relinked), and **boundary
+symbols** now shift.
 
-**The corrected approach** (next step): stop pre-shifting structs and instead `delta()`-adjust
-every address *at the point it is emitted* — the record load address, `symval` results
-(R3_SYM), area refs (R3_AREA), and both the target and the pc-relative base of the `R_PCR` —
-treating absolute-area addresses as `delta == 0`. That handles boundary symbols and per-record
-addresses uniformly. Prove on emu-test + diff-test, then make it default and re-baseline.
+**Status:** emu-test **16/16** under `SDLD_RELAX_EMIT` (and default-off stays 50/50, byte-identical).
+**Remaining:** diff-test **7/12** — five heavy-runtime cases (`float`, `fnptr2`, `ptrarith`,
+`arith`, `longlong`, which pull the long/long-long/float library) still crash. The function-pointer
+*tables* now relocate correctly (verified byte-for-byte), so the residual is a *separate* bug in
+that heavier code, not yet root-caused. Find it, then make emit the default and re-baseline the
+corpus.
 
 ### Validation (every step)
 
