@@ -26,13 +26,15 @@ _Last updated: 2026-06-08._
   args, `__far` pointers) closed; native `DIV`/`MLT`; 3-byte banked function pointers; the S1C88
   **MAXIMUM-mode** call model (3-byte CB:PC frames — `abi-decision.md` "The call model"). The assembler now
   does same-module branch relaxation (#14b): intra-area `bcall`/`bjump` shrink to 2–3 bytes.
-- **All gates green:** corpus 20/20 byte-identical, emu-test 16/16, diff-test 12, run-tests 50/50 (TAP),
-  plus driver/crt0/rom/branch/insn-size smokes and the `examples/hello` build. Corpus ROM = 8429 B.
+- **All gates green:** corpus 20/20 byte-identical, emu-test 16/16, diff-test 13, run-tests 52/52 (TAP),
+  plus driver/crt0/rom/branch/insn-size/vec-reorder smokes and the `examples/hello` build. Corpus ROM = 8429 B.
+- The linker also reorders absolute-area vector-slot `bjump`s to `<branch> ; nop nop nop` (#14d) so the
+  hardware vector table doesn't run 3 dead NOPs per dispatch — cycles only, opt out `SDLD_NO_VECREORDER=1`.
 - Everything builds + runs **inside the sandbox** — iterate freely, no `! ...`.
 
 ## NEXT ACTION (do this)
 
-1. **Confirm green** — `./scripts/run-tests.sh` (builds once, runs every suite in parallel, TAP, 50/50). For
+1. **Confirm green** — `./scripts/run-tests.sh` (builds once, runs every suite in parallel, TAP, 52/52). For
    a focused codegen change, the inner loop is `./scripts/dev.sh` then `corpus-check.sh` + `emu-test.sh` +
    `diff-test.sh`: corpus-check proves the asm is *stable*; emu/diff prove it *computes the right values*.
    **Run all three for every codegen change**, and add an emu/diff case whenever you touch new territory —

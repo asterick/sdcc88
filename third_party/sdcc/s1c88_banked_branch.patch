@@ -116,7 +116,7 @@
   *              expr *  esp             pointer to expr structure
 --- a/sdas/linksrc/lkrloc3.c
 +++ b/sdas/linksrc/lkrloc3.c
-@@ -54,6 +54,346 @@
+@@ -54,6 +54,382 @@
   *
   */
  
@@ -234,6 +234,19 @@
 +static a_uint *rlxDrop;                 /* abank (bank-byte addr) of each planned drop */
 +static int     rlxDropN, rlxDropCap;
 +
++/* sdcc88 vector-slot NOP reorder (banked-branch.md §10).  An ABSOLUTE-area
++ * banked branch (the IRQ/reset vector table) can't be byte-dropped — its slots
++ * are hardware-pinned — so a same-/common-bank target leaves the `ld nb` NOP'd
++ * at the slot HEAD: `nop nop nop ; <branch>`.  The CPU runs those 3 NOPs on
++ * every dispatch.  Reordering to `<branch> ; nop nop nop` lets an unconditional
++ * branch skip them entirely (the trailing NOPs are unreachable; on a taken
++ * conditional they fall through harmlessly).  Saves cycles, not bytes — the slot
++ * stays 6 B.  rlxReorderPend is set by the R_S1C88_BANK handler and consumed by
++ * the next reloc, the slot's word R_PCR, which rewrites the bytes once it has the
++ * resolved displacement.  Gated by SDLD_VEC_REORDER (off => byte-identical). */
++static int     rlxVecReorder = -1;      /* SDLD_VEC_REORDER enabled? (lazy)       */
++static int     rlxReorderPend;          /* this slot's R_PCR must move branch->head */
++
 +/*
 + * Per-slot drop decision, indexed by R_S1C88_BANK processing order.  The order
 + * is identical in the measure sweep and the emit pass (same rel files read the
@@ -278,6 +291,29 @@
 +                        rlxEmit = 1;                    /* default ON */
 +        }
 +        return rlxEmit;
++}
++
++/* sdcc88 vector-slot NOP reorder gate.  DEFAULT ON — validated by emu-test
++ * (08_isr, 12_nested_irq), diff-test, and branch-smoke.  Opt out with
++ * SDLD_NO_VECREORDER=1 (or SDLD_VEC_REORDER=0) for the legacy head-NOP layout;
++ * the two are behaviourally identical (reorder only moves dead NOPs off the
++ * dispatch path), so the legacy layout is a bisection escape hatch, not a
++ * correctness crutch.  See the rlxReorderPend comment and the R_S1C88_BANK /
++ * R3_PCR handlers below. */
++static int
++rlxVecReorderOn(void)
++{
++        if (rlxVecReorder < 0) {
++                char *no = getenv("SDLD_NO_VECREORDER");
++                char *on = getenv("SDLD_VEC_REORDER");
++                if (no != NULL && *no != '\0' && *no != '0')
++                        rlxVecReorder = 0;              /* explicit opt-out */
++                else if (on != NULL && *on == '0')
++                        rlxVecReorder = 0;              /* SDLD_VEC_REORDER=0 */
++                else
++                        rlxVecReorder = 1;              /* default ON */
++        }
++        return rlxVecReorder;
 +}
 +
 +/* Any relaxation diagnostic/feature on ⇒ lkmain.c runs the measure sweep. */
@@ -463,7 +499,7 @@
  /*)Function VOID        reloc3(c)
   *
   *                      int c           process code
-@@ -324,6 +664,19 @@
+@@ -324,6 +700,19 @@
           */
          pcb = 1;
  
@@ -483,7 +519,7 @@
          #if 0
          printf("area %d base address: 0x%x size: 0x%x rtbase: 0x%x\n", aindex,
                  a[aindex]->a_addr, a[aindex]->a_size, rtbase);
-@@ -354,6 +707,18 @@
+@@ -354,6 +743,18 @@
                                  return;
                          }
                          reli = symval(s[rindex]);
@@ -502,7 +538,7 @@
                  }
  /* sdld specific */
                  else if ((IS_R_J11(mode) || IS_R_J19(mode)) && (rindex == 0xFFFF)) {
-@@ -368,6 +733,92 @@
+@@ -368,6 +769,114 @@
                                  return;
                          }
                          reli = a[rindex]->a_addr;
@@ -583,6 +619,28 @@
 +                                }
 +                        }
 +
++                        /* sdcc88 vector-slot NOP reorder: when the `ld nb` would
++                         * be NOP'd at the slot head (same/common bank) AND the
++                         * slot can't be byte-dropped (absolute area — #14c skips
++                         * it), move the branch to the head and the NOPs to the
++                         * tail instead.  The branch's disp is owned by the next
++                         * reloc (the slot's word R_PCR); flag it here and let the
++                         * R3_PCR handler rewrite the bytes once it has the
++                         * resolved disp.  Skip if the slot head splits across a
++                         * T-record (rtp-2 < rtofst) or carries a signed-cc
++                         * trampoline hop (CE E0+inv 07 at rtp-5..rtp-3 — its fixed
++                         * +7 self-resolved skip must not be disturbed). */
++                        if (rlxVecReorderOn() && absarea
++                            && (tbank == 0 || tbank == cbank)
++                            && rtp - 2 >= (int) rtofst
++                            && !(rtp - 5 >= (int) rtofst
++                                 && rtval[rtp-5] == 0xCE
++                                 && (rtval[rtp-4] & 0xF8) == 0xE0
++                                 && rtval[rtp-3] == 0x07)) {
++                                rlxReorderPend = 1;
++                                continue;       /* R3_PCR handler does the move */
++                        }
++
 +                        /* Leave rtflg set on these bytes so lkout() emits them. */
 +                        if ((tbank == 0 || tbank == cbank) && rtp - 2 >= (int) rtofst) {
 +                                rtval[rtp-2] = 0xFF;    /* nop (was CE)   */
@@ -595,7 +653,7 @@
                  }
  
                  /*
-@@ -612,10 +1063,21 @@
+@@ -612,14 +1121,46 @@
                  }
  
                  /*
@@ -620,6 +678,31 @@
                                  rtofst += (a_bytes - 1);
                          }
                  }
+ 
++                /* sdcc88 vector-slot NOP reorder (continued).  This word R_PCR is
++                 * the disp16 of a banked-branch slot whose R_S1C88_BANK handler
++                 * chose to move the branch to the slot head.  At this point rtp is
++                 * the disp anchor, so the slot is laid out (low addr -> high):
++                 *   CE/op@rtp-4  C4@rtp-3  bank@rtp-2  <op>@rtp-1  <lo>@rtp  <hi>@rtp+1
++                 * and relv holds the disp for the branch at its ORIGINAL tail
++                 * position (rtp-1).  Move the opcode to rtp-4 (3 bytes lower) and
++                 * the disp to rtp-3..rtp-2; the branch shifting 3 bytes earlier
++                 * grows its displacement by exactly 3.  Fill the freed tail with
++                 * NOPs.  rtflg is untouched (all 6 bytes still emit). */
++                if (rlxReorderPend && (mode & R3_PCR) && !(mode & R3_BYTE)) {
++                        a_uint nd = relv + 3;
++                        rtval[rtp-4] = rtval[rtp-1];            /* branch opcode -> head */
++                        rtval[rtp-3] = (int) (nd & 0xFF);       /* disp lo */
++                        rtval[rtp-2] = (int) ((nd >> 8) & 0xFF);/* disp hi */
++                        rtval[rtp-1] = 0xFF;                    /* nop */
++                        rtval[rtp]   = 0xFF;                    /* nop (was disp lo) */
++                        rtval[rtp+1] = 0xFF;                    /* nop (was disp hi) */
++                        rlxReorderPend = 0;
++                }
++
+                 /*
+                  * Unsigned Byte Checking
+                  */
 --- a/sdas/linksrc/lkmain.c
 +++ b/sdas/linksrc/lkmain.c
 @@ -24,6 +24,13 @@
