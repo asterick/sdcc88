@@ -90,6 +90,14 @@ Workflow: add the case, run the three gates, fix what surfaces, add an emu/diff 
   reclaim vs `scripts/corpus/relax.baseline`. Design + full history: `banked-branch.md` + git (`7949b4a`,
   `2d7d7c8`, `99375b6`; squashed into `b37bc0d`).
 
+- **✅ #14d — vector-slot NOP reorder — DONE + default-on (2026-06-09).** An absolute-area banked branch
+  (the hardware-pinned IRQ/reset vector table) can't be byte-dropped, so a same-/common-bank target left its
+  `ld nb` NOP'd at the slot HEAD (`nop nop nop ; bjump`) — 3 dead NOPs the CPU ran before every dispatch.
+  The linker now reorders the fixed slot to `bjump ; nop nop nop` so an unconditional jump skips them; **cycles
+  only, no byte change** (neutral for `bcall`, never a pessimization). Gated `rlxVecReorderOn()`, opt out
+  `SDLD_NO_VECREORDER=1`. `vec-reorder-smoke.sh` locks the placement + the +3 disp. Design: `banked-branch.md`
+  §10 "#14d".
+
 ---
 
 ## Codegen-boundary lift (#16) — future research pass

@@ -458,6 +458,34 @@ carl→cars NOT pursued** — 1 B corpus-wide for the highest-risk emit surgery 
 coordination, disp16→disp8, fixpoint). **#14c is complete at stage (i)+split-slot reclaim (150 B,
 default-on).** See TODO.md #14c.
 
+### #14d — vector-slot NOP reorder (cycles, not bytes) — ✅ DONE + DEFAULT-ON (2026-06-09)
+
+A banked-branch slot in an **absolute area** (`A3_ABS` — the hardware-pinned IRQ/reset vector
+table in crt0) can never be byte-dropped by #14c (the CPU jumps to fixed offsets), so a same-/
+common-bank target leaves its `ld nb` **NOP'd at the slot HEAD**: the linker wrote `nop nop nop ;
+<branch>` (e.g. a vector linked to `FF FF FF F3 c9 00`). Every interrupt/reset dispatch then runs
+**3 dead NOPs before the branch even fetches** — pure latency on the hottest path in the ROM (27
+vector slots).
+
+The fix reorders the fixed 6-byte slot to **`<branch> ; nop nop nop`** (`F3 cc 00 FF FF FF`), so an
+unconditional `bjump` leaves immediately and the trailing NOPs are unreachable. It is **cycles-only**
+— the slot stays 6 bytes; nothing shrinks. For a `bcall` the reorder is *neutral* (a call returns
+into the slot, so the 3 NOPs run on the return path either way), and a conditional branch falls
+through to the trailing NOPs harmlessly — so the reorder is **never a pessimization**.
+
+Mechanism (`lkrloc3.c`, gated `rlxVecReorderOn()`, default-on; opt out `SDLD_NO_VECREORDER=1` /
+`SDLD_VEC_REORDER=0`): the slot's two relocations cooperate. The `R_S1C88_BANK` handler, when it
+would NOP the head **and** the area is absolute (drop is impossible) **and** the head isn't split
+across a T-record or a signed-cc trampoline (`CE E0+inv 07`), sets `rlxReorderPend` and defers. The
+**next** reloc — the slot's word `R_PCR` — then has the resolved tail-position displacement `relv` in
+hand; it moves the opcode 3 bytes earlier to the slot head, writes the displacement **`relv + 3`**
+(the branch shifted 3 bytes earlier ⇒ its disp grows by exactly 3), and fills the freed tail with
+NOPs. No new relocation, no byte reflow, no `delta()` interaction — all the #14c reflow risk is
+avoided because absolute areas never drop or shift. `vec-reorder-smoke.sh` locks both the byte
+placement (branch-first vs legacy head-NOP) and the +3 disp relationship; emu-test (`08_isr`,
+`12_nested_irq`), diff-test, and run-tests all green default-on, and `SDLD_NO_VECREORDER=1` is
+byte-identical to the legacy layout.
+
 **⛔ ROOT CAUSE FOUND (2026-06-08) — a design-level flaw, not a coding bug.**
 The five failing cases share one property: a function body big enough that the codegen emits an
 **intra-module `carl`/`jrl` to a *same-area* local label** (e.g. a helper-to-helper call). sdas88

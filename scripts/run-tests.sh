@@ -58,7 +58,7 @@ TAP=1 EMU_NO_BUILD=1 "${REPO}/scripts/diff-test.sh"       >"${TAPDIR}/diff"   2>
 
 # --- smoke suite: one TAP point per toolchain-invariant script (run in this shell) ---
 {
-  for s in branch-smoke insn-size-check; do
+  for s in branch-smoke insn-size-check vec-reorder-smoke; do
     if "${REPO}/scripts/${s}.sh" >"${TAPDIR}/${s}.out" 2>&1; then
       echo "ok - smoke/${s}"
     else
