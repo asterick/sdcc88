@@ -135,6 +135,7 @@ miscompiles that byte-identical assembly never could; and finally the **usable-t
 `examples/hello`).
 
 **Workflow (since the toolchain went to maintenance):** work goes through **self-contained PRs with
-meaningful names** (one per scope; combine same-scope changes into one PR). **`main` is protected** —
+meaningful names** (one per scope; combine same-scope changes into one PR). **Branch names are
+`<github-username>/<meaningful-name>`** (e.g. `asterick/branch-relaxation`). **`main` is protected** —
 direct pushes are blocked and a PR can't merge unless the `ci` **build & test** check is green; code reviews
-are not required. So: branch → commit green slices → push → open PR → CI green → merge.
+are not required. So: `git checkout -b <user>/<name>` → commit green slices → push → open PR → CI green → merge.

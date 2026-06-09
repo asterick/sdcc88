@@ -136,10 +136,12 @@ Start at `docs/s1c88/README.md`; the backend decisions are in `docs/s1c88/abi-de
 ## Conventions
 
 - **Work goes through self-contained PRs with meaningful names** — one PR per scope; if two changes share a
-  scope, combine them into one PR that details the total change. **`main` is protected:** direct pushes are
-  blocked (work via a branch + PR), and a PR cannot merge unless the `ci` check (the **build & test**
-  job: `build.sh` + `scripts/run-tests.sh`) is **green**. Code reviews are not required. Keep each PR green
-  on its own — validate with `./scripts/run-tests.sh` (or `./scripts/validate-s1c88.sh` for a focused codegen
-  slice) before opening it; clearly label any intentionally-red WIP.
+  scope, combine them into one PR that details the total change. **Branch names are
+  `<github-username>/<meaningful-name>`** — prefixed with the username of the person opening the PR (e.g.
+  `asterick/branch-relaxation`). **`main` is protected:** direct pushes are blocked (work via a branch +
+  PR), and a PR cannot merge unless the `ci` check (the **build & test** job: `build.sh` +
+  `scripts/run-tests.sh`) is **green**. Code reviews are not required. Keep each PR green on its own —
+  validate with `./scripts/run-tests.sh` (or `./scripts/validate-s1c88.sh` for a focused codegen slice)
+  before opening it; clearly label any intentionally-red WIP.
 - Convert the design/strategy in `docs/s1c88/abi-decision.md` into action — keep it current as decisions
   evolve, and keep `docs/s1c88/HANDOFF.md` accurate (it's the fastest way to resume).
