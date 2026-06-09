@@ -52,7 +52,10 @@ TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 echo ">> building s1c88.lib members (compiled through the s1c88 port)"
 members=""
 for r in $LIB_INT $LIB_LONG $LIB_LIBC; do
-  src="${DLIB}/${r}.c"
+  # Prefer a repo-owned source (e.g. _strlen.c, which upstream SDCC 4.5.0 lacks)
+  # over the fetched SDCC device/lib copy.
+  src="${REPO}/device/lib/s1c88/${r}.c"
+  [ -f "$src" ] || src="${DLIB}/${r}.c"
   [ -f "$src" ] || { echo "   skip ${r} (no ${r}.c)"; continue; }
   if ! cc -E -P -x c -I "$DINC" -D_SDCC_NO_ASM_LIB_FUNCS "$src" > "${TMP}/${r}.i" 2>"${TMP}/e" \
      || ! "$SDCCBIN" -ms1c88 --c1mode -o "${TMP}/${r}.asm" < "${TMP}/${r}.i" 2>"${TMP}/e" \
