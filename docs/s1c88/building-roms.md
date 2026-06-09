@@ -9,12 +9,13 @@ ROM with the sdcc88 toolchain. For the compiler internals see
 One command builds the whole toolchain from a clean checkout:
 
 ```bash
-./scripts/setup-sdk.sh
+./build.sh
 ```
 
-It runs, in order: the `sdcc` driver (`build.sh`), the `sdcpp` preprocessor, the
-`sdas88` assembler, the `sdldz80` linker, the `romgen` ROM tool, and the runtime
-(`crt0.rel` + `s1c88.lib` + device headers). Each step is idempotent. Dependencies
+It builds, in order: the `sdcc` driver, the `sdcpp` preprocessor, the `sdas88`
+assembler, the `sdldz80` linker, the `romgen` ROM tool, and the runtime
+(`crt0.rel` + `s1c88.lib` + device headers). Each step is idempotent, so re-running
+`./build.sh` only re-makes what changed (`--fresh` rebuilds everything). Dependencies
 (Debian/Ubuntu/WSL): `build-essential flex bison m4 gawk libboost-dev zlib1g-dev`.
 
 The result, under `build/sdcc-4.5.0/`, is the SDK:

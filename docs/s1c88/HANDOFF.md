@@ -21,7 +21,7 @@ _Last updated: 2026-06-08._
   - **`sdldz80`** — the linker, with **banked `bcall`/`bjump`** (linker resolves the code bank).
   - **`romgen`** (`tools/romgen.c`, no Python) — `.ihx`/`.rel` → flat `.min`.
   - **`crt0.rel` + `s1c88.lib` + `<pm.h>`** installed in the driver's lib/include dirs by
-    `scripts/build-runtime.sh`. `scripts/setup-sdk.sh` builds the whole SDK in one command.
+    `scripts/build-runtime.sh`. `./build.sh` builds the whole SDK in one command.
 - **Codegen is functionally complete** — every reachable z80-ism gone; the ABI tasks (register model, IY
   args, `__far` pointers) closed; native `DIV`/`MLT`; 3-byte banked function pointers; the S1C88
   **MAXIMUM-mode** call model (3-byte CB:PC frames — `abi-decision.md` "The call model"). The assembler now
@@ -102,7 +102,7 @@ whenever branch emission or the linker patch changes.
 - `./scripts/diff-test.sh` — compile the same C host-vs-emulator and diff the output (12 modules).
 - `./scripts/validate-s1c88.sh <file.asm>` — assemble emitted codegen with `sdas88`; any reject = a z80-ism.
 - `./scripts/branch-smoke.sh` — byte-lock the branch displacement convention (above).
-- `./scripts/setup-sdk.sh` — build the whole toolchain from a clean checkout (compiler → sdcpp → sdas88 →
+- `./build.sh` — build the whole toolchain from a clean checkout (compiler → sdcpp → sdas88 →
   sdldz80 → romgen → runtime). `crt0-smoke.sh` / `driver-smoke.sh` / `rom-smoke.sh` — end-to-end ROM checks.
 - `./scripts/build-sdas.sh as88` → `bin/sdas88`; `./scripts/build-sdld.sh` → `bin/sdldz80`; both auto-apply
   `third_party/sdcc/s1c88_banked_branch.patch` (banked-branch changes to shared asxxsrc/linksrc).

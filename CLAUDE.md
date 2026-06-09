@@ -57,17 +57,19 @@ One-time dependencies (Debian/Ubuntu/WSL): `sudo apt-get install -y build-essent
 libboost-dev zlib1g-dev`.
 
 ```bash
-./build.sh           # fetch (cached) + overlay + patch + configure + make
-./build.sh --fresh   # wipe build/ and rebuild from scratch (needed when the patch changes)
+./build.sh           # fetch (cached) + overlay + patch + configure + build the whole SDK
+./build.sh --fresh   # wipe build/ and rebuild the whole SDK from scratch (needed when the patch changes)
 ./scripts/dev.sh      # overlay current src/s1c88 + make + run the smoke test (fast inner-loop)
 ```
 
-Result: `build/sdcc-4.5.0/src/sdcc` — a normal SDCC compiler driver that knows `-ms1c88`.
+Result: a complete SDK under `build/sdcc-4.5.0/` — `src/sdcc` (the `-ms1c88` driver) plus `bin/`
+(`sdcpp`, `sdas88`, `sdldz80`, `romgen`), the runtime, and device headers. `sdcc -ms1c88 foo.c`
+preprocesses + links for real.
 
-**Smoke-testing codegen** — `build.sh` builds the **compiler**, not SDCC's bundled `sdcpp` preprocessor,
-so `sdcc foo.c` can't preprocess in the dev inner-loop. Feed already-preprocessed C via `--c1mode` (reads
-cpp'd C on stdin, emits asm). (For the full SDK — real `sdcpp`, `sdas88`, `sdldz80`, `romgen`, runtime —
-run `scripts/setup-sdk.sh` once; then `sdcc -ms1c88 foo.c` preprocesses + links for real.)
+**Smoke-testing codegen** — the fast inner-loop is `./scripts/dev.sh`, which re-makes **only the
+compiler** (not the bundled `sdcpp` preprocessor), so in that loop `sdcc foo.c` can't preprocess: feed
+already-preprocessed C via `--c1mode` (reads cpp'd C on stdin, emits asm). (`./build.sh` itself builds
+the full SDK, `sdcpp` included.)
 
 ```bash
 build/sdcc-4.5.0/src/sdcc --version                                    # -> "SDCC : s1c88 ... 4.5.0"
@@ -102,6 +104,12 @@ printf 'int add1(int x){return x+1;}\n' | \
    `gawk -f ../SDCCpeeph.awk`; `main.c` `#include`s the single `peeph.rul` (the port has one peephole
    file, `peeph.def` — the z80 `peeph-z80.def` was merged into it and the dead variant `peeph-*.def`
    removed, since sdcc88 is a standalone S1C88 port, not a z80 variant).
+7. **Build the rest of the SDK** by invoking the idempotent component scripts in order: `build-sdcpp.sh`
+   (the bundled GCC-cpp preprocessor — the heavy one), `build-sdas.sh as88` (`sdas88`), `build-sdld.sh`
+   (`sdldz80`), `build-romgen.sh` (`romgen`), `build-runtime.sh` (`crt0.rel` + `s1c88.lib` + headers,
+   compiled through the just-built driver + sdas88, so it runs last). These same scripts are also called
+   lazily by the test/smoke scripts; each is a fast no-op once built, so a warm `build.sh` only re-makes
+   the compiler in step 6.
 
 ## The S1C88 port (`src/s1c88/`)
 
