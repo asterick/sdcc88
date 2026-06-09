@@ -155,13 +155,14 @@ collapsed to `cost2(bytes, cycles)`. **Remaining:**
     names). This is NOT a clean rename: the S1C88 has Z/C/V/N (no S/P/H, and N is negative not add-subtract),
     so mapping the z80 flag set onto the S1C88 is a real flag-semantics task (it touches the same analysis as
     the #12-flag-reuse work), not cosmetic. Defer until/unless it's worth a careful pass.
-  - ⏸ **Remaining (deferred, byte-neutral, low value):** collapse the peephole `jp → jr → jrs` chain to emit
-    `jrs` directly and drop the z80 `jr` mnemonic intermediary (`peeph.def`: the 162/163 `jp→jr` rules + the
-    `s1c88-j1`/`j2` `jr→jrs` map, plus the 6 direct `jr nc/NZ/z` emits in `gen.c`). **Caveat:** this is NOT
-    "let the assembler size it" — `sdas88`'s `jp cc` is the explicit *long* form (`jrl cc`, 3 B) and it does
-    **not** relax `jp`→`jrs`; the *peephole* is the short-form sizing (in-range `jp`→`jrs`, 2 B). So the
-    collapse must stay **byte-identical** (corpus-check guards it). Cosmetic z80-lineage removal; moderate
-    peephole risk for zero bytes — do only as part of a deliberate peephole pass.
+  - ✅ **`jp → jr → jrs` chain collapsed — DONE (byte-identical).** The `jr` mnemonic was a pure z80-lineage
+    intermediary the S1C88 doesn't have: rules 162/163 (`jp→jr`) emitted it, then `s1c88-j1`/`j2` mapped every
+    `jr`→`jrs`. Now 162/163 emit `jrs` directly (same `labelInRange(%5)` guard, which gates the jrs 8-bit
+    range), rule 164's dead-jump elimination matches `jrs`, j1/j2 are deleted, and the 6 direct `jr nc/NZ/z`
+    emits in `gen.c` emit `jrs` (the `195-1/2` always-true-check guards retargeted `jr`→`jrs` to track them).
+    Out-of-range `jp`→`jrl` (j3/j4) and `call`→`carl` (j5/j6) unchanged. One spacing subtlety: the old `j2`
+    template normalized to `jrs cc, %5` (comma-space), so the direct emits use the same spacing to stay
+    byte-identical. corpus 20/20 byte-identical + run-tests 52/52.
 
   (Done in always-green slices — each byte-identical, run-tests 50/50, smokes green.)
 
