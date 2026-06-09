@@ -17,14 +17,33 @@ Legend: **S/M/L** = rough effort.
 
 ## Known bugs
 
-**None.** The differential suite is clean across integer, pointer, struct/union, function-pointer, long-long,
-and **float** code (add / subtract / multiply / divide / compares / int↔float casts, all exact-operand). The
-last open correctness bug — **#8 float subtraction** (`10.0-4.0` → `0x40C00182`) — is **FIXED**: it was a
-register/move-ordering bug in `genUminusFloat` (the `-a1` sign-flip inside `__fssub` loaded the top byte into
-A before spilling the low word, dropping byte 0 on the HLBA layout). Fix: copy the low bytes before the sign
-flip. Regression: the subtraction / opposite-sign block in `tests/diff/cases/float.c`. *(Note: a full
-cancellation `a-a` yields softfloat `-0.0` where hardware gives `+0.0` — a library zero-sign convention, not
-a bug; harmless since `-0.0 == +0.0`.)*
+**One open — #11-longshift-iy (silent miscompile, narrow trigger).** The **32-bit variable LEFT shift**
+(`u32 << n`) miscompiles when BOTH the value and the count are **memory** operands (global/array), e.g.
+`out = arr[i] << gcount;`. Minimal repro:
+```c
+unsigned long arr[2], out;  unsigned char cc;
+void f(unsigned char i){ out = arr[i] << cc; }   /* loop runs a garbage count -> wrong result */
+```
+Cause: the 4-byte value fills A/B/L/H, so `genLeftShift` (gen.c) puts the loop counter in **IY**
+(`count_iy`). IY isn't byte-addressable, so the count must be zero-extended through a pair scratch
+(`ld l,c; ld h,#0; ld iy,hl`). That works when the count is loaded first with HL free (the param case —
+`u32 f(u32 a,u8 c){return a<<c;}` is correct). But a memory value is materialised into HL+A+B *first*, so
+HL is busy and `genMove(ASMOP_IY,count)` degenerates to reusing IY's **stale high byte** (or a pure
+no-op) — the counter is garbage. **Only this op**: right shifts, 16/64-bit shifts, division, and any
+register/param-sourced count all work. **Fix is deep** (genLeftShift IY path / genMove-to-IY zero-extend
+without a free pair) and risks the shift codegen that otherwise passes everything — deferred. **Workaround
+in code:** route the shift through a helper so the count is a parameter (what `arith.c`/`longshift.c` do;
+the call launders the memory count into a clean operand). `tests/diff/cases/longshift.c` exercises the
+WORKING variable-shift paths exhaustively (every count 0..width-1 for 16/32/64-bit + rotates + division
+edges) and notes the trap so the helpers aren't "simplified" back to inline.
+
+Otherwise the differential suite is clean across integer, pointer, struct/union, function-pointer,
+long-long, and **float** code. The prior open bug — **#8 float subtraction** (`10.0-4.0` → `0x40C00182`) —
+is **FIXED**: a register/move-ordering bug in `genUminusFloat` (the `-a1` sign-flip inside `__fssub` loaded
+the top byte into A before spilling the low word, dropping byte 0 on the HLBA layout). Fix: copy the low
+bytes before the sign flip; regression in the subtraction / opposite-sign block of `tests/diff/cases/float.c`.
+*(Note: a full cancellation `a-a` yields softfloat `-0.0` where hardware gives `+0.0` — a library zero-sign
+convention, not a bug; harmless since `-0.0 == +0.0`.)*
 
 ---
 
@@ -38,8 +57,10 @@ control, longlong, memory, ptrarith, switch, structargs, fnptr2, unions, float �
 **Still untested (pick any; new territory is also fair game):**
 
 - **#11-libc** — `mem*`/`str*` differential (memcpy / memmove / memset / strcmp / strlen …) run through the lib.
-- **#11-longshift** — 32-bit shifts/rotates by a *variable* count + long-division edge values (beyond
-  `arith.c`'s fixed-count shifts).
+- ✅ **#11-longshift — DONE** (`tests/diff/cases/longshift.c`): exhaustive variable-count shifts (every
+  count 0..width-1 for 16/32/64-bit, vs arith.c's 6 samples) + rotates + long-division edges. Found one
+  silent miscompile — the 32-bit variable-left-shift IY-counter bug above (**#11-longshift-iy**, deferred;
+  the test routes shifts through helpers to cover the working paths).
 
 Workflow: add the case, run the three gates, fix what surfaces, add an emu/diff regression for any bug.
 
