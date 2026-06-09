@@ -70,6 +70,22 @@ fi
 grep -q 'TARGET_ID_S1C88' "${SDCC}/src/port.h" \
   || { echo "ERROR: port registration patch did not apply (src/port.h missing TARGET_ID_S1C88)" >&2; exit 1; }
 
+# 4b. Teach the two SDCC device headers whose z80-family branch is BOTH needed and
+#     correct for s1c88. <stdarg.h> gates va_list on `defined(__SDCC_z80) || ...`;
+#     s1c88 isn't listed, so it falls to the mcs51 default (the __data qualifier)
+#     and <stdarg.h>/<stdio.h> (printf, varargs) break. <sdcc-lib.h> likewise gates
+#     _REENTRANT and the asm/<port>/features.h include. s1c88's stack/varargs model
+#     matches the z80 family, so join that branch (idempotent).
+#     NB: deliberately NOT string.h — its z80 branch decorates mem*/str* with
+#     __preserves_regs(iyl,iyh), a guarantee our C implementations don't make.
+echo ">> teaching stdarg.h / sdcc-lib.h that s1c88 is z80-like"
+for h in stdarg.h sdcc-lib.h; do
+  f="${SDCC}/device/include/${h}"
+  if [ -f "$f" ] && ! grep -q '__SDCC_s1c88' "$f"; then
+    sed -i 's/defined(__SDCC_z80)/defined(__SDCC_s1c88) || defined(__SDCC_z80)/g' "$f"
+  fi
+done
+
 # 5. Configure: build the compiler with ALL stock ports enabled, alongside s1c88. The s1c88 port used to
 #    require --disable-ing every other port because, as a clone of the z80 port, it kept the z80 port's
 #    global symbol names and collided at link time. Those 44 globals were renamed to unique s1c88_* names

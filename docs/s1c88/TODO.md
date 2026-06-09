@@ -124,6 +124,43 @@ Workflow: add the case, run the three gates, fix what surfaces, add an emu/diff 
 
 ---
 
+## Library coverage (#17) — expand the bundled libc
+
+The toolchain ships only a string subset + compiler helpers historically. Expanding it
+surfaced a **foundational header bug** (now fixed): SDCC's `<stdarg.h>`/`<sdcc-lib.h>`
+gate `va_list`/`_REENTRANT` on `defined(__SDCC_z80) || …` and `s1c88` wasn't listed, so
+they fell to the mcs51 `__data` default and **`<stdarg.h>`/`<stdio.h>` were broken for
+all s1c88 user code**. `build.sh` now adds `__SDCC_s1c88` to the z80-family branch of
+those two headers (NOT `string.h` — its z80 branch asserts `__preserves_regs(iyl,iyh)`,
+which our C impls don't honor). `build-runtime.sh` prefers repo libc sources and passes
+`-D__SDCC_s1c88`.
+
+- **✅ Tier 1 — DONE** (`build-runtime.sh`; `tests/diff/cases/libc2.c`, 1813 values):
+  `atoi`/`atol`, `abs`/`labs`, full `ctype` (`isalnum`…`isxdigit`, `tolower`/`toupper`),
+  `strspn`/`strcspn`/`strpbrk`/`strtok`, `memccpy`, `__itoa`/`__ltoa`/`__uitoa`/`__ultoa`,
+  `rand`/`srand` (rand not diffable; itoa/ltoa build+run, not diffed — non-standard).
+- **⚠ qsort / bsearch — BLOCKED by the ICE below.** They compile into the lib but
+  *calling* them (the function-pointer comparator) trips `gen.c:6149`. Left OUT of the
+  build so users get a clean link error, not a compiler crash. Re-add once the ICE lifts.
+- **[M] #17-printf — Tier 2, BLOCKED.** `printf_tiny`/`printf_large` build, but `sprintf`/
+  `vprintf` (and `printf` via the `pfn_outputchar` callback) hit the same `gen.c:6149`
+  ICE. Also needs a `putchar()` contract decision (the PM has no console — likely
+  emit-to-LCD or the emulator mailbox). Best done after the ICE fix; `sprintf`-to-buffer
+  is the most useful piece for real games.
+- **[M] #17-setjmp — Tier 2, needs hand asm.** Upstream `_setjmp.c` is mcs51-only
+  (`#include <8051.h>`); an s1c88 `setjmp`/`longjmp` must be written as port asm (save/
+  restore SP, return PC, callee-saved IX/IY).
+- **[L] #17-malloc — deferred by request.** Needs a heap area + `_sdcc_heap` wired into
+  crt0/linker; a real design choice on a 4 KB-RAM device.
+
+**★ #17-callback-ICE — the linchpin.** A call through a **function-pointer callback**
+(qsort/bsearch comparator, printf's `pfn_outputchar`) aborts codegen with
+`FATAL gen.c:6149 "Unbalanced stack"`. One backend fix unblocks qsort, bsearch, printf,
+and sprintf at once — the highest-leverage item here. Likely the same family as the #16
+boundary cases (a stack-imbalance guard); start by minimizing the qsort call site.
+
+---
+
 ## Codegen-boundary lift (#16) — future research pass
 
 The ~66 `UNIMPLEMENTED` sites are **loud traps, never silent miscompiles** (a `cost(4000)` dry-run penalty
