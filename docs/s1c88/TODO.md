@@ -141,12 +141,16 @@ collapsed to `cost2(bytes, cycles)`. **Remaining:**
     `#pragma portmode z80/z180` + `--portmode=` + `port_mode`/`port_back` fields (only set, never read).
   - ✅ Deleted the commented-out `z80-elf-ld`/`z80-elf-as` gas command-template blocks (already dead; the
     live commands are `sdldz80`/`sdas88`).
-  - ⏸ **Remaining (deferred, low value):** the gas/z80asm asm-DIALECT trees (`mappings.i` `_z80asm`,
-    `_s1c88_z80asm_z80`, `_s1c88_gas_z80` + their mapping tables, and the `--asm=gas`/`--asm=z80asm` branches
-    in `main.c`). These are non-functional for the S1C88 (the toolchain is asxxxx/sdas-only), but removal is
-    entangled with the multi-dialect `ASM_TYPE` machinery and those paths have **zero test coverage**, so a
-    botched edit wouldn't be caught — poor risk/reward for cosmetic gain. Leave the dialect system intact
-    (it's inert; the default is always asxxxx).
+  - ✅ **Multi-dialect asm machinery removed — DONE (asxxxx-only collapse, −270 lines).** The TODO's
+    "entangled with `ASM_TYPE`" worry didn't hold up: `_G.asmType` was only ever *assigned* ASXXXX (or ISAS/GAS
+    inside the `--asm=z80asm`/`--asm=gas` branches), and RGBDS was never set at all — so removing those two
+    `--asm` branches left **asxxxx as the only reachable dialect**, making the whole enum + every other branch
+    dead by construction. Removed: the `_z80asm`/`_z80asm_z80`/`_gas_z80` mapping tables + `_s1c88_z80asm_z80`/
+    `_s1c88_gas_z80` structs (`mappings.i`), and the `ASM_TYPE` enum, `_G.asmType`, the `--asm=` option, and the
+    per-dialect switches in `_s1c88_init`/`do_pragma(P_BANK)`/`-bo`/`-ba` (`main.c`) — each collapsed to its
+    one reachable asxxxx string. Core never referenced the `_s1c88_*` dialect symbols. Validated **corpus
+    byte-identical 20/20** + run-tests 52/52 (the segment-naming branches aren't corpus-covered, but the kept
+    string is verbatim the prior asxxxx-reachable value).
   - ⏸ **Remaining (deferred):** the peephole **flag-token model** (`pf`/`sf`/`hf`/`nf`/`vf`/`lf` — z80 flag
     names). This is NOT a clean rename: the S1C88 has Z/C/V/N (no S/P/H, and N is negative not add-subtract),
     so mapping the z80 flag set onto the S1C88 is a real flag-semantics task (it touches the same analysis as
