@@ -15,8 +15,7 @@
  *   - After a copy/cat/set, emit the resulting BYTES (logical values, identical
  *     on both ends), never sizeof or the buffer address.
  *   - There is no target <string.h>; declare the subset ourselves with target
- *     widths (size_t == unsigned, 16-bit). strlen is intentionally absent — the
- *     target has no implementation (no lib member, no builtin).
+ *     widths (size_t == unsigned, 16-bit).
  */
 #include "harness.h"
 
@@ -42,6 +41,7 @@ int   strncmp(const char *, const char *, unsigned);
 char *strchr(const char *, int);
 char *strrchr(const char *, int);
 char *strstr(const char *, const char *);
+unsigned strlen(const char *);
 #endif
 
 /* defined sign, impl-defined magnitude -> normalize to {-1,0,1} */
@@ -123,4 +123,13 @@ void diff_run(void)
     EMIT_U16("sstr_hd", off(a, strstr(a, "the")));     /* 0 */
     EMIT_U16("sstr_x", off(a, strstr(a, "slow")));     /* not found */
     EMIT_U16("sstr_e", off(a, strstr(a, "")));         /* empty matches at 0 */
+
+    /* --- strlen --- */
+    strcpy(a, "hello");
+    EMIT_U16("slen", (u16)strlen(a));                  /* 5 */
+    a[0] = '\0';
+    EMIT_U16("slen_e", (u16)strlen(a));                /* 0 (empty) */
+    strcpy(a, "0123456789abcdefghij");
+    EMIT_U16("slen_l", (u16)strlen(a));                /* 20 */
+    EMIT_U16("slen_lit", (u16)strlen("abc"));          /* 3 */
 }

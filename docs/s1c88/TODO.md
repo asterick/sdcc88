@@ -56,12 +56,13 @@ pointer-compare peephole gap, the long-long/struct return-ABI off-by-one). Cover
 control, longlong, memory, ptrarith, switch, structargs, fnptr2, unions, float, libc — plus the emu ABI cases.
 **Still untested (pick any; new territory is also fair game):**
 
-- ✅ **#11-libc — DONE** (`tests/diff/cases/libc.c`, 78 values): the s1c88.lib string/memory subset vs host
+- ✅ **#11-libc — DONE** (`tests/diff/cases/libc.c`, 82 values): the s1c88.lib string/memory subset vs host
   libc — memmove (both overlap directions), memcmp/memchr, strcpy/strncpy (zero-pad + truncate), strcat/
-  strncat, strcmp/strncmp, strchr/strrchr, strstr — plus memcpy/memset via `__builtin_*` (their only target
-  form; no lib member). Sign-normalized `*cmp` and pointer-offset results keep the impl-defined corners
-  sound. No miscompiles surfaced. **Note:** `strlen` is absent on the target (no lib source, no builtin) — a
-  gap to fill if user code needs it, not a test gap.
+  strncat, strcmp/strncmp, strchr/strrchr, strstr, strlen — plus memcpy/memset via `__builtin_*` (their only
+  target form; no lib member). Sign-normalized `*cmp` and pointer-offset results keep the impl-defined
+  corners sound. No miscompiles surfaced. Surfaced + fixed a real toolchain gap: **`strlen` had no target
+  implementation** (upstream SDCC 4.5.0 ships no `_strlen.c`, and it's not a builtin) — added a repo-owned
+  `device/lib/s1c88/_strlen.c` (build-runtime.sh now prefers repo libc sources over the fetched SDCC copies).
 - ✅ **#11-longshift — DONE** (`tests/diff/cases/longshift.c`): exhaustive variable-count shifts (every
   count 0..width-1 for 16/32/64-bit, vs arith.c's 6 samples) + rotates + long-division edges. Found one
   silent miscompile — the 32-bit variable-left-shift IY-counter bug above (**#11-longshift-iy**, deferred;
