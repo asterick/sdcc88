@@ -727,6 +727,20 @@ struct mne *mp;
 			op = (v1 < 0) ? 0xF2 : (0xE8 + v1);	/* carl / carl cc */
 		else
 			op = (v1 < 0) ? 0xF3 : (0xEC + v1);	/* jrl  / jrl cc  */
+		/* #14c: keep the un-relaxable HEAD of the slot atomic in one .rel
+		   T-record.  The linker drops the 3-byte `ld nb` by clearing rtp-2..rtp
+		   together, and detects a signed-cc trampoline by the `jrs <inv>,+7` hop
+		   at rtp-5..rtp-3 — BOTH need their bytes in the SAME record as the bank
+		   byte.  A T-record flush landing mid-slot would leave `rtp-2 < rtofst`
+		   (slot un-droppable, stays 6 B) or, worse for a trampoline, `rtp-5 <
+		   rtofst` so the hop isn't seen and the slot is wrongly dropped —
+		   overshooting its fixed +7.  Reserve hop+ld nb (6 B) when a hop is
+		   present, else the ld nb (3 B); +5 rel bytes for the bank reloc (cf.
+		   outr1be).  Any flush now lands BEFORE the slot.  The carl+disp16 may
+		   still spill to the next record — the drop touches only the ld nb and
+		   delta() reflows the carl.  T-record boundaries don't change the linked
+		   image, so output is unchanged. */
+		outchk(scc >= 0 ? 6 : 3, 5);
 		if (scc >= 0) {
 			/* short-only cc: `jrs <inverted cc>, +7` hops over the 6-byte
 			   banked branch below when the condition is FALSE (so the branch

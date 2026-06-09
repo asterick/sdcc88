@@ -96,9 +96,22 @@ Workflow: add the case, run the three gates, fix what surfaces, add an emu/diff 
     cross-module `ld nb` bytes; all gates green with relaxation on (run-tests 50/50, corpus 20/20
     byte-identical `.asm`, emu/diff pass both relaxed and `SDLD_NO_RELAX`). `size-check.sh` grew a
     **`#14c relax`** section (links each corpus program ±relaxation, reports reclaimed bytes vs
-    `scripts/corpus/relax.baseline`); corpus reclaim = **132 B**. Compiler `.asm` and the pre-link
-    `sizes.baseline` are unchanged (relaxation is link-time). **⬜ (ii)** iterate to fixpoint;
-    **⬜ (iii)** trampoline/`cars` refinement (more reclaim).
+    `scripts/corpus/relax.baseline`). Compiler `.asm` and the pre-link `sizes.baseline` are unchanged
+    (relaxation is link-time).
+  - **✅ Split-slot reclaim (2026-06-08) — corpus 132 → 150 B.** The 6 slots stage (i) skipped were
+    *split slots* (the `ld nb`'s `CE C4` straddling a `.rel` T-record boundary, `rtp-2 < rtofst`), not a
+    range/fixpoint issue. Fixed at the source: `sdas88` (`s1c88mch.c`) now calls `outchk(scc>=0 ? 6 : 3, 5)`
+    before the banked slot so the `ld nb` (and the signed-cc `jrs +7` hop, when present) stay atomic in one
+    T-record — any flush lands before the slot, the carl may spill. T-record boundaries don't change the
+    linked image, so this is byte-neutral; it just makes every slot droppable. (Caught + fixed a trap: the
+    hop must be reserved WITH the ld nb or the linker's trampoline detection `rtp-5 >= rtofst` misfires and
+    wrongly drops a trampoline — `emu/11_bankcc` guards it.) **emu 16/16, diff 12/12, run-tests 50/50.**
+  - **(ii) iterate-to-fixpoint — N/A by analysis.** A same-bank branch's disp is provably in
+    `[−32768,+32766]`, always within `carl` `±32767`; stage (i) already drops every in-range same-bank slot.
+    The conservative carl-margin only ever skips a >32.5 KB *intra-bank* span (a call near the top of a
+    fully-packed 32 KB bank) — none in any realistic PM program. So the literal fixpoint reclaims 0; not
+    pursued. **⬜ (iii)** carl→cars 1-byte shrink (only ~1 B on the corpus — cross-module targets rarely
+    within ±127; builds the genuinely-iterating fixpoint if call-dense code ever needs it).
 
 ---
 

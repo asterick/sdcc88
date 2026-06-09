@@ -444,9 +444,17 @@ emu-test **16/16**, **diff-test 12/12**, run-tests **50/50**, corpus **20/20 byt
 all with relaxation **on by default** (`rlxEmitOn()` defaults 1; opt out `SDLD_NO_RELAX=1`, legacy
 `SDLD_RELAX_EMIT=0` also disables). The correctness fix is option 1 below (assembler emits `R_PCR`
 for same-area branches + the linker `R_BYT3` rtofst fix). `size-check.sh` measures the reclaim
-(corpus 132 B; `scripts/corpus/relax.baseline`). The history that led here is kept below because it
-documents two real, subtle bugs.  Remaining for #14c: stages **(ii)** fixpoint and **(iii)**
-trampoline/`cars` refinement (both reclaim more bytes).
+(corpus **150 B**; `scripts/corpus/relax.baseline`). The history that led here is kept below because it
+documents two real, subtle bugs.
+
+**Split-slot reclaim done (132 → 150 B):** the slots stage (i) skipped were *split slots* (`ld nb`'s
+`CE C4` straddling a `.rel` T-record boundary). Fixed at the source — `sdas88` reserves the `ld nb`
+(and the signed-cc `jrs +7` hop) atomically in one T-record via `outchk(scc>=0 ? 6 : 3, 5)`, so the
+linker can always drop and correctly detect trampolines (`rtp-5 >= rtofst`). Byte-neutral (T-record
+boundaries don't change the linked image). **Stage (ii) "iterate-to-fixpoint" is N/A by analysis**:
+a same-bank disp is provably within `carl` range, so stage (i) already drops every in-range slot; the
+conservative margin only guards >32.5 KB intra-bank spans that no real PM program has. Remaining:
+**(iii)** carl→cars (1 B on the corpus). See TODO.md #14c.
 
 **⛔ ROOT CAUSE FOUND (2026-06-08) — a design-level flaw, not a coding bug.**
 The five failing cases share one property: a function body big enough that the codegen emits an
