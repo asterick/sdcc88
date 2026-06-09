@@ -88,15 +88,7 @@ _fsm::
 _matrix::
 	push	ix
 	ld	ix,sp
-	push	hl
-	push	hl
-	push	hl
-	push	hl
-	push	hl
-	push	hl
-	push	hl
-	push	hl
-	push	hl
+	add	sp, #-18
 	xor	a, a
 	ld	-6 (ix), a
 	ld	-5 (ix), a
