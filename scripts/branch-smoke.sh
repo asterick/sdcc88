@@ -16,7 +16,9 @@
 set -uo pipefail
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 SDAS="${REPO}/build/sdcc-4.5.0/bin/sdas88"
+SDLD="${REPO}/build/sdcc-4.5.0/bin/sdldz80"
 [ -x "$SDAS" ] || { echo "!! sdas88 not built — run scripts/build-sdas.sh as88" >&2; exit 2; }
+[ -x "$SDLD" ] || { echo "!! sdldz80 not built — run scripts/build-sdld.sh" >&2; exit 2; }
 
 tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
 cat > "$tmp/br.asm" <<'EOF'
@@ -35,10 +37,23 @@ b:	nop
 f:	ret
 EOF
 
-"$SDAS" -l -o "$tmp/br.rel" "$tmp/br.asm" || { echo "FAIL: assemble"; exit 1; }
+"$SDAS" -o "$tmp/br.rel" "$tmp/br.asm" || { echo "FAIL: assemble"; exit 1; }
 
-# Concatenated code bytes from the listing.
-got="$(grep -E '^ +[0-9A-F]{6} ' "$tmp/br.lst" | cut -c14-37 | tr -d ' \n' | tr 'a-f' 'A-F')"
+# Same-area relative branches are resolved at LINK time (#14c: they carry an
+# R_PCR relocation so the linker can re-adjust them under cross-module relaxation
+# — the assembler listing would show only the un-resolved addend).  So LINK at a
+# fixed org and read the FINAL code bytes; the convention is locked on the bytes
+# that actually reach the ROM.
+"$SDLD" -nwxi -b _CODE=0x0000 "$tmp/br.ihx" "$tmp/br.rel" || { echo "FAIL: link"; exit 1; }
+
+# Concatenate the data bytes of every type-00 ihx record, in file order (the
+# single _CODE block at org 0).
+got="$(awk '
+  /^:/ {
+    ll = strtonum("0x" substr($0,2,2)); t = substr($0,8,2);
+    if (t != "00") next;
+    print substr($0, 10, ll*2);
+  }' "$tmp/br.ihx" | tr -d '\n' | tr 'a-f' 'A-F')"
 
 # Hand-computed displacements (8-bit rr = target - rr_addr; 16-bit qqrr =
 # target - first_disp_addr - 1):

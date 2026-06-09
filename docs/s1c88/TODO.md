@@ -81,13 +81,24 @@ Workflow: add the case, run the three gates, fix what surfaces, add an emu/diff 
     (rel files + `library()` modules, relocation on, output suppressed before `lkfopen()`) collecting
     `rlxIsDrop[]` in the emit pass's exact order; `freelibraryindex()` guarded off while measuring.
     Proven byte-identical with `SDLD_RELAX=1` (run-tests 50/50, emu 16/16, diff 12/12, hello cmp-clean).
-  - **⚠ Stage (i) emit Step 2 — WIP (`SDLD_RELAX_EMIT`, default-off; emu-clean, diff partial).** Emit-time
+  - **✅ Stage (i) emit Step 2 — DONE (`SDLD_RELAX_EMIT`, default-off; correct).** Emit-time
     `delta()` reflow (no struct pre-shift): recompacts each record's load address + PCR base via `pc`, and
     shifts R3_SYM by `delta(reli)` and R3_AREA by `delta(base+addend)` (read from rtval; bank-local; absolute
-    areas fixed). Boundary symbols + signed-cc trampolines handled. **emu 16/16** under emit; default-off
-    50/50 byte-identical. **Remaining:** diff 7/12 — 5 heavy-runtime cases (float/fnptr2/ptrarith/arith/
-    longlong) still crash; fnptr tables verified correct, so a separate not-yet-found bug. See banked-branch.md.
-  - **⬜ (ii)** iterate to fixpoint; **⬜ (iii)** trampoline/`cars` refinement.
+    areas fixed). Boundary symbols + signed-cc trampolines handled. The residual that crashed 5 cases was
+    **assembler-resolved same-area relative branches being invisible to the linker drop** — fixed (option 1):
+    `sdas88` now emits `R_PCR` relocations for every same-area `carl`/`jrl`/`jrs`/`cars`/`djr` (and the #14b
+    `bcall`/`bjump` relaxation), and `lkrloc3.c` widened the `R3_BYTX` `rtofst` byte-collapse adjust to
+    `|| R_BYT3` (the new `R_PCR|R_BYTE|R_BYT3` byte fields lack the `R3_BYTX` bit). **emu 16/16, diff 12/12**
+    under emit; default-off **50/50 + corpus 20/20 byte-identical**; both smokes updated to observe linked
+    output (same-area disps now resolve at link time). See banked-branch.md "Option-1 COMPLETED".
+  - **✅ Flipped emit to DEFAULT-ON + size yardstick (2026-06-08).** `rlxEmitOn()` now defaults on; opt
+    out with `SDLD_NO_RELAX=1` (legacy `SDLD_RELAX_EMIT=0` also disables). Every link reclaims same-bank
+    cross-module `ld nb` bytes; all gates green with relaxation on (run-tests 50/50, corpus 20/20
+    byte-identical `.asm`, emu/diff pass both relaxed and `SDLD_NO_RELAX`). `size-check.sh` grew a
+    **`#14c relax`** section (links each corpus program ±relaxation, reports reclaimed bytes vs
+    `scripts/corpus/relax.baseline`); corpus reclaim = **132 B**. Compiler `.asm` and the pre-link
+    `sizes.baseline` are unchanged (relaxation is link-time). **⬜ (ii)** iterate to fixpoint;
+    **⬜ (iii)** trampoline/`cars` refinement (more reclaim).
 
 ---
 

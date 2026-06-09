@@ -96,17 +96,30 @@ minit()
 }
 
 /*
- * PC-relative helper: returns 1 if the target is in the current area (so the
- * displacement can be computed here), else sets up the relocation base and
- * returns 0 (the linker resolves it via R_PCR).
+ * PC-relative helper: sets up the relocation base for a relative branch and
+ * ALWAYS returns 0 — the linker resolves the displacement via R_PCR.
+ *
+ * #14c note — why same-area branches are NOT resolved here.  The natural
+ * optimisation is to return 1 when the target is in the current area
+ * (`e_base.e_ap == dot.s_area`): the displacement is then base-independent and
+ * can be computed at assemble time, emitting NO relocation.  That is unsound in
+ * the presence of the linker's cross-module relaxation (Stage (i) emit): the
+ * linker drops `ld nb` bytes and shifts every higher address in the bank, but
+ * it can only re-adjust references it can SEE — i.e. relocations.  An
+ * assembler-resolved branch whose span crosses a dropped slot keeps its stale
+ * displacement and lands 3*(drops between source and target) bytes off
+ * (root-caused 2026-06-08; docs/s1c88/banked-branch.md).  So we emit an R_PCR
+ * relocation for EVERY relative branch, same-area included.  Default-off output
+ * is byte-identical: the linker recomputes exactly the displacement we would
+ * have, the addend `+1` bias each caller applies lining the z80-style R_PCR
+ * base up with the S1C88 one-byte-earlier base.  (Byte PCR fields also rely on
+ * the linker's R_BYT3 rtofst fix in relr3 so the 3-byte byte-select field maps
+ * to the correct output offset.)
  */
 int
 mchpcr(esp)
 struct expr *esp;
 {
-	if (esp->e_base.e_ap == dot.s_area) {
-		return(1);
-	}
 	if (esp->e_flag == 0 && esp->e_base.e_ap == NULL) {
 		esp->e_flag = 1;
 		esp->e_base.e_sp = &sym[1];	/* the absolute symbol '.__.ABS.' */
@@ -673,25 +686,39 @@ struct mne *mp;
 				useLong = getbit();
 			}
 
+			/* #14c: emit the displacement as an R_PCR RELOCATION, not a
+			   self-resolved constant.  The short-vs-long SIZE is still fixed
+			   here (the bit table above); only the displacement is deferred to
+			   the linker, so its cross-module relaxation can re-adjust this
+			   same-area branch when it drops bytes between here and the target.
+			   A self-resolved displacement would be invisible to the linker and
+			   land 3*(drops in its span) bytes off (root-caused 2026-06-08; see
+			   docs/s1c88/banked-branch.md).  Default-off is byte-identical: the
+			   linker recomputes the same disp, the +1 addend bias matching the
+			   S1C88 one-byte-earlier PCR base (see S_JRS / S_CARL).  The 8-bit
+			   form's R_PCR is a 3-byte R_BYT3 byte-select field — sound now that
+			   relr3 advances rtofst past the two collapsed bytes. */
 			if (!useLong) {
 				/* cars/jrs [cc,] d8 — 2 bytes */
 				if (v1 < 0)
 					outab(rf == S_PCALL ? 0xF0 : 0xF1);
 				else
 					outab((rf == S_PCALL ? 0xE0 : 0xE4) + v1);
-				disp = (int) (e1.e_addr - dot.s_addr);	/* rel to the disp byte itself */
-				if (pass == 2 && (disp < -128 || disp > 127))
-					xerr('a', "Branching Range Exceeded.");
-				outab(disp);
+				if (pass == 2) {
+					disp = (int) (e1.e_addr - dot.s_addr);	/* rel to the disp byte itself */
+					if (disp < -128 || disp > 127)
+						xerr('a', "Branching Range Exceeded.");
+				}
+				e1.e_addr += 1;
+				outrb(&e1, R_PCR);
 			} else {
 				/* carl/jrl [cc,] d16 — 3 bytes */
 				if (v1 < 0)
 					outab(rf == S_PCALL ? 0xF2 : 0xF3);
 				else
 					outab((rf == S_PCALL ? 0xE8 : 0xEC) + v1);
-				disp = (int) (e1.e_addr - dot.s_addr - 1);	/* qqrr rel to (first disp byte + 1) */
-				outab(disp & 0xFF);
-				outab((disp >> 8) & 0xFF);
+				e1.e_addr += 1;				/* qqrr rel to (first disp byte + 1) */
+				outrw(&e1, R_PCR);
 			}
 			break;
 		}

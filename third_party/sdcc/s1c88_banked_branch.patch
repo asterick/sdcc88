@@ -116,7 +116,7 @@
   *              expr *  esp             pointer to expr structure
 --- a/sdas/linksrc/lkrloc3.c
 +++ b/sdas/linksrc/lkrloc3.c
-@@ -54,6 +54,335 @@
+@@ -54,6 +54,346 @@
   *
   */
  
@@ -256,15 +256,26 @@
 +        return rlx14c;
 +}
 +
-+/* SDLD_RELAX_EMIT — actually perform the stage-(i) reflow (shift + byte-drop).
-+ * Distinct from SDLD_RELAX (plan/report only) so the measure plumbing can be
-+ * validated byte-identical before the mutating half is switched on. */
++/* Stage-(i) cross-module relaxation reflow (shift + byte-drop) — sdcc88 #14c.
++ * DEFAULT ON: every link reclaims the in-range same-bank cross-module `ld nb`
++ * bytes.  Opt out with SDLD_NO_RELAX=1 for the legacy full-size layout (a debug
++ * / bisection escape hatch; the relaxed and unrelaxed builds are behaviourally
++ * identical — relaxation only removes redundant bank switches — so the unrelaxed
++ * path is the fallback if a slot is ever mis-relaxed, not a correctness crutch).
++ * The historical SDLD_RELAX_EMIT=0 still forces it off too, for back-compat with
++ * scripts written while the feature was opt-in. */
 +static int
 +rlxEmitOn(void)
 +{
 +        if (rlxEmit < 0) {
-+                char *e = getenv("SDLD_RELAX_EMIT");
-+                rlxEmit = (e != NULL && *e != '\0' && *e != '0') ? 1 : 0;
++                char *no  = getenv("SDLD_NO_RELAX");
++                char *emit = getenv("SDLD_RELAX_EMIT");
++                if (no != NULL && *no != '\0' && *no != '0')
++                        rlxEmit = 0;                    /* explicit opt-out  */
++                else if (emit != NULL && (*emit == '0' || *emit == '\0'))
++                        rlxEmit = 0;                    /* legacy SDLD_RELAX_EMIT=0 */
++                else
++                        rlxEmit = 1;                    /* default ON */
 +        }
 +        return rlxEmit;
 +}
@@ -452,7 +463,7 @@
  /*)Function VOID        reloc3(c)
   *
   *                      int c           process code
-@@ -324,6 +653,19 @@
+@@ -324,6 +664,19 @@
           */
          pcb = 1;
  
@@ -472,7 +483,7 @@
          #if 0
          printf("area %d base address: 0x%x size: 0x%x rtbase: 0x%x\n", aindex,
                  a[aindex]->a_addr, a[aindex]->a_size, rtbase);
-@@ -354,6 +696,18 @@
+@@ -354,6 +707,18 @@
                                  return;
                          }
                          reli = symval(s[rindex]);
@@ -491,7 +502,7 @@
                  }
  /* sdld specific */
                  else if ((IS_R_J11(mode) || IS_R_J19(mode)) && (rindex == 0xFFFF)) {
-@@ -368,6 +722,92 @@
+@@ -368,6 +733,92 @@
                                  return;
                          }
                          reli = a[rindex]->a_addr;
@@ -584,6 +595,31 @@
                  }
  
                  /*
+@@ -612,10 +1063,21 @@
+                 }
+ 
+                 /*
+-                 * R3_BYTE with R3_BYTX offset adjust
+-                 */
++                 * R3_BYTE with R3_BYTX / R_BYT3 offset adjust
++                 *
++                 * A byte field that occupies more than one T-line byte but emits
++                 * a single output byte (R3_BYTX = a_bytes-wide select; R_BYT3 =
++                 * the s1c88/mcs51 3-byte 24-bit select) must advance rtofst by the
++                 * dropped bytes so the T-line index -> output-offset map stays
++                 * correct for any LATER PC-relative field or #14c slot in the same
++                 * record.  sdcc88 #14c: same-area relative branches now carry an
++                 * R_PCR R_BYT3 byte field WITHOUT R3_BYTX (mode R_PCR|R_BYTE|
++                 * R_BYT3), which the original R3_BYTX-only test missed — two such
++                 * branches in one record drifted by 3 each.  The `|| R_BYT3` arm
++                 * fires exactly once (fields that set both bits already matched),
++                 * so default-off output is byte-identical. */
+                 if (mode & R3_BYTE) {
+-                        if (mode & R3_BYTX) {
++                        if ((mode & R3_BYTX) || (mode & R_BYT3)) {
+                                 rtofst += (a_bytes - 1);
+                         }
+                 }
 --- a/sdas/linksrc/lkmain.c
 +++ b/sdas/linksrc/lkmain.c
 @@ -24,6 +24,13 @@

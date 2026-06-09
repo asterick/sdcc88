@@ -60,8 +60,15 @@ for c in "${CASES[@]}"; do
   if ! "$SDAS" -o "${OUT}/t.rel" "${OUT}/t.s" 2>"${OUT}/e"; then
     echo "  FAIL  '$line' did not assemble:"; sed 's/^/        /' "${OUT}/e" | head -3; fail=1; continue
   fi
-  # first T line: "T a0 a1 a2 <data...>"  (XL3 = 3 address bytes); data = NF-1-3
-  got="$(awk '/^T/{print NF-4; exit}' "${OUT}/t.rel")"
+  # OUTPUT size = the assembler's location-counter advance over the instruction,
+  # i.e. the address of the `_x:` label placed right after it.  We read that from
+  # the symbol record `S _x Def<hex>` rather than counting T-line data bytes:
+  # since #14c, a same-area relative branch carries an R_PCR R_BYT3 relocation
+  # whose T-line FIELD is 3 bytes wide but collapses to ONE output byte at link
+  # (the linker's byte-select), so the T-line byte count overstates the real,
+  # ROM-resident size the compiler models.  The dot advance never lies.
+  hex="$(grep -E '^S _x Def' "${OUT}/t.rel" | sed -E 's/.*Def0*([0-9A-Fa-f]*)$/\1/')"
+  got="$(printf '%d' "0x${hex:-0}")"
   if [ "$got" = "$want" ]; then
     printf "  ok    %-16s %s bytes\n" "$line" "$got"
   else

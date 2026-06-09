@@ -439,15 +439,92 @@ Two correctness traps from earlier are fixed: **signed-cc trampolines** (`jrs <i
 nb ; jrl`) are excluded from dropping (the fixed `+7` hop can't be relinked), and **boundary
 symbols** now shift.
 
-**Status:** emu-test **16/16** under `SDLD_RELAX_EMIT` (and default-off stays 50/50, byte-identical).
-**Remaining:** diff-test **7/12** — five heavy-runtime cases (`float`, `fnptr2`, `ptrarith`,
-`arith`, `longlong`, which pull the long/long-long/float library) still crash. The function-pointer
-*tables* now relocate correctly (verified byte-for-byte), so the residual is a *separate* bug in
-that heavier code, not yet root-caused. Find it, then make emit the default and re-baseline the
-corpus.
+**Status — ✅ DONE + DEFAULT-ON (2026-06-08): cross-module relaxation ships by default.**
+emu-test **16/16**, **diff-test 12/12**, run-tests **50/50**, corpus **20/20 byte-identical** `.asm`,
+all with relaxation **on by default** (`rlxEmitOn()` defaults 1; opt out `SDLD_NO_RELAX=1`, legacy
+`SDLD_RELAX_EMIT=0` also disables). The correctness fix is option 1 below (assembler emits `R_PCR`
+for same-area branches + the linker `R_BYT3` rtofst fix). `size-check.sh` measures the reclaim
+(corpus 132 B; `scripts/corpus/relax.baseline`). The history that led here is kept below because it
+documents two real, subtle bugs.  Remaining for #14c: stages **(ii)** fixpoint and **(iii)**
+trampoline/`cars` refinement (both reclaim more bytes).
+
+**⛔ ROOT CAUSE FOUND (2026-06-08) — a design-level flaw, not a coding bug.**
+The five failing cases share one property: a function body big enough that the codegen emits an
+**intra-module `carl`/`jrl` to a *same-area* local label** (e.g. a helper-to-helper call). sdas88
+**fully resolves** such a same-area PC-relative branch into a fixed displacement and emits **NO
+relocation record** for it (the displacement is base-independent, so by ASxxxx design the assembler
+internalises it). The Stage-(i) emit reflow drops `ld nb` bytes and shifts every higher address in
+the bank — but it can only re-adjust references the linker can *see* (i.e. relocations). Any
+assembler-resolved branch whose span `[source,target]` crosses one or more dropped slots keeps its
+old displacement, so it lands `3 × (drops strictly between source and target)` bytes off and
+control flow corrupts (→ garbage compute on a clean exit, or an illegal-op crash).
+
+Worked example (arith, 20 drops): a `carl 0xE576` at logical `0x3D82` targeting helper `0x22FA`
+is **byte-identical** in the off and emit ROMs (`F2 76 E5`; its `.rel` R-line relocates only the
+*next*, absolute, operand — index 10 — never the `carl` disp at index 7). Off it reaches `0x22FA`;
+under emit the source shifts to `0x3D52` (−48, correct) but the unchanged disp lands it at `0x22CA`
+= `0x22FA − 48` instead of the correct `0x22F4` (= `0x22FA − delta(0x22FA)=6`). It overshoots by the
+14 drops sitting between target and source. The 7 *passing* cases (incl. the 2-drop crt0-only ones
+like `switch`/`control`) survive only because no assembler-resolved relative branch happens to span
+their drop points.
+
+**Implication:** linker-side byte-dropping is unsound as long as the assembler hides same-area
+relative displacements. The measure/report/predict stages (read-only) are unaffected; only the
+mutating emit is. Candidate fixes, in order of cleanliness:
+  1. **Make sdas88 emit an `R_PCR` relocation for same-area relative branches** (`carl`/`jrl`/
+     `cars`/`jrs` to a local label) instead of self-resolving them. The linker's *existing* reflow
+     already shifts `R3_PCR` + area/sym targets, so no linker change is needed; default-off stays
+     byte-identical (the linker recomputes the same disp the assembler would). Cost: every `.rel`
+     grows, and it changes assembler output for *all* builds (final ROM identical). This is the
+     complete fix.
+  2. Assembler emits a per-module **branch-span list** (or no-drop barriers) so the linker only
+     drops slots no local branch spans — forgoes most drops; more plumbing.
+  3. Abandon linker-side dropping; relax only what the assembler owns (that is #14b) and accept that
+     cross-module slots stay fixed-size.
+
+Until one is chosen, `SDLD_RELAX_EMIT` must stay **default-off**. Next: decide fix scope (1 vs 2),
+implement, then re-gate emu/diff and re-baseline the corpus.
+
+**Option-1 implementation attempt (2026-06-08) — half works, half exposes a SECOND latent bug.**
+Emitting `R_PCR` relocations for same-area branches was tried in two spots: `mchpcr()` (direct
+`carl`/`jrl`/`jrs`/`cars`/`djr` to a local label) and the #14b same-area `bcall`/`bjump` relaxation
+in `S_PCALL`/`S_PJUMP` (`sdas/as88/s1c88mch.c`).
+  * **16-bit forms (`carl`/`jrl`, via `outrw`) work perfectly** — default-off byte-identical (the
+    linker recomputes `target − source − 1`; the arith `f2 76 e5` carl was unchanged), and the
+    cross-module drop reflow then adjusts them. This is the half that fixes the actual arith failure.
+  * **8-bit forms (`cars`/`jrs`/`djr`, via `outrb`) are mis-encoded** and corrupt *default-off*
+    (every relaxed short branch came out 2 bytes off; diff-test 0/12). Root cause: under the s1c88
+    target `outrxb(1,…)` takes the **C24 / `R_BYT3`** path (`asout.c`) — a relocatable byte is stored
+    as an `a_bytes`-wide (3-byte) field in the T-line with byte-selection, NOT a true 1-byte field.
+    The linker's PC-relative base `pc + (rtp − rtofst)` uses the **T-line** byte offset (`rtp`), which
+    only equals the **output** offset when 1 T-line byte ⇒ 1 output byte. `R_BYT3` breaks that (3⇒1),
+    so with ≥2 byte-PCR relocations in one record the source position drifts. This never surfaced
+    before because byte PC-relative relocations (a `jrs`/`cars` to a *different* area) are essentially
+    never emitted — the compiler uses `bcall`/`bjump` for cross-area, and same-area was self-resolved.
+
+**✅ Option-1 COMPLETED (2026-06-08).** Two changes, both kept:
+  1. **Assembler — `sdas/as88/s1c88mch.c`:** `mchpcr()` no longer returns 1 for same-area targets,
+     and the #14b `S_PCALL`/`S_PJUMP` same-area relaxation emits `outrb`/`outrw` `R_PCR` relocations
+     instead of self-resolved displacements. Every relative branch (`carl`/`jrl`/`jrs`/`cars`/`djr`,
+     8- and 16-bit, same-area included) is now link-resolved, so the cross-module drop reflow can
+     re-adjust it. The size decision (short vs long) is unchanged; only the displacement defers.
+  2. **Linker — `lkrloc3.c` `relr3()`:** the byte-field `rtofst` adjustment
+     `if (mode & R3_BYTX) rtofst += a_bytes-1` was widened to `if ((mode & R3_BYTX) || (mode &
+     R_BYT3))`. The root cause of the residual: an 8-bit PCR field is encoded as a 3-byte
+     `R_BYT3` byte-select (1 output byte). The existing code only advanced `rtofst` for fields with
+     the `R3_BYTX` bit — true for byte-*extraction* fields (mode `0x189`) but NOT for the new
+     `R_PCR | R_BYTE | R_BYT3` branch fields (mode `0x105`), so consecutive byte-PCR branches in one
+     record drifted by 3 each. The `|| R_BYT3` arm fires exactly once per fat field (fields with both
+     bits already matched), so the bump is never doubled and **default-off output is byte-identical**.
+
+Validated: diff 12/12 + emu 16/16 under `SDLD_RELAX_EMIT`; default-off 50/50 + corpus 20/20
+byte-identical; both smokes pass (see below). The smokes were updated to observe **linked** output —
+same-area branch displacements are now resolved at link time, so reading the assembler listing/object
+would show only the un-resolved addend; `branch-smoke.sh` links before byte-comparing, and
+`insn-size-check.sh` reads the `_x` dot-advance (true ROM size) instead of the T-line byte count.
 
 ### Validation (every step)
 
-`branch-smoke.sh` byte-locks every form; emu-test + diff-test prove correctness;
-re-baseline the corpus afterward (sizes change). Add a size delta to the corpus report
-so each shrink is visible and provably monotone.
+`branch-smoke.sh` links then byte-locks every form; `insn-size-check.sh` locks the dot-advance size;
+emu-test + diff-test prove correctness. When emit is flipped to default, re-baseline the corpus
+(sizes shrink) and add a size delta to the corpus report so each shrink is visible and monotone.
