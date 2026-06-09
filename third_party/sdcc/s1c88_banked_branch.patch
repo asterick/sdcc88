@@ -116,10 +116,418 @@
   *              expr *  esp             pointer to expr structure
 --- a/sdas/linksrc/lkrloc3.c
 +++ b/sdas/linksrc/lkrloc3.c
-@@ -370,6 +370,33 @@
-                         reli = a[rindex]->a_addr;
-                 }
+@@ -54,6 +54,346 @@
+  *
+  */
  
++/*
++ * sdcc88 #14c Stage 0 — link-time relaxation-opportunity report (READ-ONLY).
++ *
++ * Every R_S1C88_BANK slot that reaches the linker is a cross-area/cross-module
++ * banked branch: same-module slots are already relaxed assembler-side (#14b)
++ * and carry NO R_S1C88_BANK reloc, so they never get here.  This pass therefore
++ * tallies exactly the cross-module residual — how many of those slots COULD
++ * shrink if the linker grew a reflow pass (#14c stages 1-3) — without touching
++ * a single output byte.  Enable with env var SDLD_RELAX_REPORT=1; default off
++ * => zero behaviour change (the corpus stays byte-identical).  See
++ * docs/s1c88/banked-branch.md §10.
++ */
++static int  rlxEnabled = -1;            /* -1 = not yet probed                  */
++static long rlxNTotal;                  /* R_S1C88_BANK slots seen              */
++static long rlxNSameJrs;                /* same-bank, fits cars/jrs (reclaim 4) */
++static long rlxNSameJrl;                /* same-bank, fits carl/jrl (reclaim 3) */
++static long rlxNSameFar;                /* same-bank, out of carl range (0)     */
++static long rlxNCross;                  /* cross-bank, ld nb stays (blocked)    */
++static long rlxNCrossShort;             /* ...of which the branch fits cars (1) */
++static long rlxNFixed;                  /* slots in absolute areas (vectors)    */
++static long rlxBytes;                   /* estimated reclaimable bytes          */
++
++static int
++rlxOn(void)
++{
++        if (rlxEnabled < 0) {
++                char *e = getenv("SDLD_RELAX_REPORT");
++                rlxEnabled = (e != NULL && *e != '\0' && *e != '0') ? 1 : 0;
++        }
++        return rlxEnabled;
++}
++
++/*
++ * Account one R_S1C88_BANK slot.  tgt = resolved target address; abank =
++ * address of the [bank] byte in the slot `CE C4 [bank] <carl|jrl> <disp16>`.
++ * Pure tally — classification mirrors the relax forms in banked-branch.md §10
++ * using the canonical cars(+-127)/carl(+-32K) windows; the +-1 of the S1C88
++ * displacement convention is immaterial to a bytes-on-the-table estimate.
++ */
++static VOID
++rlxAccount(long tgt, long abank, int tbank, int cbank, int absarea)
++{
++        long dshort, dlong;
++
++        rlxNTotal++;
++        if (absarea) {
++                /* hardware-fixed vector slot — not reclaimable */
++                rlxNFixed++;
++                return;
++        }
++        if (tbank == 0 || tbank == cbank) {
++                /* same bank: drop the 3-byte `ld nb`, keep a relative branch
++                 * starting where CE was (abank-2). */
++                dshort = tgt - abank;            /* cars: opcode@abank-2, +2 */
++                dlong  = tgt - (abank + 1);      /* carl: opcode@abank-2, +3 */
++                if (dshort >= -128 && dshort <= 127) {
++                        rlxNSameJrs++;
++                        rlxBytes += 4;           /* 6B slot -> 2B cars */
++                } else if (dlong >= -32768 && dlong <= 32767) {
++                        rlxNSameJrl++;
++                        rlxBytes += 3;           /* 6B slot -> 3B carl */
++                } else {
++                        rlxNSameFar++;           /* unreachable as relative */
++                }
++        } else {
++                /* cross bank: the bank switch is mandatory (ld nb stays); only
++                 * the branch itself might shrink carl->cars (saves 1). */
++                rlxNCross++;
++                dshort = tgt - (abank + 3);      /* branch opcode@abank+1, +2 */
++                if (dshort >= -128 && dshort <= 127) {
++                        rlxNCrossShort++;
++                        rlxBytes += 1;
++                }
++        }
++}
++
++/*
++ * Print the accumulated report once, at end-of-link (called from lkmain.c).
++ */
++VOID
++s1c88RelaxReport(void)
++{
++        if (!rlxOn())
++                return;
++        fprintf(stderr, "[relax-report] cross-module banked-branch slots (R_S1C88_BANK):\n");
++        fprintf(stderr, "[relax-report]   total seen           : %ld\n", rlxNTotal);
++        fprintf(stderr, "[relax-report]   hardware-fixed (abs) : %ld  (vector table — NOT reclaimable)\n", rlxNFixed);
++        fprintf(stderr, "[relax-report]   same-bank, cars range: %ld  (reclaim 4B each)\n", rlxNSameJrs);
++        fprintf(stderr, "[relax-report]   same-bank, carl range: %ld  (reclaim 3B each)\n", rlxNSameJrl);
++        fprintf(stderr, "[relax-report]   same-bank, unreachable: %ld (reclaim 0)\n", rlxNSameFar);
++        fprintf(stderr, "[relax-report]   cross-bank (blocked) : %ld  (%ld branch-shrinkable, 1B each)\n",
++                rlxNCross, rlxNCrossShort);
++        fprintf(stderr, "[relax-report]   est. reclaimable     : %ld bytes  (#14c stages 1-3 upper bound)\n", rlxBytes);
++}
++
++/*
++ * sdcc88 #14c Stage (i) — measure + plan engine (READ-ONLY this increment).
++ *
++ * Builds the conservative single-pass shrink plan (which cross-module banked
++ * slots would drop their 3-byte `ld nb`), then derives the resulting address
++ * shift delta(addr) and the predicted post-relax area layout, with internal
++ * self-checks on the model.  It does NOT yet mutate addresses or emit bytes —
++ * that is the next increment, which needs the 3-pass driver in lkmain.c.
++ * Enabling SDLD_RELAX=1 only PRINTS the plan, so output stays byte-identical
++ * and every gate stays green.  Design: docs/s1c88/banked-branch.md §14c
++ * "Stage (i)".
++ */
++#define RLX_CARL_MARGIN 256             /* keep pre/post-shrink range decision in agreement */
++
++static int     rlx14c = -1;             /* SDLD_RELAX enabled? (lazy)             */
++static int     rlxEmit = -1;            /* SDLD_RELAX_EMIT enabled? (lazy)        */
++static a_uint *rlxDrop;                 /* abank (bank-byte addr) of each planned drop */
++static int     rlxDropN, rlxDropCap;
++
++/*
++ * Per-slot drop decision, indexed by R_S1C88_BANK processing order.  The order
++ * is identical in the measure sweep and the emit pass (same rel files read the
++ * same way), so the emit pass replays the measure pass's decisions by index.
++ * Filled in the measure sweep; consumed in the emit pass.
++ */
++static char   *rlxIsDrop;               /* 1 = drop this slot's 3-byte ld nb      */
++static int     rlxIsDropCap;
++int            s1c88_relax_measure;     /* set by lkmain.c around the measure sweep */
++int            rlxMeasureIdx;           /* slot counter within the measure sweep   */
++int            rlxEmitIdx;              /* slot counter within the emit pass        */
++
++static int
++rlxOn14c(void)
++{
++        if (rlx14c < 0) {
++                char *e = getenv("SDLD_RELAX");
++                rlx14c = (e != NULL && *e != '\0' && *e != '0') ? 1 : 0;
++        }
++        return rlx14c;
++}
++
++/* Stage-(i) cross-module relaxation reflow (shift + byte-drop) — sdcc88 #14c.
++ * DEFAULT ON: every link reclaims the in-range same-bank cross-module `ld nb`
++ * bytes.  Opt out with SDLD_NO_RELAX=1 for the legacy full-size layout (a debug
++ * / bisection escape hatch; the relaxed and unrelaxed builds are behaviourally
++ * identical — relaxation only removes redundant bank switches — so the unrelaxed
++ * path is the fallback if a slot is ever mis-relaxed, not a correctness crutch).
++ * The historical SDLD_RELAX_EMIT=0 still forces it off too, for back-compat with
++ * scripts written while the feature was opt-in. */
++static int
++rlxEmitOn(void)
++{
++        if (rlxEmit < 0) {
++                char *no  = getenv("SDLD_NO_RELAX");
++                char *emit = getenv("SDLD_RELAX_EMIT");
++                if (no != NULL && *no != '\0' && *no != '0')
++                        rlxEmit = 0;                    /* explicit opt-out  */
++                else if (emit != NULL && (*emit == '0' || *emit == '\0'))
++                        rlxEmit = 0;                    /* legacy SDLD_RELAX_EMIT=0 */
++                else
++                        rlxEmit = 1;                    /* default ON */
++        }
++        return rlxEmit;
++}
++
++/* Any relaxation diagnostic/feature on ⇒ lkmain.c runs the measure sweep. */
++int
++s1c88RelaxAnyOn(void)
++{
++        return rlxOn() || rlxOn14c() || rlxEmitOn();
++}
++
++/* Record rlxIsDrop[rlxMeasureIdx]=v and advance, growing the array as needed. */
++static VOID
++rlxMarkSlot(int v)
++{
++        if (rlxMeasureIdx >= rlxIsDropCap) {
++                rlxIsDropCap = rlxIsDropCap ? rlxIsDropCap * 2 : 128;
++                rlxIsDrop = (char *) realloc(rlxIsDrop, rlxIsDropCap);
++                if (rlxIsDrop == NULL) { rlxIsDropCap = 0; return; }
++        }
++        rlxIsDrop[rlxMeasureIdx++] = (char) v;
++}
++
++/*
++ * Record a conservative stage-(i) drop candidate.  abank = address of the
++ * [bank] byte in `CE C4 [bank] <carl|jrl> <disp16>`.  The slot drops its
++ * 3-byte `ld nb` iff: same bank (else the bank switch is mandatory); the whole
++ * `ld nb` lies in THIS T-record (rtp-2 >= rtofst — else it splits across an
++ * already-emitted record); and the kept `carl` (which moves to abank-2)
++ * comfortably reaches the target (margin so a pre-shrink in-range decision
++ * still holds in the smaller post-shrink layout — monotone safety).
++ */
++static int
++rlxPlanSlot(long tgt, long abank, int tbank, int cbank, int rtp, int rtofst)
++{
++        long disp;
++
++        if (!(tbank == 0 || tbank == cbank))
++                return 0;
++        if (rtp - 2 < rtofst)
++                return 0;
++        /* Do not drop the `ld nb` of a SIGNED-cc trampoline.  The assembler
++         * precedes it with a FIXED `jrs <inv-scc>, +7` hop (CE E0+cc 07) sized
++         * to skip the whole 6-byte banked branch on the not-taken path; removing
++         * the 3-byte `ld nb` would leave that +7 overshooting the shrunk branch.
++         * The hop is a literal, not a relocation, so the linker can't fix it.
++         * The pattern is exact (always CE / E0..E7 / 07), so this never misses a
++         * real trampoline; a chance byte match merely forgoes one slot's shrink. */
++        if (rtp - 5 >= rtofst &&
++            rtval[rtp - 5] == 0xCE && (rtval[rtp - 4] & 0xF8) == 0xE0 &&
++            rtval[rtp - 3] == 0x07)
++                return 0;
++        disp = tgt - (abank - 2 + 3);           /* carl opcode @abank-2, +3 (op+disp16) */
++        if (disp < -(32768 - RLX_CARL_MARGIN) || disp > (32767 - RLX_CARL_MARGIN))
++                return 0;
++        if (rlxDropN == rlxDropCap) {
++                rlxDropCap = rlxDropCap ? rlxDropCap * 2 : 64;
++                rlxDrop = (a_uint *) realloc(rlxDrop, rlxDropCap * sizeof(a_uint));
++                if (rlxDrop == NULL) { rlxDropCap = rlxDropN = 0; return 0; }
++        }
++        rlxDrop[rlxDropN++] = (a_uint) abank;
++        return 1;
++}
++
++static int
++rlxCmpAddr(const void *a, const void *b)
++{
++        a_uint x = *(const a_uint *) a, y = *(const a_uint *) b;
++        return (x < y) ? -1 : (x > y) ? 1 : 0;
++}
++
++/* lower_bound: first index i with rlxDrop[i] >= key (rlxDrop sorted ascending). */
++static int
++rlxLowerBound(a_uint key)
++{
++        int lo = 0, hi = rlxDropN;
++        while (lo < hi) {
++                int mid = (lo + hi) / 2;
++                if (rlxDrop[mid] < key) lo = mid + 1; else hi = mid;
++        }
++        return lo;
++}
++
++/*
++ * delta(addr) = bytes removed strictly before addr WITHIN addr's code bank =
++ * 3 * (#drops d with bank(d)==bank(addr) and d < addr).  Banked code lives at
++ * (bank<<16)|logic and each 32 KB bank is a fixed physical region, so a drop in
++ * one bank must never shift addresses in another — the count is restricted to
++ * the same bank.  Each drop removes the 3 `ld nb` bytes ending at its abank; an
++ * instruction or symbol is never inside an `ld nb`, so the count is exact.
++ * rlxDrop[] is sorted ascending before this is used.
++ */
++static a_uint
++rlxDelta(a_uint addr)
++{
++        a_uint bankbase = addr & ~(a_uint) 0xFFFF;      /* (bank<<16) */
++        return (a_uint) (3 * (rlxLowerBound(addr) - rlxLowerBound(bankbase)));
++}
++
++/*
++ * Print the stage-(i) plan + predicted post-relax layout, and self-check the
++ * model.  Read-only: walks the area list applying delta() arithmetically; it
++ * does not touch a_addr/a_size.  Called once at end-of-link from lkmain.c.
++ */
++VOID
++s1c88RelaxPredict(void)
++{
++        struct area *ap2;
++        a_uint origrom = 0, newrom = 0;
++        int ok = 1;
++
++        if (!rlxOn14c())
++                return;
++        if (rlxDropN > 1)
++                qsort(rlxDrop, rlxDropN, sizeof(a_uint), rlxCmpAddr);
++
++        fprintf(stderr, "[relax-plan] stage-(i) conservative drops: %d slots (%d bytes)\n",
++                rlxDropN, 3 * rlxDropN);
++        if (getenv("SDLD_RELAX_DEBUG")) {
++                int di;
++                for (ap2 = areap; ap2; ap2 = ap2->a_ap)
++                        fprintf(stderr, "[relax-dbg] area %-10s base=0x%06lx size=%lu flag=0x%x\n",
++                                ap2->a_id, (unsigned long) ap2->a_addr, (unsigned long) ap2->a_size, ap2->a_flag);
++                for (di = 0; di < rlxDropN; di++)
++                        fprintf(stderr, "[relax-dbg] drop[%d] abank=0x%06lx\n", di, (unsigned long) rlxDrop[di]);
++        }
++
++        for (ap2 = areap; ap2; ap2 = ap2->a_ap) {
++                a_uint base = ap2->a_addr, size = ap2->a_size;
++                a_uint dn, nbase, nsize;
++                if (size == 0)
++                        continue;
++                dn    = rlxDelta(base + size) - rlxDelta(base);   /* dropped within area */
++                nbase = base - rlxDelta(base);
++                nsize = size - dn;
++                origrom += size;
++                newrom  += nsize;
++                if (dn > size) {                                  /* area cannot over-shrink */
++                        ok = 0;
++                        fprintf(stderr, "[relax-plan]  !! area %s: dropped %lu > size %lu\n",
++                                ap2->a_id, (unsigned long) dn, (unsigned long) size);
++                }
++                if (dn)
++                        fprintf(stderr, "[relax-plan]   %-8s 0x%06lx..+%lu  ->  0x%06lx..+%lu  (-%lu)\n",
++                                ap2->a_id, (unsigned long) base, (unsigned long) size,
++                                (unsigned long) nbase, (unsigned long) nsize, (unsigned long) dn);
++        }
++        /* every planned drop must land in exactly one area => total reclaimed == 3*N */
++        if (origrom - newrom != (a_uint) (3 * rlxDropN)) {
++                ok = 0;
++                fprintf(stderr, "[relax-plan]  !! reclaimed %lu != 3*%d (a drop fell outside all areas)\n",
++                        (unsigned long) (origrom - newrom), rlxDropN);
++        }
++        fprintf(stderr, "[relax-plan]   predicted code: %lu -> %lu bytes (%lu reclaimed)\n",
++                (unsigned long) origrom, (unsigned long) newrom, (unsigned long) (origrom - newrom));
++        fprintf(stderr, "[relax-plan]   model self-check: %s\n",
++                ok ? "OK (areas don't over-shrink; reclaim balances)" : "FAILED");
++}
++
++/*
++ * sdcc88 #14c Stage (i) emit Step 2 — finalize the shrink plan.
++ *
++ * The reflow does NOT pre-shift the linker's address structs (doing so loses the
++ * old addresses needed to compact per-record T-record positions, and mishandles
++ * boundary/length symbols).  Instead every address is delta()-adjusted at the
++ * point it is emitted in relr3 (record load address + PCR base via `pc`, and
++ * R3_SYM / R3_AREA targets).  So this routine only sorts the drop list that
++ * delta() binary-searches.  Called after the measure sweep, before emit.
++ */
++void
++s1c88RelaxSortPlan(void)
++{
++        if (rlxDropN > 1)
++                qsort(rlxDrop, rlxDropN, sizeof(a_uint), rlxCmpAddr);
++}
++
++/* True when the emit pass should delta-adjust addresses (emit on, not the
++ * measure sweep, and there is something to drop). */
++static int
++rlxAdjusting(void)
++{
++        return rlxEmitOn() && !s1c88_relax_measure && rlxDropN > 0;
++}
++
+ /*)Function VOID        reloc3(c)
+  *
+  *                      int c           process code
+@@ -324,6 +664,19 @@
+          */
+         pcb = 1;
+ 
++        /* sdcc88 #14c Stage (i) emit: compact this record's load address by the
++         * same-bank `ld nb` drops below it.  pc is the record's absolute address
++         * (areax base + this record's offset, already stored in rtval[0..]); a
++         * second adb_xb() with the negative delta re-reads that value, subtracts
++         * the drop bytes, stores it back, and returns it — so the emitted load
++         * address AND the PC-relative base (pc + offset, used by R_PCR) move
++         * together.  Skipped for absolute areas (fixed vectors) and in measure. */
++        if (rlxAdjusting() && ap != NULL && !(ap->a_flag & A3_ABS)) {
++                a_uint d = rlxDelta(pc);
++                if (d)
++                        pc = adb_xb((a_uint) (0 - d), 0);
++        }
++
+         #if 0
+         printf("area %d base address: 0x%x size: 0x%x rtbase: 0x%x\n", aindex,
+                 a[aindex]->a_addr, a[aindex]->a_size, rtbase);
+@@ -354,6 +707,18 @@
+                                 return;
+                         }
+                         reli = symval(s[rindex]);
++                        /* #14c emit: shift the target down by the same-bank drops
++                         * below it.  Applied to EVERY symbol — including the
++                         * s_axp==NULL boundary symbols (s_<area>/l_<area>) that
++                         * crt0's init/bss loops read — because delta() is exactly
++                         * 0 for anything that must not move: RAM, the vector
++                         * table, MMIO, and small l_<area> lengths all sit below
++                         * the relaxed code region (0x21D0+), and delta is
++                         * bank-local.  (Assumes relocatable code is the only
++                         * thing in/above the drop range, which holds for the PM
++                         * memory map.) */
++                        if (rlxAdjusting())
++                                reli -= rlxDelta(reli);
+                 }
+ /* sdld specific */
+                 else if ((IS_R_J11(mode) || IS_R_J19(mode)) && (rindex == 0xFFFF)) {
+@@ -368,6 +733,92 @@
+                                 return;
+                         }
+                         reli = a[rindex]->a_addr;
++                        /* #14c emit: an AREA reference resolves to base + addend,
++                         * where the addend (the area-relative offset) sits in
++                         * rtval and is added by adb below.  Shift by delta of the
++                         * FULL target, not the area base — a target deep in the
++                         * areax sits past intra-areax drops the base doesn't see
++                         * (static functions relocate this way).  For a 16-bit
++                         * word the addend is rtval[rtp..rtp+1]; byte selections
++                         * (the page/bank byte) are bank-invariant, so delta(base)
++                         * suffices there. */
++                        if (rlxAdjusting()) {
++                                a_uint addend;
++                                if (!(mode & R3_BYTE))
++                                        addend = rtval[rtp] | (rtval[rtp + 1] << 8);        /* 16-bit word */
++                                else if (mode & R_BYT3)
++                                        addend = rtval[rtp] | (rtval[rtp + 1] << 8) |
++                                                 (rtval[rtp + 2] << 16);                    /* 24-bit byte-select */
++                                else
++                                        addend = 0;     /* 1-byte: full target unknowable; base delta */
++                                reli -= rlxDelta((reli + addend) & a_mask);
++                        }
++                }
++
 +/* sdcc88: S1C88 banked-branch bank field (R_S1C88_BANK = 0x800).  The slot is
 + *   CE C4 [bank] <carl|jrl> <disp16>
 + * with [bank] a SINGLE in-place byte at rtp (sdas88 emits it via outr1be(), 6
@@ -136,6 +544,45 @@
 +                if (mode & 0x800) {
 +                        int tbank = (int) ((reli >> 16) & 0xFF);
 +                        int cbank = (int) (((pc + (rtp - rtofst)) >> 16) & 0xFF);
++                        /* A slot in an ABSOLUTE area (A3_ABS) is hardware-fixed
++                         * — the IRQ/reset vector table — and must NEVER be
++                         * relaxed (the CPU jumps to fixed offsets) nor counted
++                         * as reclaimable. */
++                        int absarea = (ap != NULL) && (ap->a_flag & A3_ABS);
++
++                        /* #14c MEASURE sweep (output suppressed): collect the
++                         * report tally + conservative drop plan, one rlxIsDrop[]
++                         * entry per slot, then move on — no bytes are written. */
++                        if (s1c88_relax_measure) {
++                                int drop = 0;
++                                if (rlxOn())
++                                        rlxAccount((long) reli,
++                                                   (long) (pc + (rtp - rtofst)),
++                                                   tbank, cbank, absarea);
++                                if ((rlxOn14c() || rlxEmitOn()) && !absarea)
++                                        drop = rlxPlanSlot((long) reli,
++                                                           (long) (pc + (rtp - rtofst)),
++                                                           tbank, cbank, rtp, (int) rtofst);
++                                rlxMarkSlot(drop);
++                                continue;
++                        }
++
++                        /* #14c EMIT pass: replay the measure decision by index.
++                         * A planned drop removes the 3-byte `ld nb` (rtflg off so
++                         * lkout skips them) and advances rtofst by 3 so the kept
++                         * `carl` + its R_PCR disp16 reckon from the compacted
++                         * position (self-healing displacement). */
++                        if (rlxEmitOn()) {
++                                int k = rlxEmitIdx++;
++                                if (rlxIsDrop != NULL && k < rlxMeasureIdx && rlxIsDrop[k]) {
++                                        rtflg[rtp-2] = 0;       /* drop CE   */
++                                        rtflg[rtp-1] = 0;       /* drop C4   */
++                                        rtflg[rtp]   = 0;       /* drop bank */
++                                        rtofst += 3;
++                                        continue;
++                                }
++                        }
++
 +                        /* Leave rtflg set on these bytes so lkout() emits them. */
 +                        if ((tbank == 0 || tbank == cbank) && rtp - 2 >= (int) rtofst) {
 +                                rtval[rtp-2] = 0xFF;    /* nop (was CE)   */
@@ -145,8 +592,137 @@
 +                                rtval[rtp]   = tbank;   /* ld nb,#bank */
 +                        }
 +                        continue;
-+                }
-+
+                 }
+ 
                  /*
-                  * R3_PCR addressing
-                  */
+@@ -612,10 +1063,21 @@
+                 }
+ 
+                 /*
+-                 * R3_BYTE with R3_BYTX offset adjust
+-                 */
++                 * R3_BYTE with R3_BYTX / R_BYT3 offset adjust
++                 *
++                 * A byte field that occupies more than one T-line byte but emits
++                 * a single output byte (R3_BYTX = a_bytes-wide select; R_BYT3 =
++                 * the s1c88/mcs51 3-byte 24-bit select) must advance rtofst by the
++                 * dropped bytes so the T-line index -> output-offset map stays
++                 * correct for any LATER PC-relative field or #14c slot in the same
++                 * record.  sdcc88 #14c: same-area relative branches now carry an
++                 * R_PCR R_BYT3 byte field WITHOUT R3_BYTX (mode R_PCR|R_BYTE|
++                 * R_BYT3), which the original R3_BYTX-only test missed — two such
++                 * branches in one record drifted by 3 each.  The `|| R_BYT3` arm
++                 * fires exactly once (fields that set both bits already matched),
++                 * so default-off output is byte-identical. */
+                 if (mode & R3_BYTE) {
+-                        if (mode & R3_BYTX) {
++                        if ((mode & R3_BYTX) || (mode & R_BYT3)) {
+                                 rtofst += (a_bytes - 1);
+                         }
+                 }
+--- a/sdas/linksrc/lkmain.c
++++ b/sdas/linksrc/lkmain.c
+@@ -24,6 +24,13 @@
+ 
+ #include "aslink.h"
+ 
++/* sdcc88 #14c relaxation hooks (defined in lkrloc3.c) */
++extern int s1c88RelaxAnyOn(void);
++extern void s1c88RelaxSortPlan(void);
++extern int s1c88_relax_measure;
++extern int rlxMeasureIdx;
++extern int rlxEmitIdx;
++
+ /*)Module       lkmain.c
+  *
+  *      The module lkmain.c contains the functions which
+@@ -315,6 +322,7 @@
+                 filep = linkp->f_flp;
+                 hp = NULL;
+                 radix = 10;
++                rlxEmitIdx = 0;         /* #14c: restart slot index for this pass */
+ 
+                 /* sdld specific */
+                 if (TARGET_IS_8051)
+@@ -375,6 +383,45 @@
+                         NoICEfopen();
+ #endif
+                         /*
++                         * sdcc88 #14c: relaxation MEASURE sweep + shift.
++                         *
++                         * Re-walk the rel files + libraries with relocation
++                         * enabled but BEFORE lkfopen() — output files aren't
++                         * open yet (a_ofp == NULL), so lkout()/relt3 emit
++                         * nothing — collecting the conservative shrink plan
++                         * (one rlxIsDrop[] entry per banked slot) in the exact
++                         * order the emit pass below will replay.  library()'s
++                         * freelibraryindex() is guarded off while measuring so
++                         * the real emit pass can reload the same modules.  Then
++                         * (only under SDLD_RELAX_EMIT) shift the address model by
++                         * the plan, so map()/summary and the emit pass below all
++                         * see the final relaxed layout.
++                         */
++                        if (s1c88RelaxAnyOn()) {
++                                struct lfile *save_cfp = cfp, *save_filep = filep;
++                                FILE *save_sfp = sfp;
++                                struct head *save_hp = hp;
++                                int save_pass = pass, save_radix = radix, save_uflag = uflag;
++
++                                s1c88_relax_measure = 1;
++                                rlxMeasureIdx = 0;
++                                pass = 1;       /* so link_main() runs reloc() */
++                                uflag = 0;      /* no .lst/.rst during the sweep */
++                                cfp = NULL; sfp = NULL; filep = linkp->f_flp;
++                                hp = NULL; radix = 10;
++                                while (nxtline()) { ip = ib; link_main(); }
++                                library();
++                                reloc('E');
++
++                                s1c88_relax_measure = 0;
++                                cfp = save_cfp; sfp = save_sfp; filep = save_filep;
++                                hp = save_hp; pass = save_pass; radix = save_radix;
++                                uflag = save_uflag;
++
++                                s1c88RelaxSortPlan();     /* sort drop list; emit does the address shift */
++                        }
++
++                        /*
+                          * Output Link Map.
+                          */
+                         map();
+@@ -456,6 +503,17 @@
+                 CreateAOMF51();
+         }
+ 
++        /* sdcc88 #14c: print the cross-module relaxation-opportunity report
++         * (Stage 0, SDLD_RELAX_REPORT) and the conservative shrink plan +
++         * predicted layout (Stage (i), SDLD_RELAX). Both read-only / no-op
++         * unless their env var is set. Defined in lkrloc3.c. */
++        {
++                extern VOID s1c88RelaxReport(void);
++                extern VOID s1c88RelaxPredict(void);
++                s1c88RelaxReport();
++                s1c88RelaxPredict();
++        }
++
+         lkexit(lkerr ? ER_ERROR : ER_NONE);
+         return(0);
+ }
+--- a/sdas/linksrc/lklibr.c
++++ b/sdas/linksrc/lklibr.c
+@@ -851,6 +851,14 @@
+   }
+ 
+ #ifdef INDEXLIB
+-  freelibraryindex ();
++  /* sdcc88 #14c: the relaxation measure sweep calls library() once before the
++   * real emit pass calls it again; keep the symbol-cache index alive across the
++   * measure call so the emit call can reload the same modules (free it only on
++   * the real pass, not while measuring). */
++  {
++    extern int s1c88_relax_measure;
++    if (!s1c88_relax_measure)
++      freelibraryindex ();
++  }
+ #endif
+ }

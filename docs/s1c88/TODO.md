@@ -68,6 +68,58 @@ Workflow: add the case, run the three gates, fix what surfaces, add an emu/diff 
   already covers single-module / common-bank-heavy programs, so this is the harder remaining tail. Gate on
   `branch-smoke.sh` + emu/diff and re-baseline the corpus sizes. (Design: `banked-branch.md` "Relaxation
   plan".)
+  - **✅ Stage 0 (opportunity report) DONE.** `linksrc/lkrloc3.c` tallies every cross-module
+    `R_S1C88_BANK` slot at link time and `lkmain.c` prints the reclaimable-bytes summary; gated behind
+    `SDLD_RELAX_REPORT=1`, read-only (corpus byte-identical). Excludes hardware-fixed vector slots
+    (absolute areas). Honest hello figure: 27 fixed vectors + **2 reclaimable (6 B)**.
+  - **✅ Stage (i) measure + plan engine DONE (read-only).** `rlxPlanSlot()`/`s1c88RelaxPredict()` build
+    the conservative drop plan (same-bank, `carl`-range, `ld nb` not split, not absolute), derive
+    `delta(addr)` + predicted layout, and self-check (no over-shrink; reclaim balances `3×drops`).
+    `SDLD_RELAX=1`, mutates/emits nothing → gates green. Caught two latent emit bugs (vector inclusion;
+    confirmed split-slot skip). Run: `SDLD_RELAX=1 make -C examples/hello`.
+  - **✅ Stage (i) emit Step 1 — measure-pass driver DONE (output-safe).** Linker runs a measure sweep
+    (rel files + `library()` modules, relocation on, output suppressed before `lkfopen()`) collecting
+    `rlxIsDrop[]` in the emit pass's exact order; `freelibraryindex()` guarded off while measuring.
+    Proven byte-identical with `SDLD_RELAX=1` (run-tests 50/50, emu 16/16, diff 12/12, hello cmp-clean).
+  - **✅ Stage (i) emit Step 2 — DONE (`SDLD_RELAX_EMIT`, default-off; correct).** Emit-time
+    `delta()` reflow (no struct pre-shift): recompacts each record's load address + PCR base via `pc`, and
+    shifts R3_SYM by `delta(reli)` and R3_AREA by `delta(base+addend)` (read from rtval; bank-local; absolute
+    areas fixed). Boundary symbols + signed-cc trampolines handled. The residual that crashed 5 cases was
+    **assembler-resolved same-area relative branches being invisible to the linker drop** — fixed (option 1):
+    `sdas88` now emits `R_PCR` relocations for every same-area `carl`/`jrl`/`jrs`/`cars`/`djr` (and the #14b
+    `bcall`/`bjump` relaxation), and `lkrloc3.c` widened the `R3_BYTX` `rtofst` byte-collapse adjust to
+    `|| R_BYT3` (the new `R_PCR|R_BYTE|R_BYT3` byte fields lack the `R3_BYTX` bit). **emu 16/16, diff 12/12**
+    under emit; default-off **50/50 + corpus 20/20 byte-identical**; both smokes updated to observe linked
+    output (same-area disps now resolve at link time). See banked-branch.md "Option-1 COMPLETED".
+  - **✅ Flipped emit to DEFAULT-ON + size yardstick (2026-06-08).** `rlxEmitOn()` now defaults on; opt
+    out with `SDLD_NO_RELAX=1` (legacy `SDLD_RELAX_EMIT=0` also disables). Every link reclaims same-bank
+    cross-module `ld nb` bytes; all gates green with relaxation on (run-tests 50/50, corpus 20/20
+    byte-identical `.asm`, emu/diff pass both relaxed and `SDLD_NO_RELAX`). `size-check.sh` grew a
+    **`#14c relax`** section (links each corpus program ±relaxation, reports reclaimed bytes vs
+    `scripts/corpus/relax.baseline`). Compiler `.asm` and the pre-link `sizes.baseline` are unchanged
+    (relaxation is link-time).
+  - **✅ Split-slot reclaim (2026-06-08) — corpus 132 → 150 B.** The 6 slots stage (i) skipped were
+    *split slots* (the `ld nb`'s `CE C4` straddling a `.rel` T-record boundary, `rtp-2 < rtofst`), not a
+    range/fixpoint issue. Fixed at the source: `sdas88` (`s1c88mch.c`) now calls `outchk(scc>=0 ? 6 : 3, 5)`
+    before the banked slot so the `ld nb` (and the signed-cc `jrs +7` hop, when present) stay atomic in one
+    T-record — any flush lands before the slot, the carl may spill. T-record boundaries don't change the
+    linked image, so this is byte-neutral; it just makes every slot droppable. (Caught + fixed a trap: the
+    hop must be reserved WITH the ld nb or the linker's trampoline detection `rtp-5 >= rtofst` misfires and
+    wrongly drops a trampoline — `emu/11_bankcc` guards it.) **emu 16/16, diff 12/12, run-tests 50/50.**
+  - **(ii) iterate-to-fixpoint — N/A by analysis.** A same-bank branch's disp is provably in
+    `[−32768,+32766]`, always within `carl` `±32767`; stage (i) already drops every in-range same-bank slot.
+    The conservative carl-margin only ever skips a >32.5 KB *intra-bank* span (a call near the top of a
+    fully-packed 32 KB bank) — none in any realistic PM program. So the literal fixpoint reclaims 0; not
+    pursued.
+  - **(iii) carl→cars — NOT PURSUED (poor risk/reward).** Shrinking a kept `carl` (3 B) to `cars` (2 B)
+    when the target is within ±127 reclaims **1 byte across the whole corpus** (cross-module targets are
+    rarely that close — a different `.c`/lib is usually far). The emit cost is the highest of any stage:
+    the opcode rewrite (`F2→F0`, `E8+cc→E0+cc`), disp16→disp8 with a *different* base convention, and a new
+    1-byte drop kind in `delta()` must be coordinated across **two** relocation entries (the `R_S1C88_BANK`
+    bank byte and the `R_PCR` disp16, processed in separate `relr3` iterations), needing the whole slot
+    atomic and a genuine fixpoint. Highest risk to the cross-module emit reflow for the least gain. **#14c
+    is considered complete at stage (i)+split-slot reclaim (150 B, default-on).** Revisit only if profiling
+    a real call-dense ROM shows meaningful cars-range cross-module density.
 
 ---
 
