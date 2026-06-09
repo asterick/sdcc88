@@ -45,7 +45,7 @@ Workflow: add the case, run the three gates, fix what surfaces, add an emu/diff 
 
 ---
 
-## Code size (#12, #14) — measurable via `scripts/size-check.sh` (corpus baseline, currently 8429 B)
+## Code size (#12, #14) — measurable via `scripts/size-check.sh` (corpus baseline, currently 8424 B)
 
 - **[S] #12-flag-reuse byte-combine peephole.** The post-16-bit-add zero test
   `add hl,X ; ld a,h ; ld b,l ; or a,b ; jr Z` (the `(a+b)?` / function-result idiom) is now provably

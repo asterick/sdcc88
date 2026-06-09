@@ -11,11 +11,11 @@
 11_float 280
 12_arrays 396
 13_swap 555
-14_mixed 523
+14_mixed 518
 15_stack 529
 16_mult 308
 17_builtins 286
 18_jumptab 276
 19_far 1538
 20_div 1041
-TOTAL 8429
+TOTAL 8424

@@ -4490,6 +4490,25 @@ adjustStack (int n, bool af_free, bool hl_free, bool iy_free)
          preserve flags. (An earlier version also took `de_free`/`bc_free` hints —
          meaningless on the S1C88, removed with the phantom registers.) */
   {
+      /* reserve, large frame: one native SP adjust is a fixed 4 bytes for any m,
+         whereas the push filler costs m/2 bytes (`push hl`, 1 byte each) plus 2
+         for an odd byte. Push wins for small frames, but the native form ties or
+         beats it once the filler reaches 4 bytes (m>=8 even, m>=5 odd) — and is
+         also far fewer cycles. `add sp,#nnnn` is a full 16-bit add, so a negative
+         (two's-complement) immediate reserves: the very same instruction the free
+         path below uses to release with a positive immediate. It clobbers flags,
+         hence the same af_free guard the free path uses. */
+      if (n <= -2 && af_free)
+        {
+          int m = -n;
+          int pushbytes = (m / 2) + ((m & 1) ? 2 : 0);
+          if (pushbytes >= 4)
+            {
+              emit2 ("add sp, !immed%d", n);   /* n < 0: two's-complement reserve */
+              cost2 (4, 12);
+              n = 0;
+            }
+        }
       while (n <= -2)                    /* reserve 2 bytes, flag-safe filler */
         {
           emit2 ("push hl");
