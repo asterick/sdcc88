@@ -7237,7 +7237,7 @@ genPlus (iCode * ic)
 
           if (!regalloc_dry_run)
             emit2 ("jp NC, !tlabel", labelKey2num (tlbl->key));
-          cost2 (2, 12); // Assume branch is taken. Use cost of jr as the peephole optimizer can typically optimize this jp into jr. Do not emit jr directly to still allow jump-to-jump optimization.
+          cost2 (2, 12); // Assume branch is taken. Use cost of jrs as the peephole optimizer can typically optimize this jp into jrs. Do not emit jrs directly to still allow jump-to-jump optimization.
           regalloc_dry_run_state_scale /= 256.0f; // Carry should be rare.
           emit3w_o (A_INC, leftop, i, 0, 0);
           i += 2;
@@ -7256,7 +7256,7 @@ genPlus (iCode * ic)
             tlbl = newiTempLabel (0);
           if (!regalloc_dry_run)
             emit2 ("jp NC, !tlabel", labelKey2num (tlbl->key));
-          cost2 (2, 12); // Assume branch is taken. Use cost of jr as the peephole optimizer can typically optimize this jp into jr. Do not emit jr directly to still allow jump-to-jump optimization.
+          cost2 (2, 12); // Assume branch is taken. Use cost of jrs as the peephole optimizer can typically optimize this jp into jrs. Do not emit jrs directly to still allow jump-to-jump optimization.
           regalloc_dry_run_state_scale /= 256.0f; // Carry should be rare.
           emit3_incdec (A_INC, leftop, i, ic);   // S1C88: route [ix+d]/abs INC through A
           i++;
@@ -10842,7 +10842,7 @@ shiftR2Left2Result (const iCode *ic, operand *left, int offl, operand *result, i
       emit3 (A_LD, ASMOP_L, ASMOP_H);
       emit3 (A_LD, ASMOP_H, ASMOP_ZERO);
       if (!regalloc_dry_run)
-        emit2 ("jr nc,!tlabel", labelKey2num (tlbl->key));
+        emit2 ("jrs nc, !tlabel", labelKey2num (tlbl->key));
       emit2 ("dec h");
       if (!regalloc_dry_run)
         emitLabel (tlbl);
@@ -10862,7 +10862,7 @@ shiftR2Left2Result (const iCode *ic, operand *left, int offl, operand *result, i
         {
           tlbl = regalloc_dry_run ? 0 : newiTempLabel (0);
           if (!regalloc_dry_run)
-            emit2 ("jr nc,!tlabel", labelKey2num (tlbl->key));
+            emit2 ("jrs nc, !tlabel", labelKey2num (tlbl->key));
           emit2 ("dec a");
           cost2 (3, 11.5);
           if (!regalloc_dry_run)
@@ -11713,7 +11713,7 @@ genLeftShift (const iCode *ic)
           emit2 ("dec iy");
           cost2 (1, 4);
           if (!regalloc_dry_run)
-            emit2 ("jr NZ,!tlabel", labelKey2num (tlbl->key));
+            emit2 ("jrs NZ, !tlabel", labelKey2num (tlbl->key));
           cost2 (2, 12); // Assume jump taken, and optimized to jr.
         }
       else if (countreg == B_IDX)
@@ -11727,7 +11727,7 @@ genLeftShift (const iCode *ic)
           emit2 ("dec %s", regsS1C88[countreg].name);
           cost2 (1, 4);
           if (!regalloc_dry_run)
-            emit2 ("jr NZ,!tlabel", labelKey2num (tlbl->key));
+            emit2 ("jrs NZ, !tlabel", labelKey2num (tlbl->key));
           cost2 (2, 12); // Assume jump taken, and optimized to jr.
         }
     }
@@ -12138,7 +12138,7 @@ genRightShift (const iCode * ic)
           emit2 ("dec %s", countreg == A_IDX ? "a" : regsS1C88[countreg].name);
           cost2 (1, 4);
           if (!regalloc_dry_run)
-            emit2 ("jr NZ, !tlabel", labelKey2num (tlbl->key));
+            emit2 ("jrs NZ, !tlabel", labelKey2num (tlbl->key));
           cost2 (2, 12); // Assume jump taken, and optimized to jr.
         }
     }
@@ -14479,7 +14479,7 @@ genCast (const iCode *ic)
           emit2 ("bit a, #0x%02x", 1u << (int)(SPEC_BITINTWIDTH (resulttype) % 8 - 1));   // S1C88: bit reg,#mask
           cost2 (2, 8);
           if (!regalloc_dry_run)
-            emit2 ("jr z, !tlabel", labelKey2num (tlbl->key));
+            emit2 ("jrs z, !tlabel", labelKey2num (tlbl->key));
           emit2 ("or a, #0x%02x", ~topbytemask & 0xffu);
           regalloc_dry_run_cost += 4;
           emitLabel (tlbl);

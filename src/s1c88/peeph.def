@@ -2331,7 +2331,7 @@ replace restart {
 	%2	NC, %3
 } by {
 	; common peephole 195-1: remove always true check
-} if same(%2 'jr' 'jp' 'call'), notUsed('a'), labelRefCountChange(%3 -1)
+} if same(%2 'jrs' 'jp' 'call'), notUsed('a'), labelRefCountChange(%3 -1)
 
 replace restart {
 	ld	a, #0xff
@@ -2341,7 +2341,7 @@ replace restart {
 	%3	NC, %4
 } by {
 	; common peephole 195-2: remove always true check
-} if same(%3 'jr' 'jp' 'call'), notUsed('a'), labelRefCountChange(%4 -1)
+} if same(%3 'jrs' 'jp' 'call'), notUsed('a'), labelRefCountChange(%4 -1)
 
 // These ex-generating rules should be among the last ones since ex counts as a read from both hl and de for notUsed().
 barrier
@@ -2368,8 +2368,8 @@ replace restart {
 	; common peephole 159 removed unused label %1.
 } if labelRefCount(%1 0)
 
-// Ensure that all rules above see only jp, not jr.
-// Also do all jump optimizations before replacing by ret.
+// Ensure that all rules above see only jp (the canonical absolute form), not a
+// shortened relative jump. Also do all jump optimizations before replacing by ret.
 barrier
 
 replace restart {
@@ -2384,31 +2384,33 @@ replace restart {
 // operator"), so the fold produced illegal output. It WAS firing on real codegen
 // (genIfx return paths) and miscompiling. Unconditional jp->ret (160) is kept.
 
-// Replace jp by ret before replacing jp by jr, since using ret can reduce the number of references to jump labels.
+// Replace jp by ret before replacing jp by jrs, since using ret can reduce the number of references to jump labels.
 barrier
 
-// On Z80 and Z80N, jr is smaller, but slower than jp.
+// The S1C88's only short jump is jrs (8-bit relative); an in-range jp shortens
+// directly to it. (On z80 this rule produced `jr`, then a second pass mapped
+// jr->jrs; the S1C88 has no `jr`, so emit jrs here and skip the intermediary.)
 replace restart {
 	jp	%5
 } by {
 	; common peephole 162 changed absolute to relative unconditional jump.
-	jr	%5
+	jrs	%5
 } if optimizeFor('!code-speed'), labelInRange(%5)
 
 // NB: z80 peephole 162a (jp->jr for z180/ez80/rabbit/tlcs90) was REMOVED: its
 // isPort() gate never matches 's1c88', so it was dead. 162 above covers us.
-// 162/163 feed the jr->jrs map in the control-transfer section below (in-range
-// jp -> jr -> jrs, 2 bytes).
+// labelInRange(%5) gates the jrs 8-bit range; out-of-range jp falls through to
+// the jp->jrl map (s1c88-j3/j4) in the control-transfer section below.
 
 replace restart {
 	jp	%1, %5
 } by {
 	; common peephole 163 changed absolute to relative conditional jump.
-	jr	%1, %5
+	jrs	%1, %5
 } if same(%1 'C' 'NC' 'NZ' 'Z'), labelInRange(%5)
 
 replace restart {
-	jr	%1, %5
+	jrs	%1, %5
 %5:
 } by {
 %5:
@@ -2445,9 +2447,9 @@ replace {
 
 // ==========================================================================
 // S1C88 control-transfer mapping (was peeph-z80.def) -- KEEP LAST.
-// These run after the jp->ret (160) and jp->jr (162/163) passes above, so an
-// in-range jump becomes jp->jr->jrs (2 bytes) and only out-of-range/external
-// ones fall through to jrl/carl (3 bytes). Do not move these earlier.
+// These run after the jp->ret (160) and jp->jrs (162/163) passes above, so an
+// in-range jump is already jrs (2 bytes) and only out-of-range/external ones
+// reach here to fall through to jrl/carl (3 bytes). Do not move these earlier.
 // ==========================================================================
 
 
@@ -2457,12 +2459,11 @@ replace {
 // are "Invalid Addressing Mode"). The unfolded `xor a,a; ld d(ix),a` is legal.
 
 // --- S1C88: all control transfers are PC-relative --------------------------
-// The z80 model emits absolute jp/call; the generic peeph.def shortens jp->jr
-// when in range. The S1C88 has no absolute jp/call — short relative is jrs/cars
-// (8-bit), long relative is jrl/carl (16-bit). Map the residual z80 branch
-// mnemonics to their S1C88 equivalents. These run after the generic jp->ret and
-// jp->jr passes, so an in-range jump becomes jp->jr->jrs (2 bytes) and only the
-// out-of-range / external ones fall through to jrl (3 bytes).
+// The z80 model emits absolute jp/call; the generic peeph.def shortens an
+// in-range jp to a short relative jump (162/163 above, which emit jrs directly
+// for the S1C88). The S1C88 has no absolute jp/call — short relative is jrs/cars
+// (8-bit), long relative is jrl/carl (16-bit). Map the residual (out-of-range or
+// external) z80 branch mnemonics to their S1C88 long-relative equivalents.
 //
 // Conditional forms convert only for the basic flags c/nc/z/nz — jrl/jrs encode
 // just those; the S1C88 signed/flag conditions (lt/ge/gt/le/v/nv/p/m/f0..) are
@@ -2471,20 +2472,6 @@ replace {
 // emits the native S1C88 overflow conditions v/nv directly.)
 // The notSame() guards keep the computed jp hl / jp (iy) / call (iy) forms from
 // being mis-rewritten into a relative branch.
-
-replace {
-	jr	%5
-} by {
-	jrs	%5
-	; peephole s1c88-j1 z80 jr -> s1c88 jrs (8-bit relative)
-}
-
-replace {
-	jr	%1, %5
-} by {
-	jrs	%1, %5
-	; peephole s1c88-j2 z80 jr cc -> s1c88 jrs cc
-} if same(%1 'C' 'NC' 'NZ' 'Z')
 
 replace {
 	jp	%5
