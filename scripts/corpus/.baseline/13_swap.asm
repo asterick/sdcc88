@@ -18,7 +18,7 @@
 	.globl _gl1
 	.globl _gi2
 	.globl _gi1
-	.globl __mullong
+	.globl ___mulsint2slong
 ;--------------------------------------------------------
 ; special function registers
 ;--------------------------------------------------------
@@ -273,27 +273,9 @@ _multi::
 	inc	hl
 	ld	(hl), a
 	ld	a, -2 (ix)
-	ld	-10 (ix), a
-	ld	a, -1 (ix)
-	ld	-9 (ix), a
-	rlc	a
-	sbc	a, a
-	ld	-8 (ix), a
-	ld	-7 (ix), a
-	ld	l, -4 (ix)
-	ld	a, -3 (ix)
-	ld	h, a
-	rlc	a
-	sbc	a, a
-	ld	b, a
-	push	ba
-	push	hl
-	ld	a, -10 (ix)
-	ld	b, -9 (ix)
+	ld	b, -1 (ix)
 	ld	hl, 6 (sp)
-	bcall	__mullong
-	pop	iy
-	pop	iy
+	bcall	___mulsint2slong
 	ld	0 (sp), ba
 	ld	2 (sp), hl
 	ld	a, -10 (ix)
@@ -305,27 +287,9 @@ _multi::
 	ld	a, -7 (ix)
 	ld	(_gl1+3), a
 	ld	a, -6 (ix)
-	ld	-10 (ix), a
-	ld	a, -5 (ix)
-	ld	-9 (ix), a
-	rlc	a
-	sbc	a, a
-	ld	-8 (ix), a
-	ld	-7 (ix), a
-	ld	l, 5 (ix)
-	ld	a, 6 (ix)
-	ld	h, a
-	rlc	a
-	sbc	a, a
-	ld	b, a
-	push	ba
-	push	hl
-	ld	a, -10 (ix)
-	ld	b, -9 (ix)
-	ld	hl, 6 (sp)
-	bcall	__mullong
-	pop	iy
-	pop	iy
+	ld	b, -5 (ix)
+	ld	hl, 15 (sp)
+	bcall	___mulsint2slong
 	ld	0 (sp), ba
 	ld	2 (sp), hl
 	ld	a, -10 (ix)
