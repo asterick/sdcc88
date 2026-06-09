@@ -49,17 +49,27 @@ LIB_WIDEMUL="_muluint2ulong _mulsint2slong"
 # libc subset for user code (the codegen inlines mem*/str* as builtins, but user
 # code may call them as real functions):
 LIB_LIBC="_memmove _memcmp _memchr _strcpy _strncpy _strcat _strncat _strcmp _strncmp _strchr _strrchr _strlen _strstr"
+LIB_LIBC="$LIB_LIBC _strspn _strcspn _strpbrk _strtok memccpy"
+# stdlib.h: number conversion, abs, rand.
+# NB: qsort/bsearch are intentionally NOT built — calling them (the function-pointer
+# comparator) trips the gen.c:6149 "Unbalanced stack" backend ICE, the same one that
+# blocks printf/sprintf. Add them back once that codegen boundary is lifted.
+LIB_STDLIB="atoi atol __itoa __ltoa abs labs rand"
+# ctype.h: character classification + case mapping
+LIB_CTYPE="isalnum isalpha isblank iscntrl isdigit isgraph islower isprint ispunct isspace isupper isxdigit tolower toupper"
 
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 echo ">> building s1c88.lib members (compiled through the s1c88 port)"
 members=""
-for r in $LIB_INT $LIB_LONG $LIB_WIDEMUL $LIB_LIBC; do
+for r in $LIB_INT $LIB_LONG $LIB_WIDEMUL $LIB_LIBC $LIB_STDLIB $LIB_CTYPE; do
   # Prefer a repo-owned source (e.g. _strlen.c, which upstream SDCC 4.5.0 lacks)
   # over the fetched SDCC device/lib copy.
   src="${REPO}/device/lib/s1c88/${r}.c"
   [ -f "$src" ] || src="${DLIB}/${r}.c"
   [ -f "$src" ] || { echo "   skip ${r} (no ${r}.c)"; continue; }
-  if ! cc -E -P -x c -I "$DINC" -D_SDCC_NO_ASM_LIB_FUNCS "$src" > "${TMP}/${r}.i" 2>"${TMP}/e" \
+  # -D__SDCC_s1c88 so the (host-cpp'd) SDCC headers take the z80-like branch, not
+  # the mcs51 __data default — see the header fix in build.sh.
+  if ! cc -E -P -x c -I "$DINC" -D__SDCC_s1c88 -D_SDCC_NO_ASM_LIB_FUNCS "$src" > "${TMP}/${r}.i" 2>"${TMP}/e" \
      || ! "$SDCCBIN" -ms1c88 --c1mode -o "${TMP}/${r}.asm" < "${TMP}/${r}.i" 2>"${TMP}/e" \
      || ! "$SDAS" -o "${LIBDIR}/${r}.rel" "${TMP}/${r}.asm" 2>"${TMP}/e"; then
     echo "!! support routine ${r} FAILED:"; sed 's/^/    /' "${TMP}/e" | head -8; exit 1
