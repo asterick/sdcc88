@@ -409,10 +409,19 @@ have shipped: (1) the conservative plan was including the **27 hardware-fixed ve
 (emit would have corrupted the vector table) — fixed by the `A3_ABS` exclusion, which also
 corrected the Stage-0 report's over-count; and (2) confirmed the **T-record-split** slots
 are correctly skipped (on the 2.5 KB sample, 13 reclaimable but 12 planned — the 13th split).
-Run: `SDLD_RELAX=1 make -C examples/hello`. **Remaining for stage (i):** the emit half — the
-3-pass driver (measure → shift → emit), applying `delta` to area/areax/bank/symbol addresses
-and clearing `rtflg` on the dropped `ld nb` bytes (`rtofst += 3`), proven on emu-test +
-diff-test, then re-baseline the corpus.
+Run: `SDLD_RELAX=1 make -C examples/hello`.
+
+**Emit half, Step 1 — measure-pass driver ✅ DONE (output-safe).** The reflow needs the plan
+*before* emit, so the linker now runs a **measure sweep** between `lnkarea()` and `lkfopen()`:
+it re-walks the rel files + `library()` modules with relocation on but output suppressed
+(files aren't open yet ⇒ `lkout` no-ops), collecting `rlxIsDrop[]` in the exact order the
+emit pass replays it. `library()`'s `freelibraryindex()` is guarded off while measuring so
+the emit pass can reload the same modules; slot order is identical because both runs use the
+same `nxtline` + `library` path. Proven **byte-identical** with the sweep on (hello cmp-clean;
+run-tests 50/50, emu 16/16, diff-test 12/12 with `SDLD_RELAX=1`). **Remaining (Step 2):** the
+mutating half — apply `delta` to area/areax/bank/symbol addresses (skipping absolute areas)
+and, gated by `SDLD_RELAX_EMIT`, clear `rtflg` on the dropped `ld nb` bytes (`rtofst += 3`) so
+the kept `carl` + `R_PCR` disp16 self-heal; prove on emu-test + diff-test, then re-baseline.
 
 ### Validation (every step)
 

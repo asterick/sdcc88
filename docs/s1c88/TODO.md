@@ -77,9 +77,13 @@ Workflow: add the case, run the three gates, fix what surfaces, add an emu/diff 
     `delta(addr)` + predicted layout, and self-check (no over-shrink; reclaim balances `3×drops`).
     `SDLD_RELAX=1`, mutates/emits nothing → gates green. Caught two latent emit bugs (vector inclusion;
     confirmed split-slot skip). Run: `SDLD_RELAX=1 make -C examples/hello`.
-  - **⬜ Stage (i) emit half (next):** the 3-pass driver (measure → shift → emit) — apply `delta` to
-    area/areax/bank/symbol addresses, clear `rtflg` on dropped `ld nb` bytes (`rtofst += 3`); the kept
-    `carl` + its `R_PCR` disp16 self-heal. Prove on emu-test + diff-test, re-baseline the corpus.
+  - **✅ Stage (i) emit Step 1 — measure-pass driver DONE (output-safe).** Linker runs a measure sweep
+    (rel files + `library()` modules, relocation on, output suppressed before `lkfopen()`) collecting
+    `rlxIsDrop[]` in the emit pass's exact order; `freelibraryindex()` guarded off while measuring.
+    Proven byte-identical with `SDLD_RELAX=1` (run-tests 50/50, emu 16/16, diff 12/12, hello cmp-clean).
+  - **⬜ Stage (i) emit Step 2 (next):** the mutating half — apply `delta` to area/areax/bank/symbol
+    addresses (skip absolute areas); gated by `SDLD_RELAX_EMIT`, drop `rtflg` on the `ld nb` bytes
+    (`rtofst += 3`); kept `carl` + `R_PCR` self-heal. Prove on emu-test + diff-test, re-baseline corpus.
   - **⬜ (ii)** iterate to fixpoint; **⬜ (iii)** trampoline/`cars` refinement.
 
 ---

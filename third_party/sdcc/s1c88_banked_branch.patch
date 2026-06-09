@@ -116,7 +116,7 @@
   *              expr *  esp             pointer to expr structure
 --- a/sdas/linksrc/lkrloc3.c
 +++ b/sdas/linksrc/lkrloc3.c
-@@ -54,6 +54,242 @@
+@@ -54,6 +54,288 @@
   *
   */
  
@@ -230,8 +230,21 @@
 +#define RLX_CARL_MARGIN 256             /* keep pre/post-shrink range decision in agreement */
 +
 +static int     rlx14c = -1;             /* SDLD_RELAX enabled? (lazy)             */
++static int     rlxEmit = -1;            /* SDLD_RELAX_EMIT enabled? (lazy)        */
 +static a_uint *rlxDrop;                 /* abank (bank-byte addr) of each planned drop */
 +static int     rlxDropN, rlxDropCap;
++
++/*
++ * Per-slot drop decision, indexed by R_S1C88_BANK processing order.  The order
++ * is identical in the measure sweep and the emit pass (same rel files read the
++ * same way), so the emit pass replays the measure pass's decisions by index.
++ * Filled in the measure sweep; consumed in the emit pass.
++ */
++static char   *rlxIsDrop;               /* 1 = drop this slot's 3-byte ld nb      */
++static int     rlxIsDropCap;
++int            s1c88_relax_measure;     /* set by lkmain.c around the measure sweep */
++int            rlxMeasureIdx;           /* slot counter within the measure sweep   */
++int            rlxEmitIdx;              /* slot counter within the emit pass        */
 +
 +static int
 +rlxOn14c(void)
@@ -243,6 +256,38 @@
 +        return rlx14c;
 +}
 +
++/* SDLD_RELAX_EMIT — actually perform the stage-(i) reflow (shift + byte-drop).
++ * Distinct from SDLD_RELAX (plan/report only) so the measure plumbing can be
++ * validated byte-identical before the mutating half is switched on. */
++static int
++rlxEmitOn(void)
++{
++        if (rlxEmit < 0) {
++                char *e = getenv("SDLD_RELAX_EMIT");
++                rlxEmit = (e != NULL && *e != '\0' && *e != '0') ? 1 : 0;
++        }
++        return rlxEmit;
++}
++
++/* Any relaxation diagnostic/feature on ⇒ lkmain.c runs the measure sweep. */
++int
++s1c88RelaxAnyOn(void)
++{
++        return rlxOn() || rlxOn14c() || rlxEmitOn();
++}
++
++/* Record rlxIsDrop[rlxMeasureIdx]=v and advance, growing the array as needed. */
++static VOID
++rlxMarkSlot(int v)
++{
++        if (rlxMeasureIdx >= rlxIsDropCap) {
++                rlxIsDropCap = rlxIsDropCap ? rlxIsDropCap * 2 : 128;
++                rlxIsDrop = (char *) realloc(rlxIsDrop, rlxIsDropCap);
++                if (rlxIsDrop == NULL) { rlxIsDropCap = 0; return; }
++        }
++        rlxIsDrop[rlxMeasureIdx++] = (char) v;
++}
++
 +/*
 + * Record a conservative stage-(i) drop candidate.  abank = address of the
 + * [bank] byte in `CE C4 [bank] <carl|jrl> <disp16>`.  The slot drops its
@@ -252,24 +297,25 @@
 + * comfortably reaches the target (margin so a pre-shrink in-range decision
 + * still holds in the smaller post-shrink layout — monotone safety).
 + */
-+static VOID
++static int
 +rlxPlanSlot(long tgt, long abank, int tbank, int cbank, int rtp, int rtofst)
 +{
 +        long disp;
 +
 +        if (!(tbank == 0 || tbank == cbank))
-+                return;
++                return 0;
 +        if (rtp - 2 < rtofst)
-+                return;
++                return 0;
 +        disp = tgt - (abank - 2 + 3);           /* carl opcode @abank-2, +3 (op+disp16) */
 +        if (disp < -(32768 - RLX_CARL_MARGIN) || disp > (32767 - RLX_CARL_MARGIN))
-+                return;
++                return 0;
 +        if (rlxDropN == rlxDropCap) {
 +                rlxDropCap = rlxDropCap ? rlxDropCap * 2 : 64;
 +                rlxDrop = (a_uint *) realloc(rlxDrop, rlxDropCap * sizeof(a_uint));
-+                if (rlxDrop == NULL) { rlxDropCap = rlxDropN = 0; return; }
++                if (rlxDrop == NULL) { rlxDropCap = rlxDropN = 0; return 0; }
 +        }
 +        rlxDrop[rlxDropN++] = (a_uint) abank;
++        return 1;
 +}
 +
 +static int
@@ -359,7 +405,7 @@
  /*)Function VOID        reloc3(c)
   *
   *                      int c           process code
-@@ -370,6 +606,48 @@
+@@ -370,6 +652,72 @@
                          reli = a[rindex]->a_addr;
                  }
  
@@ -384,16 +430,40 @@
 +                         * relaxed (the CPU jumps to fixed offsets) nor counted
 +                         * as reclaimable. */
 +                        int absarea = (ap != NULL) && (ap->a_flag & A3_ABS);
-+                        /* sdcc88 #14c Stage 0: read-only relaxation tally. */
-+                        if (rlxOn())
-+                                rlxAccount((long) reli,
-+                                           (long) (pc + (rtp - rtofst)),
-+                                           tbank, cbank, absarea);
-+                        /* sdcc88 #14c Stage (i): read-only conservative drop plan. */
-+                        if (rlxOn14c() && !absarea)
-+                                rlxPlanSlot((long) reli,
-+                                            (long) (pc + (rtp - rtofst)),
-+                                            tbank, cbank, rtp, (int) rtofst);
++
++                        /* #14c MEASURE sweep (output suppressed): collect the
++                         * report tally + conservative drop plan, one rlxIsDrop[]
++                         * entry per slot, then move on — no bytes are written. */
++                        if (s1c88_relax_measure) {
++                                int drop = 0;
++                                if (rlxOn())
++                                        rlxAccount((long) reli,
++                                                   (long) (pc + (rtp - rtofst)),
++                                                   tbank, cbank, absarea);
++                                if ((rlxOn14c() || rlxEmitOn()) && !absarea)
++                                        drop = rlxPlanSlot((long) reli,
++                                                           (long) (pc + (rtp - rtofst)),
++                                                           tbank, cbank, rtp, (int) rtofst);
++                                rlxMarkSlot(drop);
++                                continue;
++                        }
++
++                        /* #14c EMIT pass: replay the measure decision by index.
++                         * A planned drop removes the 3-byte `ld nb` (rtflg off so
++                         * lkout skips them) and advances rtofst by 3 so the kept
++                         * `carl` + its R_PCR disp16 reckon from the compacted
++                         * position (self-healing displacement). */
++                        if (rlxEmitOn()) {
++                                int k = rlxEmitIdx++;
++                                if (rlxIsDrop != NULL && k < rlxMeasureIdx && rlxIsDrop[k]) {
++                                        rtflg[rtp-2] = 0;       /* drop CE   */
++                                        rtflg[rtp-1] = 0;       /* drop C4   */
++                                        rtflg[rtp]   = 0;       /* drop bank */
++                                        rtofst += 3;
++                                        continue;
++                                }
++                        }
++
 +                        /* Leave rtflg set on these bytes so lkout() emits them. */
 +                        if ((tbank == 0 || tbank == cbank) && rtp - 2 >= (int) rtofst) {
 +                                rtval[rtp-2] = 0xFF;    /* nop (was CE)   */
@@ -410,7 +480,71 @@
                   */
 --- a/sdas/linksrc/lkmain.c
 +++ b/sdas/linksrc/lkmain.c
-@@ -456,6 +456,17 @@
+@@ -24,6 +24,12 @@
+ 
+ #include "aslink.h"
+ 
++/* sdcc88 #14c relaxation hooks (defined in lkrloc3.c) */
++extern int s1c88RelaxAnyOn(void);
++extern int s1c88_relax_measure;
++extern int rlxMeasureIdx;
++extern int rlxEmitIdx;
++
+ /*)Module       lkmain.c
+  *
+  *      The module lkmain.c contains the functions which
+@@ -315,6 +321,7 @@
+                 filep = linkp->f_flp;
+                 hp = NULL;
+                 radix = 10;
++                rlxEmitIdx = 0;         /* #14c: restart slot index for this pass */
+ 
+                 /* sdld specific */
+                 if (TARGET_IS_8051)
+@@ -399,6 +406,42 @@
+                         /* end sdld specific */
+ 
+                         /*
++                         * sdcc88 #14c: relaxation MEASURE sweep.
++                         *
++                         * Re-walk the rel files + libraries with relocation
++                         * enabled but BEFORE lkfopen() — output files aren't
++                         * open yet (a_ofp == NULL), so lkout()/relt3 emit
++                         * nothing — collecting the conservative shrink plan
++                         * (one rlxIsDrop[] entry per banked slot) in the exact
++                         * order the emit pass below will replay.  library()'s
++                         * freelibraryindex() is guarded off while measuring so
++                         * the real emit pass can reload the same modules.
++                         * Read-only: no addresses or bytes change here.
++                         */
++                        if (s1c88RelaxAnyOn()) {
++                                struct lfile *save_cfp = cfp, *save_filep = filep;
++                                FILE *save_sfp = sfp;
++                                struct head *save_hp = hp;
++                                int save_pass = pass, save_radix = radix, save_uflag = uflag;
++
++                                s1c88_relax_measure = 1;
++                                rlxMeasureIdx = 0;
++                                pass = 1;       /* so link_main() runs reloc() */
++                                uflag = 0;      /* no .lst/.rst during the sweep */
++                                cfp = NULL; sfp = NULL; filep = linkp->f_flp;
++                                hp = NULL; radix = 10;
++                                while (nxtline()) { ip = ib; link_main(); }
++                                library();
++                                reloc('E');
++
++                                s1c88_relax_measure = 0;
++                                cfp = save_cfp; sfp = save_sfp; filep = save_filep;
++                                hp = save_hp; pass = save_pass; radix = save_radix;
++                                uflag = save_uflag;
++                                /* (stage (i) emit: address shift goes here, before map/lkfopen) */
++                        }
++
++                        /*
+                          * Open output file(s)
+                          */
+                         lkfopen();
+@@ -456,6 +499,17 @@
                  CreateAOMF51();
          }
  
@@ -427,4 +561,22 @@
 +
          lkexit(lkerr ? ER_ERROR : ER_NONE);
          return(0);
+ }
+--- a/sdas/linksrc/lklibr.c
++++ b/sdas/linksrc/lklibr.c
+@@ -851,6 +851,14 @@
+   }
+ 
+ #ifdef INDEXLIB
+-  freelibraryindex ();
++  /* sdcc88 #14c: the relaxation measure sweep calls library() once before the
++   * real emit pass calls it again; keep the symbol-cache index alive across the
++   * measure call so the emit call can reload the same modules (free it only on
++   * the real pass, not while measuring). */
++  {
++    extern int s1c88_relax_measure;
++    if (!s1c88_relax_measure)
++      freelibraryindex ();
++  }
+ #endif
  }
