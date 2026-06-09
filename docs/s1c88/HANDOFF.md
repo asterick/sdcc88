@@ -40,8 +40,9 @@ _Last updated: 2026-06-08._
 2. **Pick from the backlog — [`TODO.md`](TODO.md).** The toolchain is done and the #11 differential-mining
    menu is exhausted (no open mining bugs). What's left is forward improvement on the existing source base:
    keep mining new C constructs (`#11-libc`, `#11-longshift`, anything untested), code-size peephole work
-   (`#12-flag-reuse` byte-combine peephole, `#12-far-idiom`), the deferred linker cross-module relaxation
-   (`#14c`), the `UNIMPLEMENTED`-boundary lift (`#16`), and the z80-lineage cleanup remainder (`#20 D`).
+   (`#12-flag-reuse` byte-combine peephole, `#12-far-idiom`), the `UNIMPLEMENTED`-boundary lift (`#16`),
+   and the z80-lineage cleanup remainder (`#20 D`). (Linker cross-module relaxation `#14c` is **done +
+   default-on** — `SDLD_NO_RELAX=1` opts out; reclaim tracked by `size-check.sh`'s `#14c relax` section.)
    There are **no known correctness bugs** — the differential suite (including float) is clean.
 
 ### Watch-outs (load-bearing)

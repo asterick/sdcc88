@@ -110,8 +110,16 @@ Workflow: add the case, run the three gates, fix what surfaces, add an emu/diff 
     `[−32768,+32766]`, always within `carl` `±32767`; stage (i) already drops every in-range same-bank slot.
     The conservative carl-margin only ever skips a >32.5 KB *intra-bank* span (a call near the top of a
     fully-packed 32 KB bank) — none in any realistic PM program. So the literal fixpoint reclaims 0; not
-    pursued. **⬜ (iii)** carl→cars 1-byte shrink (only ~1 B on the corpus — cross-module targets rarely
-    within ±127; builds the genuinely-iterating fixpoint if call-dense code ever needs it).
+    pursued.
+  - **(iii) carl→cars — NOT PURSUED (poor risk/reward).** Shrinking a kept `carl` (3 B) to `cars` (2 B)
+    when the target is within ±127 reclaims **1 byte across the whole corpus** (cross-module targets are
+    rarely that close — a different `.c`/lib is usually far). The emit cost is the highest of any stage:
+    the opcode rewrite (`F2→F0`, `E8+cc→E0+cc`), disp16→disp8 with a *different* base convention, and a new
+    1-byte drop kind in `delta()` must be coordinated across **two** relocation entries (the `R_S1C88_BANK`
+    bank byte and the `R_PCR` disp16, processed in separate `relr3` iterations), needing the whole slot
+    atomic and a genuine fixpoint. Highest risk to the cross-module emit reflow for the least gain. **#14c
+    is considered complete at stage (i)+split-slot reclaim (150 B, default-on).** Revisit only if profiling
+    a real call-dense ROM shows meaningful cars-range cross-module density.
 
 ---
 

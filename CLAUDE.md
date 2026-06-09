@@ -31,10 +31,11 @@ and builds the compiler.
 > diff-test 12, run-tests 50/50), and the differential-mining suite is **clean with no known correctness
 > bugs** (integer / pointer / struct / union / fnptr / long-long / float all verified).
 >
-> Ongoing work on the existing source base is the **forward backlog in `docs/s1c88/TODO.md`**: more
-> differential coverage (#11), code-size peephole work (#12, yardstick `size-check.sh`), the deferred linker
-> cross-module relaxation (#14c), the `UNIMPLEMENTED`-boundary lift (#16), and the z80-lineage cleanup
-> remainder (#20 D).
+> Linker cross-module relaxation (#14c) is **done and default-on** — every link reclaims same-bank
+> cross-module `ld nb` bytes (opt out `SDLD_NO_RELAX=1`; corpus reclaim 150 B, `size-check.sh`'s `#14c
+> relax` section). Ongoing work on the existing source base is the **forward backlog in
+> `docs/s1c88/TODO.md`**: more differential coverage (#11), code-size peephole work (#12, yardstick
+> `size-check.sh`), the `UNIMPLEMENTED`-boundary lift (#16), and the z80-lineage cleanup remainder (#20 D).
 > Design/ABI: **`docs/s1c88/abi-decision.md`**; resume state: **`docs/s1c88/HANDOFF.md`**;
 > end-user guide: **`docs/s1c88/building-roms.md`**; the toolchain: `docs/s1c88/{sdas88-retarget,banked-branch}.md`.
 

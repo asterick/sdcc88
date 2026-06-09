@@ -453,8 +453,10 @@ documents two real, subtle bugs.
 linker can always drop and correctly detect trampolines (`rtp-5 >= rtofst`). Byte-neutral (T-record
 boundaries don't change the linked image). **Stage (ii) "iterate-to-fixpoint" is N/A by analysis**:
 a same-bank disp is provably within `carl` range, so stage (i) already drops every in-range slot; the
-conservative margin only guards >32.5 KB intra-bank spans that no real PM program has. Remaining:
-**(iii)** carl→cars (1 B on the corpus). See TODO.md #14c.
+conservative margin only guards >32.5 KB intra-bank spans that no real PM program has. **Stage (iii)
+carl→cars NOT pursued** — 1 B corpus-wide for the highest-risk emit surgery of any stage (two-relocation
+coordination, disp16→disp8, fixpoint). **#14c is complete at stage (i)+split-slot reclaim (150 B,
+default-on).** See TODO.md #14c.
 
 **⛔ ROOT CAUSE FOUND (2026-06-08) — a design-level flaw, not a coding bug.**
 The five failing cases share one property: a function body big enough that the codegen emits an
