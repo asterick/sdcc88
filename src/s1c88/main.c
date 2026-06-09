@@ -36,7 +36,6 @@
 #define OPTION_CONST_SEG        "--constseg"
 #define OPTION_DATA_SEG         "--dataseg"
 #define OPTION_CALLEE_SAVES_BC  "--callee-saves-bc"
-#define OPTION_ASM              "--asm="
 #define OPTION_NO_STD_CRT0      "--no-std-crt0"
 #define OPTION_RESERVE_IY       "--reserve-regs-iy"
 #define OPTION_FRAMEPOINTER     "--fno-omit-frame-pointer"
@@ -62,7 +61,6 @@ static OPTION _s1c88_options[] = {
   {0, OPTION_CALLEE_SAVES_BC, &s1c88_opts.calleeSavesBC, "Force a called function to always save BC"},
   {0, OPTION_BO,              NULL, "<num> use code bank <num>"},
   {0, OPTION_BA,              NULL, "<num> use data bank <num>"},
-  {0, OPTION_ASM,             NULL, "Define assembler name (rgbds/asxxxx/isas/z80asm/gas)"},
   {0, OPTION_CODE_SEG,        &options.code_seg, "<name> use this name for the code segment", CLAT_STRING},
   {0, OPTION_CONST_SEG,       &options.const_seg, "<name> use this name for the const segment", CLAT_STRING},
   {0, OPTION_DATA_SEG,        &options.data_seg, "<name> use this name for the data segment", CLAT_STRING},
@@ -77,20 +75,8 @@ static OPTION _s1c88_options[] = {
 };
 
 
-typedef enum
-{
-  /* Must be first */
-  ASM_TYPE_ASXXXX,
-  ASM_TYPE_RGBDS,
-  ASM_TYPE_ISAS,
-  ASM_TYPE_Z80ASM,
-  ASM_TYPE_GAS
-}
-ASM_TYPE;
-
 static struct
 {
-  ASM_TYPE asmType;
   // Determine if we can put parameters in registers
   struct
   {
@@ -140,15 +126,9 @@ extern reg_info *regsS1C88;
 static void
 _s1c88_init (void)
 {
-  switch (_G.asmType)
-    {
-    case ASM_TYPE_GAS:
-      asm_addTree (&_s1c88_gas_z80);
-      break;
-    default:
-      asm_addTree (&_s1c88_asxxxx_z80);
-      break;
-    }
+  /* The S1C88 toolchain is asxxxx/sdas-only (see CLAUDE.md); there is one asm
+     dialect, so no asm-type selection. */
+  asm_addTree (&_s1c88_asxxxx_z80);
 
   regsS1C88 = s1c88_regs;
   s1c88_init_asmops ();
@@ -221,28 +201,7 @@ do_pragma (int id, const char *name, const char *cp)
             break;
 
           case TOKEN_INT:
-            switch (_G.asmType)
-              {
-              case ASM_TYPE_ASXXXX:
-                dbuf_printf (&buffer, "CODE_%d", token.val.int_val);
-                break;
-
-              case ASM_TYPE_RGBDS:
-                dbuf_printf (&buffer, "ROMX,BANK[%d]", token.val.int_val);
-                break;
-
-              case ASM_TYPE_ISAS:
-                /* PENDING: what to use for ISAS? */
-                dbuf_printf (&buffer, "CODE,BANK(%d)", token.val.int_val);
-                break;
-
-              case ASM_TYPE_GAS:
-                dbuf_printf (&buffer, ".ovly%04x", token.val.int_val);
-                break;
-
-              default:
-                wassert (0);
-              }
+            dbuf_printf (&buffer, "CODE_%d", token.val.int_val);
             break;
 
           default:
@@ -346,14 +305,7 @@ _parseOptions (int *pargc, char **argv, int *i)
               struct dbuf_s buffer;
 
               dbuf_init (&buffer, 16);
-              if (_G.asmType == ASM_TYPE_RGBDS)
-                {
-                  dbuf_printf (&buffer, "ROMX,BANK[%u]", bank);
-                }
-              else
-                {
-                  dbuf_printf (&buffer, "CODE_%u", bank);
-                }
+              dbuf_printf (&buffer, "CODE_%u", bank);
               dbuf_c_str (&buffer);
               options.code_seg = (char *) dbuf_detach (&buffer);
               return TRUE;
@@ -365,45 +317,14 @@ _parseOptions (int *pargc, char **argv, int *i)
               struct dbuf_s buffer;
 
               dbuf_init (&buffer, 16);
-              if (_G.asmType == ASM_TYPE_RGBDS)
-                {
-                  dbuf_printf (&buffer, "SRAM,BANK[%u]", bank);
-                }
-              else
-                {
-                  dbuf_printf (&buffer, "DATA_%u", bank);
-                }
+              dbuf_printf (&buffer, "DATA_%u", bank);
               dbuf_c_str (&buffer);
               options.data_seg = (char *) dbuf_detach (&buffer);
               return TRUE;
             }
         }
 
-      if (!strncmp (argv[*i], OPTION_ASM, sizeof (OPTION_ASM) - 1))
-        {
-          char *asmblr = getStringArg (OPTION_ASM, argv, i, *pargc);
-
-          if (!strcmp (asmblr, "asxxxx"))
-            {
-              _G.asmType = ASM_TYPE_ASXXXX;
-              return TRUE;
-            }
-          else if (!strcmp (asmblr, "z80asm"))
-            {
-              port->assembler.externGlobal = TRUE;
-              asm_addTree (&_s1c88_z80asm_z80);
-              _G.asmType = ASM_TYPE_ISAS;
-              return TRUE;
-            }
-          else if (!strcmp (asmblr, "gas"))
-            {
-              port->assembler.externGlobal = TRUE;
-              asm_addTree (&_s1c88_gas_z80);
-              _G.asmType = ASM_TYPE_GAS;
-              return TRUE;
-            }
-        }
-      else if (!strncmp (argv[*i], OPTION_EMIT_EXTERNS, sizeof (OPTION_EMIT_EXTERNS) - 1))
+      if (!strncmp (argv[*i], OPTION_EMIT_EXTERNS, sizeof (OPTION_EMIT_EXTERNS) - 1))
         {
           port->assembler.externGlobal = 1;
           return true;
