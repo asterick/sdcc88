@@ -61,7 +61,9 @@ The binary handoff is SDCC's own `sdas`/`sdld` family, retargeted for the S1C88:
   (`./scripts/validate-s1c88.sh <file.asm>` rejects any form the S1C88 can't encode).
 - **`sdldz80`** — the linker: assemble→link plus banked **`bcall`/`bjump`** (the linker resolves and writes
   the target's code bank), with default-on cross-module branch relaxation.
-- **`romgen`** (`tools/romgen.c`) — packs the linked banks into a flat `.min` ROM.
+- **`romgen`** (`tools/romgen.c`) — packs the linked banks into a flat `.min` ROM, or (with a `.minx`
+  output / `--minx`) into the **MINX debug container**: ROM + binary symbol table + the `.map`/`.noi`/`.cdb`
+  artifacts rolled into one ELF-like sectioned binary (`docs/s1c88/minx-format.md`).
 - **`crt0.rel` + `s1c88.lib` + `<pm.h>`** — the production startup, support + libc library, and device
   header, installed into the driver's lib/include dirs.
 

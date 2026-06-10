@@ -2,6 +2,9 @@
 #
 # rom-smoke.sh — end-to-end banked toolchain test: assemble (sdas88) -> link (sdldz80) -> romgen ->
 # flat .min, and verify a multi-bank program's auto-banked bcall + physical placement.
+# Also packs the same link into the MINX debug container (romgen's second output format,
+# docs/s1c88/minx-format.md) and verifies its structure, CRCs, symtab, and that the ROM
+# section is byte-identical to the flat .min.
 #
 # Bank layout (Pokémon Mini): code areas live at linker address (bank<<16)|logic.
 #   _HOME    bank 0 (common)  -> 0x2100      (logic == physical)
@@ -51,7 +54,8 @@ EOF
 "$SDAS" -o "$tmp/r.rel" "$tmp/r.asm" >/dev/null 2>&1 || { echo "FAIL: assemble"; exit 1; }
 # _FAR is __far data: located at its PHYSICAL address (bank 3 = phys 0x18000..),
 # declared to romgen with --far so it bypasses the (bank<<16)|logic code mapping.
-"$SDLD" -nwxi -b _HOME=0x2100 -b _CODE_1=0x18000 -b _CODE_2=0x28000 -b _FAR=0x18800 "$tmp/r.ihx" "$tmp/r.rel" >/dev/null 2>&1 \
+# -j/-m also emit r.noi/r.map, the sidecars the MINX leg below rolls up
+"$SDLD" -nwxjmi -b _HOME=0x2100 -b _CODE_1=0x18000 -b _CODE_2=0x28000 -b _FAR=0x18800 "$tmp/r.ihx" "$tmp/r.rel" >/dev/null 2>&1 \
   || { echo "FAIL: link"; exit 1; }
 "${SDCC}/bin/romgen" "$tmp/r.ihx" "$tmp/r.min" --far=0x18800-0x18fff || { echo "FAIL: romgen"; exit 1; }
 
@@ -79,5 +83,42 @@ case "$farrd" in "c5 00 88 b0 01 ce cd 45 ce c5 00"*) echo "  ok  __far page byt
 # bjump lt,_b2fn -> jrs ge,+7 (ce e3 07) ; ld nb,#2 (ce c4 02) ; jrl (f3 ..): the
 # invert-and-skip + cross-bank NB write composed (TODO #13 worst case).
 case "$ccfn" in "ce e3 07 ce c4 02 f3") echo "  ok  bjump lt,_b2fn -> jrs ge,+7 ; ld nb,#2 ; jrl (cross-bank conditional)";; *) echo "  FAIL conditional cross-bank bjump"; fail=1;; esac
+# --- MINX container leg: same link packed as a sectioned debug bundle ---------------
+"${SDCC}/bin/romgen" "$tmp/r.ihx" "$tmp/r.minx" --far=0x18800-0x18fff >/dev/null || { echo "FAIL: romgen --minx"; exit 1; }
+if python3 - "$tmp" <<'EOF'
+import struct, sys, zlib
+tmp = sys.argv[1]
+d = open(tmp + '/r.minx', 'rb').read()
+magic, ver, hsz, nsec, toff, esz, stridx, fsz, flags = struct.unpack_from('<4sHHIIIIII', d, 0)
+assert magic == b'MINX' and ver == 1 and hsz == 32 and esz == 32, 'bad header'
+assert fsz == len(d), 'file size field mismatch'
+secs = [struct.unpack_from('<8I', d, toff + i * esz) for i in range(nsec)]
+st = secs[stridx]
+strtab = d[st[2]:st[2] + st[3]]
+name = lambda off: strtab[off:strtab.index(b'\0', off)].decode()
+by_type = {}
+for t, nm, off, size, addr, crc, _r0, _r1 in secs:
+    assert off % 4 == 0, 'unaligned section'
+    assert zlib.crc32(d[off:off + size]) & 0xFFFFFFFF == crc, 'CRC mismatch in ' + name(nm)
+    by_type[t] = (off, size, addr)
+for t in (1, 2, 3, 4, 6):   # ROM, SYMTAB, STRTAB, NOTE, NOI
+    assert t in by_type, 'missing section type %d' % t
+off, size, addr = by_type[1]
+assert addr == 0x2100, 'ROM load address'
+assert d[off:off + size] == open(tmp + '/r.min', 'rb').read(), 'ROM section != flat .min'
+syms, prev = {}, -1
+off, size, _ = by_type[2]
+for i in range(off, off + size, 16):
+    nm, value, phys, fl = struct.unpack_from('<4I', d, i)
+    assert value >= prev, 'symtab not sorted'
+    prev = value
+    syms[name(nm)] = (value, phys, fl)
+assert syms['_start'] == (0x2100, 0x2100, 1), '_start'
+assert syms['_b1fn'] == (0x18000, 0x8000, 1), '_b1fn (banked code mapping)'
+assert syms['_ftbl'] == (0x18800, 0x18800, 1), '_ftbl (--far physical mapping)'
+EOF
+then echo "  ok  MINX container (header, CRCs, ROM==min, banked+far symtab)"
+else echo "  FAIL MINX container"; fail=1; fi
+
 [ "$fail" -eq 0 ] && echo "== banked ROM pipeline GREEN ==" || echo "== ROM pipeline BROKEN =="
 exit "$fail"

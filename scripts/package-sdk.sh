@@ -21,7 +21,7 @@
 #   share/sdcc/ include/ (libc + <pm.h>) and lib/s1c88/ (crt0.rel + s1c88.lib
 #               + member .rel objects — the .lib is a text index, the members
 #               must travel with it)
-#   docs/       building-roms.md (the end-user guide)
+#   docs/       building-roms.md (the end-user guide) + minx-format.md (the debug container)
 #   examples/   hello/ (sources only — a copy-me starter project)
 #   LICENSE     SDCC's COPYING (GPL-2.0-or-later; the binaries are SDCC-derived)
 #
@@ -73,6 +73,7 @@ strip "${STAGE}/bin/"* "${LIBEXEC}/cc1" 2>/dev/null \
 cp -r "${SDCC}/share" "${STAGE}/share"
 
 cp "${REPO}/docs/s1c88/building-roms.md" "${STAGE}/docs/"
+cp "${REPO}/docs/s1c88/minx-format.md"   "${STAGE}/docs/"
 cp "${SDCC}/COPYING" "${STAGE}/LICENSE"
 cp "${REPO}/examples/hello/hello.c" "${REPO}/examples/hello/Makefile" \
    "${REPO}/examples/hello/README.md" "${STAGE}/examples/hello/"
@@ -88,6 +89,7 @@ The tree is relocatable — unpack it anywhere, no environment setup needed:
 \`\`\`bash
 bin/sdcc -ms1c88 game.c -o game.ihx   # preprocess + compile + link (crt0 + s1c88.lib)
 bin/romgen game.ihx game.min          # pack into a flat .min ROM
+bin/romgen game.ihx game.minx         # ...or the MINX debug container (ROM+symbols+map)
 \`\`\`
 
 - \`docs/building-roms.md\` — the end-user guide (memory map, \`__far\` banking,
