@@ -71,6 +71,12 @@ Result: a complete SDK under `build/sdcc-4.5.0/` — `src/sdcc` (the `-ms1c88` d
 (`sdcpp`, `sdas88`, `sdldz80`, `romgen`), the runtime, and device headers. `sdcc -ms1c88 foo.c`
 preprocesses + links for real.
 
+`scripts/package-sdk.sh` stages that SDK as a **relocatable tarball** (`build/dist/`; bin/ + the sdcpp
+`libexec/.../cc1` backend + share/sdcc + docs + the hello starter) and proves it self-contained from a
+temp dir under `env -i` before tarring. CI uploads it as the `sdcc88-sdk-linux-x64` artifact on every
+green run; pushing a `v*` tag publishes it as a GitHub Release (`.github/workflows/release.yml`, gated
+on the same test suite).
+
 **Smoke-testing codegen** — the fast inner-loop is `./scripts/dev.sh`, which re-makes **only the
 compiler** (not the bundled `sdcpp` preprocessor), so in that loop `sdcc foo.c` can't preprocess: feed
 already-preprocessed C via `--c1mode` (reads cpp'd C on stdin, emits asm). (`./build.sh` itself builds
