@@ -40,18 +40,20 @@ make SDK=/opt/sdcc88
 
 ## What the program does
 
-`hello.c` prints a greeting and a number whose decimal conversion uses the runtime
-divide/modulo from `s1c88.lib`, then returns 0. Real hardware has no text console
-(you'd draw to the LCD via the PRC); the program writes to the emulator's debug
-console at `0x1FF8` so `make run` shows output. A real game would loop forever in
-`main()` instead of returning.
+`hello.c` greets the world with `printf` and prints a number whose `%u` conversion
+uses the runtime divide/modulo from `s1c88.lib`, then returns 0. `printf` goes
+through the library's default `putchar`, which stores each byte to the minimon
+debug console (`DEBUG_OUT`, RAM `0x1FF8`) so `make run` shows the text. Real
+hardware has no text console — define your own `putchar` (drawing to the LCD via
+the PRC) to override the default. A real game would loop forever in `main()`
+instead of returning.
 
-**Interrupts:** this program defines no handlers, and it still links — the crt0's
-per-slot trampolines `bjump _irq_v<N>`, and the runtime library provides a
-do-nothing `rete` default for every cart vector slot. To handle one, declare a
-handler `void f(void) __interrupt(VEC_*)` (the cart-slot `VEC_*` constants are in
-`<pm.h>`); the compiler auto-wires it to that slot. See
-`docs/s1c88/building-roms.md` §5.
+**Interrupts:** as a worked example the program defines a single handler for the A
+button — `void key_a(void) __interrupt(VEC_KEYA)`, which the compiler auto-wires to
+that cart vector slot; `main()` arms it (priority + `IRQ_ENA3` unmask + lowering the
+CPU interrupt-priority level). The other 25 cart vectors fall through to the
+runtime's do-nothing `rete` defaults (a program that handles none still links). The
+`VEC_*` slot constants are in `<pm.h>`; see `docs/s1c88/building-roms.md` §5.
 
 See [`docs/s1c88/building-roms.md`](../../docs/s1c88/building-roms.md) for the full
 guide and [`<pm.h>`](../../device/include/s1c88/pm.h) for the register map.

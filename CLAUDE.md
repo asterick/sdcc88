@@ -2,13 +2,13 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-> **▶ Resuming / "pick up where you left off"?** Go to **[`docs/s1c88/HANDOFF.md`](docs/s1c88/HANDOFF.md)** —
-> it has the current state and the exact next action. TL;DR: `./scripts/dev.sh` confirms the build is
-> green; `scripts/corpus-check.sh` + `scripts/emu-test.sh` + `scripts/diff-test.sh` are the gates.
-> **Always rebuild via the overlay (`dev.sh`/`corpus-check.sh`), never raw `make -C build/.../src`**
-> (it compiles a stale copy). The forward work list is **[`docs/s1c88/TODO.md`](docs/s1c88/TODO.md)**.
-> Work via self-contained PRs (meaningful names); **`main` is protected** — direct push blocked, the `ci`
-> **build & test** check must be green to merge (reviews not required).
+> **▶ Resuming / "pick up where you left off"?** This file is the entry point. TL;DR: `./scripts/dev.sh`
+> confirms the build is green; `scripts/corpus-check.sh` + `scripts/emu-test.sh` + `scripts/diff-test.sh`
+> are the gates (or `scripts/run-tests.sh` for all at once). **Always rebuild via the overlay
+> (`dev.sh`/`corpus-check.sh`), never raw `make -C build/.../src`** (it compiles a stale copy). The forward
+> work list is the repo-root **[`TODO.md`](TODO.md)**. Work via self-contained PRs (meaningful names);
+> **`main` is protected** — direct push blocked, the `ci` **build & test** check must be green to merge
+> (reviews not required).
 
 ## Project Overview
 
@@ -27,17 +27,19 @@ and builds the compiler.
 > (assemble→link + **banked `bcall`/`bjump`**, linker-resolved bank switching), `romgen` (C, → flat `.min`)
 > — plus the production `crt0`, `s1c88.lib`, and `<pm.h>` device header are all in place. Codegen is
 > functionally complete (all numbered ABI tasks closed; native `DIV`/`MLT`; 3-byte banked function pointers;
-> S1C88 **MAXIMUM-mode** call model), every gate green (corpus 20/20 byte-identical, emu-test 16/16,
-> diff-test 12, run-tests 50/50), and the differential-mining suite is **clean with no known correctness
-> bugs** (integer / pointer / struct / union / fnptr / long-long / float all verified).
+> S1C88 **MAXIMUM-mode** call model; int×int→long widening multiply), every gate green (corpus 20/20
+> byte-identical, emu-test 17/17, diff-test 16, run-tests 56/56), and the differential-mining suite is
+> **clean with no known correctness bugs** (integer / pointer / struct / union / fnptr / long-long / float
+> / libc all verified). The bundled libc covers `string.h`, `stdlib.h`, `ctype.h`, and
+> `printf`/`sprintf` (`<stdio.h>`, default `putchar` → `DEBUG_OUT`).
 >
 > Linker cross-module relaxation (#14c) is **done and default-on** — every link reclaims same-bank
-> cross-module `ld nb` bytes (opt out `SDLD_NO_RELAX=1`; corpus reclaim 150 B, `size-check.sh`'s `#14c
-> relax` section). Ongoing work on the existing source base is the **forward backlog in
-> `docs/s1c88/TODO.md`**: more differential coverage (#11), code-size peephole work (#12, yardstick
-> `size-check.sh`), the `UNIMPLEMENTED`-boundary lift (#16), and the z80-lineage cleanup remainder (#20 D).
-> Design/ABI: **`docs/s1c88/abi-decision.md`**; resume state: **`docs/s1c88/HANDOFF.md`**;
-> end-user guide: **`docs/s1c88/building-roms.md`**; the toolchain: `docs/s1c88/{sdas88-retarget,banked-branch}.md`.
+> cross-module `ld nb` bytes (opt out `SDLD_NO_RELAX=1`; `size-check.sh`'s `#14c relax` section). Ongoing
+> work on the existing source base is the **forward backlog in [`TODO.md`](TODO.md)** (repo root): more
+> differential coverage (#11), code-size work (#12, yardstick `size-check.sh`), the `UNIMPLEMENTED`-boundary
+> lift (#16), the stale-symtab debug-info fix (#14e), and the z80-lineage flag-token cleanup (#20).
+> Design/ABI: **`docs/s1c88/abi-decision.md`**; end-user guide: **`docs/s1c88/building-roms.md`**; the
+> toolchain: `docs/s1c88/{sdas88-retarget,banked-branch}.md`.
 
 ## The codegen design (read `docs/s1c88/abi-decision.md`)
 
@@ -49,8 +51,8 @@ and builds the compiler.
 - **Load-bearing invariants** (read the named abi-decision.md sections before touching these): the **EP=0
   invariant** for `__far` deref (HL+EP idiom; "Task #9"), the **MAXIMUM-mode call model** (3-byte CB:PC
   frames, caller cleanup, PCALL via `__sdcc_fptr`; "The call model"), native `DIV` shapes ("Native DIV"),
-  and the **branch displacement convention** (one byte earlier than z80; HANDOFF.md). Runtime contract:
-  programs provide `__sdcc_fptr:: .ds 2` in near RAM (the production crt0 does).
+  and the **branch displacement convention** (one byte earlier than z80; `docs/s1c88/sdas88-retarget.md`).
+  Runtime contract: programs provide `__sdcc_fptr:: .ds 2` in near RAM (the production crt0 does).
 
 ## Build
 
@@ -144,5 +146,9 @@ Start at `docs/s1c88/README.md`; the backend decisions are in `docs/s1c88/abi-de
   `scripts/run-tests.sh`) is **green**. Code reviews are not required. Keep each PR green on its own —
   validate with `./scripts/run-tests.sh` (or `./scripts/validate-s1c88.sh` for a focused codegen slice)
   before opening it; clearly label any intentionally-red WIP.
-- Convert the design/strategy in `docs/s1c88/abi-decision.md` into action — keep it current as decisions
-  evolve, and keep `docs/s1c88/HANDOFF.md` accurate (it's the fastest way to resume).
+- **Keep the docs current as part of each PR — they must never lag behind a merged branch.** Whenever a
+  branch has an outstanding PR, bring the affected docs up to date *in that PR*: the root **`README.md`**
+  (the user-facing status — refresh it whenever capability/status changes), **`TODO.md`** (mark items done /
+  add new ones), and `docs/s1c88/abi-decision.md` when an ABI/design decision evolves. `docs/s1c88/` is for
+  *how the compiler and processor work*; task/state lives in `TODO.md` (root) and this file. Completed work
+  is recorded in git history + commit messages, not re-listed in `TODO.md`.

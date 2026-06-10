@@ -16,19 +16,18 @@ The base-port choice and the target ABI / z80→s1c88 register mapping are docum
 `../../docs/s1c88/abi-decision.md`. The S1C88 architecture/ISA/toolchain references are in
 `../../docs/s1c88/`.
 
-> **Status:** the port compiles, links, runs as `-ms1c88`, and its **code generation is being retargeted**
-> to the S1C88 ISA, always-green incremental. **Done:** the call ABI (returns BA/HL:BA, faithful Epson arg
-> order), frame setup, branches (`jrs`/`jrl`/`carl`), the full compare cluster (native `cp ba,hl` /
-> `cp …,#imm` + `jrs LT/GE`), the 16-bit ALU (`sub ba,hl`), `adjustStack` (native SP moves), 8-bit L/H ALU
-> operands incl. AND/OR/XOR (via B), shifts (via A/B), accumulator rotates (`rl a`…), `push af`→`push a;
-> push sc`, and the scratch-pair selectors (`getFreePairId`→BA). **Remaining:** the z80 `C/D/E` byte regs +
-> `DE`/`BC` scratch pairs (the central register-model grind: the stack-peek/epilogue idioms → `ld hl,
-> d(sp)`, the variable-shift `C` counter, `inc -N(ix)`) — see `../../docs/s1c88/HANDOFF.md` for the live
-> worklist + per-slice commits + the `emitDebug`/`--verbose` debugging gotcha.
+> **Status: complete and in maintenance.** Codegen is fully retargeted to the S1C88 ISA: the faithful
+> BA+HL register model (the z80 `C/D/E`/`DE`/`BC` scratch machinery is gone), the call ABI (BA / HL:BA
+> returns, faithful Epson arg order), IY index-register arguments, `__far` 3-byte banked pointers (the EP=0
+> invariant), native `DIV`/`MLT`, the MAXIMUM-mode 3-byte CB:PC call model, the branch cluster
+> (`jrs`/`jrl`/`carl`), compares (`cp ba,hl`/`#imm` + `jrs LT/GE`), the 16-bit/8-bit ALU, shifts/rotates,
+> and `__critical`. The differential suite is clean. The forward backlog (code-size peepholes, the
+> `UNIMPLEMENTED`-boundary lift, the flag-token cleanup) is in the repo-root [`TODO.md`](../../TODO.md).
 >
-> The other 9 z80 variant `PORT` structs have been pruned; this is a single-variant port running the plain
-> z80 codegen path (`z80_opts.sub == SUB_Z80`). Many internal identifiers keep their z80 names
-> (`z80_regs`, `z80_opts`, `IS_*`/`PAIR_*`) — port-internal and harmless (the real z80 port is disabled).
+> The other 9 z80 variant `PORT` structs have been pruned; this is a single-variant port that runs the
+> plain-z80 codegen path (`IS_Z80` hardcoded 1). The globals that used to collide with the z80 port were
+> renamed to unique `s1c88_*` names, so it links cleanly alongside z80 and the rest in one driver. Some
+> internal type/enum names (`PAIR_*`, `SUB_Z80`) keep their z80 spelling — port-internal and harmless.
 
 | File | Role |
 |------|------|
@@ -43,21 +42,15 @@ The base-port choice and the target ABI / z80→s1c88 register mapping are docum
 | `peeph.def` | Peephole rules — the single, complete S1C88 definition file (the z80 `peeph-z80.def` was merged in; dead variant files removed). `port.mk` builds it into `peeph.rul` via `gawk -f ../SDCCpeeph.awk`; `main.c` `#include`s `peeph.rul`. |
 | `Makefile.in` | Per-port build stub (just `include ../port.mk`); `build.sh` instantiates it via `config.status`. |
 
-## Retargeting checklist (replace z80 codegen with S1C88)
+## Working on the port
 
-Drive every change from `../../docs/s1c88/` (distilled Epson manuals) — especially
+Drive any change from `../../docs/s1c88/` (distilled Epson manuals) — especially
 [`instruction-set.md`](../../docs/s1c88/instruction-set.md), [`addressing-modes.md`](../../docs/s1c88/addressing-modes.md),
-and [`abi-decision.md`](../../docs/s1c88/abi-decision.md). The live worklist is `../../docs/s1c88/HANDOFF.md`.
+and the authoritative [`abi-decision.md`](../../docs/s1c88/abi-decision.md) (register model, argument ABI,
+the EP=0 `__far` invariant, native `DIV`, the MAXIMUM-mode call model). The forward backlog is the
+repo-root [`TODO.md`](../../TODO.md).
 
-1. **`ralloc.c` / `ralloc.h` / `ralloc2.cc`** — reshape the register file toward the S1C88 set
-   (`A,B,L,H` + `BA`/`HL`, `IX`, `IY`). *In progress:* the allocator is constrained to `A/B/L/H` and
-   `PAIR_BA` is a first-class pair; eliminating the z80 `C/D/E` regs end-to-end is the remaining grind.
-2. **`main.c` `s1c88_port`** — Epson widths, generic-pointer tags, segment names, calling-convention/return
-   registers, assembler/linker command lines. *Done:* the call ABI (BA/HL:BA returns, faithful arg order).
-3. **`gen.c`** — S1C88 instruction selection/mnemonics. *Done:* frame, branches (`jrs/jrl/carl`), compares
-   (`cp ba,hl`/`#imm` + `jrs LT/GE`), 16-bit ALU (`sub ba,hl`), `adjustStack`, 8-bit L/H ALU + shifts
-   (routed through A/B). *Remaining:* the `DE`/`BC` scratch-asmop machinery and the variable-shift `C`
-   counter.
-4. **`peeph*.def`** — S1C88 peephole patterns. *Done:* `jp→jrl`/`jr→jrs`/`call→carl`, native `jrs LT/GE`,
-   and dropping z80 rules that emit illegal S1C88 forms (e.g. the indexed-memory shift fold).
-5. **Single-port cleanup** — *Done:* the unregistered z80 variant PORT structs are stripped from `main.c`.
+**Always rebuild via the overlay** — `../../scripts/dev.sh` (or `corpus-check.sh`) re-overlays this
+directory and rebuilds; never run raw `make -C build/.../src` (it compiles a stale copy). After any change,
+run the three codegen gates: `corpus-check.sh` (asm is byte-stable), `emu-test.sh` + `diff-test.sh` (it
+computes the right values) — and add a `tests/{emu,diff}/cases/*.c` whenever you touch new territory.

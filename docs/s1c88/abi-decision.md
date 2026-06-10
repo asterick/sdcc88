@@ -1,11 +1,9 @@
 # S1C88 backend: base-port & ABI decision
 
-> **Status:** decided 2026-05-29. Fixes the *target ABI* and the *base port* for sdcc88's S1C88 backend.
-> This doc is the design + the always-green retarget plan; **Step 2 is the live worklist.** For the current
-> implementation state and next action see **[HANDOFF.md](HANDOFF.md)** — as of the latest slices the call
-> ABI, frame, branches, compares, 16-bit ALU, `adjustStack`, and shifts are done; the C/D/E + DE/BC
-> register-model cleanup remains. The codegen validator (`sdas88`, referenced below as "the assembler") is
-> built and complete.
+> **Status:** decided 2026-05-29; the retarget it describes is **complete**. This is the authoritative
+> record of the *target ABI* and the *base port* for sdcc88's S1C88 backend — the register model, argument
+> ABI, the EP=0 `__far` invariant, native `DIV`, and the MAXIMUM-mode call model are all implemented and
+> verified. The forward backlog is the repo-root [`TODO.md`](../../TODO.md).
 > **Sources:** SDCC 4.5.0 `src/z80`; the Epson C ABI in [c-compiler.md](c-compiler.md); the S1C88
 > register/ISA model in [architecture.md](architecture.md) and [instruction-set.md](instruction-set.md).
 

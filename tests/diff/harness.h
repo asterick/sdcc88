@@ -61,7 +61,7 @@ static void diff_puts(const char *s) { while (*s) diff_putc(*s++); }
 /* Primitive emitters take a SINGLE argument each — never a char alongside a
    stacked long. (An earlier diff_emit(tag, u32 v, u8 nbytes) tripped a backend
    bug where the char `nbytes` was dropped/clobbered by the stacked long `v`'s
-   staging under register pressure; see docs HANDOFF "Session 24". Keeping each
+   staging under register pressure; see git history (the structarg send-clobber fix). Keeping each
    helper to one scalar/pointer arg sidesteps that ABI hazard so the harness can
    test the rest of the codegen.) Bytes are extracted in the EMIT_* macros. */
 static void diff_tag(const char *tag) { diff_puts(tag); diff_putc(':'); }

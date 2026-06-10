@@ -2,7 +2,7 @@
 
 This is the end-user guide: how to turn C source into a flashable Pokémon Mini `.min`
 ROM with the sdcc88 toolchain. For the compiler internals see
-[`abi-decision.md`](abi-decision.md); for current status see [`HANDOFF.md`](HANDOFF.md).
+[`abi-decision.md`](abi-decision.md); for current status see the root [`README.md`](../../README.md).
 
 ## 1. Build the SDK
 
