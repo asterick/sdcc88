@@ -152,9 +152,9 @@ which our C impls don't honor). `build-runtime.sh` prefers repo libc sources and
   `device/include` (stdlib/stdio/string/ctype + the `asm/` trees) to the driver's include
   dir, so user code can `#include` them. Validated: `tests/diff/cases/sprintf.c` (13 values
   vs host), `examples/hello` now prints via `printf`, putchar-override confirmed.
-- **[M] #17-setjmp — Tier 2, needs hand asm.** Upstream `_setjmp.c` is mcs51-only
-  (`#include <8051.h>`); an s1c88 `setjmp`/`longjmp` must be written as port asm (save/
-  restore SP, return PC, callee-saved IX/IY).
+- **[M] #17-setjmp — deferred.** Upstream `_setjmp.c` is mcs51-only (`#include <8051.h>`);
+  an s1c88 `setjmp`/`longjmp` must be written as port asm (save/restore SP, return PC,
+  callee-saved IX/IY). Deferred — rarely needed on this target; pick up on demand.
 - **[L] #17-malloc — deferred by request.** Needs a heap area + `_sdcc_heap` wired into
   crt0/linker; a real design choice on a 4 KB-RAM device.
 
