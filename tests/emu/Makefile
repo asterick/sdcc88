@@ -15,6 +15,9 @@ OBJECTS  := $(patsubst $(CORE)/src/%.cc,$(BUILD)/%.o,$(SOURCES)) $(BUILD)/runner
 # offset). See HANDOFF.md.
 HEADERS  := $(wildcard $(CORE)/include/*.h) $(CORE)/table.h
 CXX      ?= g++
+# gawk explicitly: the BIOS embedder below uses strtonum(), which BSD awk
+# (macOS /usr/bin/awk) lacks. gawk is already a build dependency of SDCC.
+AWK      ?= gawk
 CXXFLAGS := -std=c++17 -O2 -Wall -I$(CORE)/include -I$(BUILD)
 
 # The test BIOS (tests/emu/bios.s) is assembled + linked at a fixed low-ROM
@@ -35,7 +38,7 @@ $(BUILD):
 $(BIOS_ROM): bios.s | $(BUILD)
 	$(SDAS) -o $(BUILD)/bios.rel bios.s
 	$(SDLD) -nwxi -b _BIOS=$(BIOS_LOAD) $(BUILD)/bios.ihx $(BUILD)/bios.rel
-	awk 'BEGIN{lo=-1;hi=0} /^:/{ \
+	$(AWK) 'BEGIN{lo=-1;hi=0} /^:/{ \
 	      ll=strtonum("0x" substr($$0,2,2)); a=strtonum("0x" substr($$0,4,4)); \
 	      t=substr($$0,8,2); if(t!="00")next; if(lo<0||a<lo)lo=a; \
 	      for(i=0;i<ll;i++){b[a+i]=substr($$0,10+i*2,2); if(a+i>=hi)hi=a+i+1} } \

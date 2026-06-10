@@ -36,7 +36,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: build
-          key: sdcc-build-${{ hashFiles('build.sh', 'third_party/sdcc/*.patch') }}
+          key: sdcc-build-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('build.sh', 'third_party/sdcc/*.patch') }}
 
       - name: Install build dependencies
         run: |
@@ -62,5 +62,51 @@ jobs:
         with:
           name: sdcc88-sdk-linux-x64
           path: build/dist/sdcc88-sdk-*-linux-x64.tar.gz
+          if-no-files-found: error
+          retention-days: 30
+
+  # Same build + full test suite + package on macOS (arm64 — Apple Silicon).
+  # NOT the required check ("build & test" above gates main); this keeps the
+  # darwin SDK honest and uploads its tarball. Apple's stock bison (2.3),
+  # flex, make (3.81), and bash (3.2) are ancient and its awk lacks strtonum,
+  # so the Homebrew versions go first on PATH; boost is header-only but lives
+  # under the brew prefix, hence CPPFLAGS.
+  test-macos:
+    name: build & test (macos-arm64)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache SDCC build tree
+        uses: actions/cache@v4
+        with:
+          path: build
+          key: sdcc-build-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('build.sh', 'third_party/sdcc/*.patch') }}
+
+      - name: Install build dependencies (Homebrew)
+        run: brew install boost bison flex gawk make bash
+
+      - name: Put the Homebrew toolchain first on PATH
+        run: |
+          echo "$(brew --prefix bison)/bin" >> "$GITHUB_PATH"
+          echo "$(brew --prefix flex)/bin"  >> "$GITHUB_PATH"
+          echo "$(brew --prefix make)/libexec/gnubin" >> "$GITHUB_PATH"
+          echo "CPPFLAGS=-I$(brew --prefix)/include" >> "$GITHUB_ENV"
+          echo "LDFLAGS=-L$(brew --prefix)/lib" >> "$GITHUB_ENV"
+
+      - name: Build the SDK (overlay + configure + compiler + sdcpp + toolchain + runtime)
+        run: ./build.sh
+
+      - name: Run the unified test suite (TAP)
+        run: ./scripts/run-tests.sh
+
+      - name: Package the SDK
+        run: ./scripts/package-sdk.sh
+
+      - name: Upload SDK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sdcc88-sdk-darwin-arm64
+          path: build/dist/sdcc88-sdk-*-darwin-arm64.tar.gz
           if-no-files-found: error
           retention-days: 30

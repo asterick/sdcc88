@@ -6,15 +6,15 @@ ROM with the sdcc88 toolchain. For the compiler internals see
 
 ## 1. Get the SDK
 
-**Prebuilt (Linux x86-64):** every release on the GitHub [Releases
-page](https://github.com/asterick/sdcc88/releases) ships a relocatable
-`sdcc88-sdk-<version>-linux-x64.tar.gz` (CI also attaches one to every green run
-as the `sdcc88-sdk-linux-x64` artifact). Unpack it anywhere — no environment
-setup needed; the driver finds its tools, headers, and runtime relative to its
-own location:
+**Prebuilt (Linux x86-64, macOS arm64):** every release on the GitHub [Releases
+page](https://github.com/asterick/sdcc88/releases) ships relocatable
+`sdcc88-sdk-<version>-<platform>.tar.gz` tarballs (CI also attaches them to
+every green run as the `sdcc88-sdk-<platform>` artifacts). Unpack one anywhere —
+no environment setup needed; the driver finds its tools, headers, and runtime
+relative to its own location:
 
 ```bash
-tar xzf sdcc88-sdk-v1.0-linux-x64.tar.gz
+tar xzf sdcc88-sdk-v1.0-linux-x64.tar.gz      # or -darwin-arm64
 sdcc88-sdk/bin/sdcc -ms1c88 game.c -o game.ihx
 sdcc88-sdk/bin/romgen game.ihx game.min
 ```

@@ -1,37 +1,59 @@
 name: release
 
-# Prebuilt-SDK releases. Pushing a tag `v*` builds the SDK from that tag, runs
-# the full gating test suite, packages the relocatable tarball
-# (scripts/package-sdk.sh — which also re-verifies the staged tree from a temp
-# dir before tarring), and attaches it to a GitHub Release. Nothing is
-# published unless the same suite that gates main is green on the tag.
+# Prebuilt-SDK releases. Pushing a tag `v*` builds the SDK from that tag on
+# every release platform, runs the full gating test suite on each, packages
+# the relocatable tarballs (scripts/package-sdk.sh — which also re-verifies
+# the staged tree from a temp dir before tarring), and attaches them all to
+# one GitHub Release. Nothing is published unless the same suite that gates
+# main is green on the tag, on every platform.
 
 on:
   push:
     tags: ['v*']
 
-permissions:
-  contents: write   # create the release + upload the tarball
-
 jobs:
-  release:
-    name: build, test & release
-    runs-on: ubuntu-latest
+  build:
+    name: build, test & package (${{ matrix.platform }})
+    permissions:
+      contents: read
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            platform: linux-x64
+          - os: macos-latest
+            platform: darwin-arm64
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
 
-      # Same cache as ci.yml so a release reuses the configured SDCC tree.
+      # Same cache scheme as ci.yml so a release reuses the configured tree.
       - name: Cache SDCC build tree
         uses: actions/cache@v4
         with:
           path: build
-          key: sdcc-build-${{ hashFiles('build.sh', 'third_party/sdcc/*.patch') }}
+          key: sdcc-build-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('build.sh', 'third_party/sdcc/*.patch') }}
 
-      - name: Install build dependencies
+      - name: Install build dependencies (apt)
+        if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             build-essential flex bison m4 gawk libboost-dev zlib1g-dev python3 curl
+
+      - name: Install build dependencies (Homebrew)
+        if: runner.os == 'macOS'
+        run: brew install boost bison flex gawk make bash
+
+      # See ci.yml: Apple's stock bison/flex/make/bash are too old.
+      - name: Put the Homebrew toolchain first on PATH
+        if: runner.os == 'macOS'
+        run: |
+          echo "$(brew --prefix bison)/bin" >> "$GITHUB_PATH"
+          echo "$(brew --prefix flex)/bin"  >> "$GITHUB_PATH"
+          echo "$(brew --prefix make)/libexec/gnubin" >> "$GITHUB_PATH"
+          echo "CPPFLAGS=-I$(brew --prefix)/include" >> "$GITHUB_ENV"
+          echo "LDFLAGS=-L$(brew --prefix)/lib" >> "$GITHUB_ENV"
 
       - name: Build the SDK
         run: ./build.sh
@@ -42,11 +64,34 @@ jobs:
       - name: Package the SDK
         run: SDK_VERSION=${{ github.ref_name }} ./scripts/package-sdk.sh
 
+      - name: Upload SDK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sdcc88-sdk-${{ matrix.platform }}
+          path: build/dist/sdcc88-sdk-*-${{ matrix.platform }}.tar.gz
+          if-no-files-found: error
+
+  release:
+    name: publish the GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write   # create the release + upload the tarballs
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all SDK tarballs
+        uses: actions/download-artifact@v4
+        with:
+          pattern: sdcc88-sdk-*
+          path: dist
+          merge-multiple: true
+
       - name: Create the GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release create "${{ github.ref_name }}" \
-            build/dist/sdcc88-sdk-*-linux-x64.tar.gz \
+            dist/sdcc88-sdk-*.tar.gz \
             --verify-tag --generate-notes \
             --title "sdcc88 SDK ${{ github.ref_name }}"

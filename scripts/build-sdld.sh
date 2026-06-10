@@ -36,4 +36,4 @@ make -C "${SDCC}/sdas/linksrc" sdcc-ldz80 > /tmp/sdld88-build.log 2>&1 || {
 
 LD="${SDCC}/bin/sdldz80"
 [ -x "${LD}" ] || { echo "!! expected ${LD} not produced" >&2; exit 1; }
-echo ">> built: ${LD} ($(stat -c%s "${LD}") bytes)  — invoke as the z80-target ASlink"
+echo ">> built: ${LD} ($(wc -c < "${LD}" | tr -d ' ') bytes)  — invoke as the z80-target ASlink"
