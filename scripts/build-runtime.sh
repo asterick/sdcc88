@@ -50,11 +50,8 @@ LIB_WIDEMUL="_muluint2ulong _mulsint2slong"
 # code may call them as real functions):
 LIB_LIBC="_memmove _memcmp _memchr _strcpy _strncpy _strcat _strncat _strcmp _strncmp _strchr _strrchr _strlen _strstr"
 LIB_LIBC="$LIB_LIBC _strspn _strcspn _strpbrk _strtok memccpy"
-# stdlib.h: number conversion, abs, rand.
-# NB: qsort/bsearch are intentionally NOT built — calling them (the function-pointer
-# comparator) trips the gen.c:6149 "Unbalanced stack" backend ICE, the same one that
-# blocks printf/sprintf. Add them back once that codegen boundary is lifted.
-LIB_STDLIB="atoi atol __itoa __ltoa abs labs rand"
+# stdlib.h: number conversion, abs, rand, search/sort.
+LIB_STDLIB="atoi atol __itoa __ltoa abs labs rand qsort bsearch"
 # ctype.h: character classification + case mapping
 LIB_CTYPE="isalnum isalpha isblank iscntrl isdigit isgraph islower isprint ispunct isspace isupper isxdigit tolower toupper"
 
