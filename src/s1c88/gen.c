@@ -11667,7 +11667,29 @@ genLeftShift (const iCode *ic)
   if(save_a_outer)
     _push (PAIR_AF);
     
-  if (!shift_by_lit && count_iy)
+  if (!shift_by_lit && count_iy && right->aop->size < 2)
+    {
+      /* #11-longshift-iy: load the 8-bit shift count into IY = 0x00:count.  We
+         reach this path only when A/B/L/H ALL hold the value (no free byte GPR)
+         and HL is the value's high word — genMove to IY is unreliable here (it
+         can leave IYH stale or spill the count to the stack and never reach IY).
+         Do it explicitly: save A (a value byte) and HL, stage the count through
+         them zero-extended, then restore — the value survives intact (B, the
+         remaining value byte, is untouched). */
+      _push (PAIR_HL);                                /* save value bytes 2-3 */
+      _push (PAIR_AF);                                /* save value byte 0 (A) + flags */
+      cheapMove (ASMOP_A, 0, right->aop, 0, true);    /* A = count */
+      emit2 ("ld l, a");
+      cost2 (1, 5);
+      emit2 ("ld h, #0x00");                          /* zero-extend: hl = 0x00:count */
+      cost2 (2, 6);
+      emit2 ("ld iy, hl");
+      cost2 (2, 0);
+      _pop (PAIR_AF);                                 /* restore A (value byte 0) */
+      _pop (PAIR_HL);                                 /* restore value bytes 2-3 */
+      spillPair (PAIR_IY);
+    }
+  else if (!shift_by_lit && count_iy)
     genMove (ASMOP_IY, right->aop, isRegDead (A_IDX, ic), isPairDead (PAIR_HL, ic), true);
   else if (!shift_by_lit)
     cheapMove (asmopregs[countreg], 0, right->aop, 0, true);

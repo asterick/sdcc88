@@ -7,14 +7,11 @@
  * residual bit-shift — so counts on the byte/bit boundaries (7, 9, 15, 17, 23,
  * 25, …) exercise distinct paths. Here every count 0..width-1 is tested.
  *
- * The value and count are passed through a helper FUNCTION (count = a parameter),
- * deliberately — NOT shifted inline. An inline `mem_u32 << mem_count` trips a
- * known silent miscompile (TODO #11-longshift: the 32-bit variable LEFT shift's
- * IY-counter path fails to zero-extend the count into IY when no pair scratch is
- * free, because the memory value is materialised into A/B/L/H first). Passing the
- * count as a parameter "launders" it into a clean register/stack operand and
- * exercises the WORKING variable-shift path at every count — do not "simplify"
- * these back to inline shifts until that bug is fixed.
+ * The value and count are passed through a helper FUNCTION (count = a parameter)
+ * here, which exercises the register/stack-operand shift path at every count.
+ * The complementary INLINE form (`mem_u32 << mem_count`, the IY-counter path) was
+ * the #11-longshift-iy miscompile — now fixed — and is covered directly by
+ * `longshift_iy.c`.
  *
  * SOUNDNESS (see harness.h): the shift count must be < the PROMOTED operand width
  * (int is 16-bit on the S1C88 → 8/16-bit shift by 0..15, 32-bit by 0..31, 64-bit

@@ -14,18 +14,19 @@ Legend: **S/M/L** = rough effort.
 
 ---
 
-## Known bugs (1 open)
+## Known bugs
 
-- **#11-longshift-iy** — silent miscompile, narrow trigger: the 32-bit variable LEFT shift (`u32 << n`)
-  miscompiles when BOTH the value and the count are memory operands (e.g. `out = arr[i] << cc;`), because
-  `genLeftShift` puts the count in non-byte-addressable IY with no free pair to zero-extend through. **Only
-  this op** — right shifts, 16/64-bit shifts, division, and register/param-sourced counts all work.
-  Deferred: the fix is deep and risks the otherwise-passing shift codegen. Workaround in code routes the
-  shift through a helper so the count is a parameter; `tests/diff/cases/longshift.c` covers the working
-  paths exhaustively and notes the trap.
+**None open.** The differential suite is clean across integer, pointer, struct/union, function-pointer,
+long-long, float, the libc subset, and the previously-broken inline 32-bit variable shift.
 
-The differential suite is otherwise clean across integer, pointer, struct/union, function-pointer,
-long-long, float, and the libc subset.
+- ✅ **#11-longshift-iy — FIXED.** The 32-bit variable LEFT shift (`u32 << n`) miscompiled when BOTH the
+  value and the count were memory operands (e.g. `out = arr[i] << cc;`): `genLeftShift` puts the loop count
+  in non-byte-addressable IY, but with all four byte GPRs holding the value and HL busy, `genMove` to IY
+  left IYH stale (or spilled the count to the stack and never reached IY) — the loop ran a garbage count.
+  Fix (`genLeftShift`): load the 8-bit count into `IY = 0x00:count` explicitly, saving/restoring the value
+  bytes (A, HL) it stages through, instead of relying on `genMove`. Corpus byte-identical (no corpus code
+  hits this path); regression `tests/diff/cases/longshift_iy.c` (194 values — every count 0..31 across six
+  value patterns, the inline path the old `longshift.c` deliberately avoided).
 
 ---
 
