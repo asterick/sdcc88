@@ -1,49 +1,8 @@
---- a/sdas/asxxsrc/sdas.h
-+++ b/sdas/asxxsrc/sdas.h
-@@ -26,6 +26,7 @@
-   TARGET_ID_DS390,
-   TARGET_ID_6808,
-   TARGET_ID_STM8,
-+  TARGET_ID_S1C88,
-   TARGET_ID_PDK13 = 13,
-   TARGET_ID_PDK14 = 14,
-   TARGET_ID_PDK15 = 15,
-@@ -39,6 +40,7 @@
- int is_sdas_target_z80_like(void);
- int is_sdas_target_8051_like(void);
- int is_sdas_target_stm8(void);
-+int is_sdas_target_s1c88(void);
- int is_sdas_target_pdk(void);
- 
- #endif  /* __SDAS_H */
---- a/sdas/asxxsrc/sdas.c
-+++ b/sdas/asxxsrc/sdas.c
-@@ -70,6 +70,8 @@
-     { "390", TARGET_ID_DS390 },
-     { "6808", TARGET_ID_6808 },
-     { "stm8", TARGET_ID_STM8 },
-+    { "s1c88", TARGET_ID_S1C88 },
-+    { "88", TARGET_ID_S1C88 },		/* sdas88 (the s1c88 backend binary) */
-     { "pdk13", TARGET_ID_PDK13 },
-     { "pdk14", TARGET_ID_PDK14 },
-     { "pdk15", TARGET_ID_PDK15 },
-@@ -152,6 +154,13 @@
- }
- 
- int
-+is_sdas_target_s1c88(void)
-+{
-+  check_init();
-+  return target == TARGET_ID_S1C88;
-+}
-+
-+int
- is_sdas_target_pdk(void)
- {
-   check_init();
+diff --git a/sdas/asxxsrc/asout.c b/sdas/asxxsrc/asout.c
+index db03696..73ca536 100644
 --- a/sdas/asxxsrc/asout.c
 +++ b/sdas/asxxsrc/asout.c
-@@ -511,7 +511,7 @@
+@@ -511,7 +511,7 @@ outrxb(int i, struct expr *esp, int r)
                                  outatxb(i,esp->e_addr);
                          }
                  } else {
@@ -52,7 +11,7 @@
                                  r |= R_BYTE | R_BYTX | esp->e_rlcf;
                                  if (r & R_MSB) {
                                          out_lb(hibyte(esp->e_addr),r|R_RELOC|R_HIGH);
-@@ -641,7 +641,7 @@
+@@ -641,7 +641,7 @@ outrw(struct expr *esp, int r)
                                  out_lw(esp->e_addr,r|R_RELOC);
                          }
                          if (oflag) {
@@ -61,7 +20,7 @@
                                          outchk(2, 4);
                                          out_txb(2, esp->e_addr);
                                          if (esp->e_flag) {
-@@ -683,6 +683,52 @@
+@@ -683,6 +683,52 @@ outrw(struct expr *esp, int r)
          dot.s_addr += 2;
  }
  
@@ -114,9 +73,200 @@
  /*)Function     VOID    outr3b(esp, r)
   *
   *              expr *  esp             pointer to expr structure
+diff --git a/sdas/asxxsrc/sdas.c b/sdas/asxxsrc/sdas.c
+index 8ec4521..7505b0b 100644
+--- a/sdas/asxxsrc/sdas.c
++++ b/sdas/asxxsrc/sdas.c
+@@ -70,6 +70,8 @@ sdas_init (char *path)
+     { "390", TARGET_ID_DS390 },
+     { "6808", TARGET_ID_6808 },
+     { "stm8", TARGET_ID_STM8 },
++    { "s1c88", TARGET_ID_S1C88 },
++    { "88", TARGET_ID_S1C88 },		/* sdas88 (the s1c88 backend binary) */
+     { "pdk13", TARGET_ID_PDK13 },
+     { "pdk14", TARGET_ID_PDK14 },
+     { "pdk15", TARGET_ID_PDK15 },
+@@ -151,6 +153,13 @@ is_sdas_target_stm8(void)
+   return target == TARGET_ID_STM8;
+ }
+ 
++int
++is_sdas_target_s1c88(void)
++{
++  check_init();
++  return target == TARGET_ID_S1C88;
++}
++
+ int
+ is_sdas_target_pdk(void)
+ {
+diff --git a/sdas/asxxsrc/sdas.h b/sdas/asxxsrc/sdas.h
+index 2cbb804..a939303 100644
+--- a/sdas/asxxsrc/sdas.h
++++ b/sdas/asxxsrc/sdas.h
+@@ -26,6 +26,7 @@ enum sdas_target_e {
+   TARGET_ID_DS390,
+   TARGET_ID_6808,
+   TARGET_ID_STM8,
++  TARGET_ID_S1C88,
+   TARGET_ID_PDK13 = 13,
+   TARGET_ID_PDK14 = 14,
+   TARGET_ID_PDK15 = 15,
+@@ -39,6 +40,7 @@ void set_sdas_target(enum sdas_target_e);
+ int is_sdas_target_z80_like(void);
+ int is_sdas_target_8051_like(void);
+ int is_sdas_target_stm8(void);
++int is_sdas_target_s1c88(void);
+ int is_sdas_target_pdk(void);
+ 
+ #endif  /* __SDAS_H */
+diff --git a/sdas/linksrc/lklibr.c b/sdas/linksrc/lklibr.c
+index a4e1fbf..570c12f 100644
+--- a/sdas/linksrc/lklibr.c
++++ b/sdas/linksrc/lklibr.c
+@@ -851,6 +851,14 @@ library (void)
+   }
+ 
+ #ifdef INDEXLIB
+-  freelibraryindex ();
++  /* sdcc88 #14c: the relaxation measure sweep calls library() once before the
++   * real emit pass calls it again; keep the symbol-cache index alive across the
++   * measure call so the emit call can reload the same modules (free it only on
++   * the real pass, not while measuring). */
++  {
++    extern int s1c88_relax_measure;
++    if (!s1c88_relax_measure)
++      freelibraryindex ();
++  }
+ #endif
+ }
+diff --git a/sdas/linksrc/lklist.c b/sdas/linksrc/lklist.c
+index 51c8d06..39628cf 100644
+--- a/sdas/linksrc/lklist.c
++++ b/sdas/linksrc/lklist.c
+@@ -33,6 +33,9 @@
+ 
+ #include "aslink.h"
+ 
++/* sdcc88 #14e: post-relaxation address for symbol-table DISPLAY (lkrloc3.c). */
++extern a_uint s1c88RelaxedAddr(a_uint);
++
+ /*)Module       lklist.c
+  *
+  *      The module lklist.c contains the functions which
+@@ -189,7 +192,7 @@ slew(struct area *xp, struct bank *yp)
+                                 "     ----        ------- ----- ------------\n");
+                 }
+ 
+-                ai = xp->a_addr & a_mask;
++                ai = s1c88RelaxedAddr(xp->a_addr) & a_mask;     /* #14e: post-relax base */
+                 aj = xp->a_size & a_mask;
+ 
+                 /*
+@@ -532,7 +535,7 @@ lstarea(struct area *xp, struct bank *yp)
+                 }
+ 
+                 sp = p[i];
+-                aj = (sp->s_addr + sp->s_axp->a_addr) & a_mask;
++                aj = s1c88RelaxedAddr(sp->s_addr + sp->s_axp->a_addr) & a_mask;  /* #14e */
+ #ifdef  LONGINT
+                 switch(a_bytes) {
+                 default:
+diff --git a/sdas/linksrc/lkmain.c b/sdas/linksrc/lkmain.c
+index 0f00244..6f061f4 100644
+--- a/sdas/linksrc/lkmain.c
++++ b/sdas/linksrc/lkmain.c
+@@ -24,6 +24,13 @@
+ 
+ #include "aslink.h"
+ 
++/* sdcc88 #14c relaxation hooks (defined in lkrloc3.c) */
++extern int s1c88RelaxAnyOn(void);
++extern void s1c88RelaxSortPlan(void);
++extern int s1c88_relax_measure;
++extern int rlxMeasureIdx;
++extern int rlxEmitIdx;
++
+ /*)Module       lkmain.c
+  *
+  *      The module lkmain.c contains the functions which
+@@ -315,6 +322,7 @@ main(int argc, char *argv[])
+                 filep = linkp->f_flp;
+                 hp = NULL;
+                 radix = 10;
++                rlxEmitIdx = 0;         /* #14c: restart slot index for this pass */
+ 
+                 /* sdld specific */
+                 if (TARGET_IS_8051)
+@@ -374,6 +382,45 @@ main(int argc, char *argv[])
+                          */
+                         NoICEfopen();
+ #endif
++                        /*
++                         * sdcc88 #14c: relaxation MEASURE sweep + shift.
++                         *
++                         * Re-walk the rel files + libraries with relocation
++                         * enabled but BEFORE lkfopen() — output files aren't
++                         * open yet (a_ofp == NULL), so lkout()/relt3 emit
++                         * nothing — collecting the conservative shrink plan
++                         * (one rlxIsDrop[] entry per banked slot) in the exact
++                         * order the emit pass below will replay.  library()'s
++                         * freelibraryindex() is guarded off while measuring so
++                         * the real emit pass can reload the same modules.  Then
++                         * (only under SDLD_RELAX_EMIT) shift the address model by
++                         * the plan, so map()/summary and the emit pass below all
++                         * see the final relaxed layout.
++                         */
++                        if (s1c88RelaxAnyOn()) {
++                                struct lfile *save_cfp = cfp, *save_filep = filep;
++                                FILE *save_sfp = sfp;
++                                struct head *save_hp = hp;
++                                int save_pass = pass, save_radix = radix, save_uflag = uflag;
++
++                                s1c88_relax_measure = 1;
++                                rlxMeasureIdx = 0;
++                                pass = 1;       /* so link_main() runs reloc() */
++                                uflag = 0;      /* no .lst/.rst during the sweep */
++                                cfp = NULL; sfp = NULL; filep = linkp->f_flp;
++                                hp = NULL; radix = 10;
++                                while (nxtline()) { ip = ib; link_main(); }
++                                library();
++                                reloc('E');
++
++                                s1c88_relax_measure = 0;
++                                cfp = save_cfp; sfp = save_sfp; filep = save_filep;
++                                hp = save_hp; pass = save_pass; radix = save_radix;
++                                uflag = save_uflag;
++
++                                s1c88RelaxSortPlan();     /* sort drop list; emit does the address shift */
++                        }
++
+                         /*
+                          * Output Link Map.
+                          */
+@@ -456,6 +503,17 @@ main(int argc, char *argv[])
+                 CreateAOMF51();
+         }
+ 
++        /* sdcc88 #14c: print the cross-module relaxation-opportunity report
++         * (Stage 0, SDLD_RELAX_REPORT) and the conservative shrink plan +
++         * predicted layout (Stage (i), SDLD_RELAX). Both read-only / no-op
++         * unless their env var is set. Defined in lkrloc3.c. */
++        {
++                extern VOID s1c88RelaxReport(void);
++                extern VOID s1c88RelaxPredict(void);
++                s1c88RelaxReport();
++                s1c88RelaxPredict();
++        }
++
+         lkexit(lkerr ? ER_ERROR : ER_NONE);
+         return(0);
+ }
+diff --git a/sdas/linksrc/lkrloc3.c b/sdas/linksrc/lkrloc3.c
+index 8c37943..77e6ed0 100644
 --- a/sdas/linksrc/lkrloc3.c
 +++ b/sdas/linksrc/lkrloc3.c
-@@ -54,6 +54,382 @@
+@@ -54,6 +54,399 @@
   *
   */
  
@@ -412,6 +562,23 @@
 +}
 +
 +/*
++ * sdcc88 #14e: map a pre-relax MODEL address (s_addr + a_addr, as the linker's
++ * area/symbol tables still hold it) to the address actually emitted into the ROM
++ * after #14c relaxation dropped its `ld nb` bytes.  The emit pass and the R3_SYM
++ * relocation path shift targets down by rlxDelta() but never update s_addr/a_addr,
++ * so symbol-table OUTPUTS (.map/.noi/...) would print stale, too-high addresses.
++ * Apply this to a model address at each such DISPLAY site (never to symval(),
++ * which the relocation math needs in model form).  When relaxation dropped nothing
++ * (SDLD_NO_RELAX, or a non-s1c88 link) rlxDrop[] is empty and this is the identity.
++ * Valid only after s1c88RelaxSortPlan() (lkmain.c calls it before map()).
++ */
++a_uint
++s1c88RelaxedAddr(a_uint addr)
++{
++        return addr - rlxDelta(addr);
++}
++
++/*
 + * Print the stage-(i) plan + predicted post-relax layout, and self-check the
 + * model.  Read-only: walks the area list applying delta() arithmetically; it
 + * does not touch a_addr/a_size.  Called once at end-of-link from lkmain.c.
@@ -499,7 +666,7 @@
  /*)Function VOID        reloc3(c)
   *
   *                      int c           process code
-@@ -324,6 +700,19 @@
+@@ -324,6 +717,19 @@ relr3(void)
           */
          pcb = 1;
  
@@ -519,7 +686,7 @@
          #if 0
          printf("area %d base address: 0x%x size: 0x%x rtbase: 0x%x\n", aindex,
                  a[aindex]->a_addr, a[aindex]->a_size, rtbase);
-@@ -354,6 +743,18 @@
+@@ -354,6 +760,18 @@ relr3(void)
                                  return;
                          }
                          reli = symval(s[rindex]);
@@ -538,7 +705,7 @@
                  }
  /* sdld specific */
                  else if ((IS_R_J11(mode) || IS_R_J19(mode)) && (rindex == 0xFFFF)) {
-@@ -368,6 +769,114 @@
+@@ -368,6 +786,114 @@ relr3(void)
                                  return;
                          }
                          reli = a[rindex]->a_addr;
@@ -653,7 +820,7 @@
                  }
  
                  /*
-@@ -612,14 +1121,46 @@
+@@ -612,14 +1138,46 @@ relr3(void)
                  }
  
                  /*
@@ -703,109 +870,3 @@
                  /*
                   * Unsigned Byte Checking
                   */
---- a/sdas/linksrc/lkmain.c
-+++ b/sdas/linksrc/lkmain.c
-@@ -24,6 +24,13 @@
- 
- #include "aslink.h"
- 
-+/* sdcc88 #14c relaxation hooks (defined in lkrloc3.c) */
-+extern int s1c88RelaxAnyOn(void);
-+extern void s1c88RelaxSortPlan(void);
-+extern int s1c88_relax_measure;
-+extern int rlxMeasureIdx;
-+extern int rlxEmitIdx;
-+
- /*)Module       lkmain.c
-  *
-  *      The module lkmain.c contains the functions which
-@@ -315,6 +322,7 @@
-                 filep = linkp->f_flp;
-                 hp = NULL;
-                 radix = 10;
-+                rlxEmitIdx = 0;         /* #14c: restart slot index for this pass */
- 
-                 /* sdld specific */
-                 if (TARGET_IS_8051)
-@@ -375,6 +383,45 @@
-                         NoICEfopen();
- #endif
-                         /*
-+                         * sdcc88 #14c: relaxation MEASURE sweep + shift.
-+                         *
-+                         * Re-walk the rel files + libraries with relocation
-+                         * enabled but BEFORE lkfopen() — output files aren't
-+                         * open yet (a_ofp == NULL), so lkout()/relt3 emit
-+                         * nothing — collecting the conservative shrink plan
-+                         * (one rlxIsDrop[] entry per banked slot) in the exact
-+                         * order the emit pass below will replay.  library()'s
-+                         * freelibraryindex() is guarded off while measuring so
-+                         * the real emit pass can reload the same modules.  Then
-+                         * (only under SDLD_RELAX_EMIT) shift the address model by
-+                         * the plan, so map()/summary and the emit pass below all
-+                         * see the final relaxed layout.
-+                         */
-+                        if (s1c88RelaxAnyOn()) {
-+                                struct lfile *save_cfp = cfp, *save_filep = filep;
-+                                FILE *save_sfp = sfp;
-+                                struct head *save_hp = hp;
-+                                int save_pass = pass, save_radix = radix, save_uflag = uflag;
-+
-+                                s1c88_relax_measure = 1;
-+                                rlxMeasureIdx = 0;
-+                                pass = 1;       /* so link_main() runs reloc() */
-+                                uflag = 0;      /* no .lst/.rst during the sweep */
-+                                cfp = NULL; sfp = NULL; filep = linkp->f_flp;
-+                                hp = NULL; radix = 10;
-+                                while (nxtline()) { ip = ib; link_main(); }
-+                                library();
-+                                reloc('E');
-+
-+                                s1c88_relax_measure = 0;
-+                                cfp = save_cfp; sfp = save_sfp; filep = save_filep;
-+                                hp = save_hp; pass = save_pass; radix = save_radix;
-+                                uflag = save_uflag;
-+
-+                                s1c88RelaxSortPlan();     /* sort drop list; emit does the address shift */
-+                        }
-+
-+                        /*
-                          * Output Link Map.
-                          */
-                         map();
-@@ -456,6 +503,17 @@
-                 CreateAOMF51();
-         }
- 
-+        /* sdcc88 #14c: print the cross-module relaxation-opportunity report
-+         * (Stage 0, SDLD_RELAX_REPORT) and the conservative shrink plan +
-+         * predicted layout (Stage (i), SDLD_RELAX). Both read-only / no-op
-+         * unless their env var is set. Defined in lkrloc3.c. */
-+        {
-+                extern VOID s1c88RelaxReport(void);
-+                extern VOID s1c88RelaxPredict(void);
-+                s1c88RelaxReport();
-+                s1c88RelaxPredict();
-+        }
-+
-         lkexit(lkerr ? ER_ERROR : ER_NONE);
-         return(0);
- }
---- a/sdas/linksrc/lklibr.c
-+++ b/sdas/linksrc/lklibr.c
-@@ -851,6 +851,14 @@
-   }
- 
- #ifdef INDEXLIB
--  freelibraryindex ();
-+  /* sdcc88 #14c: the relaxation measure sweep calls library() once before the
-+   * real emit pass calls it again; keep the symbol-cache index alive across the
-+   * measure call so the emit call can reload the same modules (free it only on
-+   * the real pass, not while measuring). */
-+  {
-+    extern int s1c88_relax_measure;
-+    if (!s1c88_relax_measure)
-+      freelibraryindex ();
-+  }
- #endif
- }
