@@ -1,6 +1,8 @@
 # examples/hello — build a Pokémon Mini ROM (.min) with sdcc88.
 #
-#   make            build hello.min
+#   make            build hello.min + hello.minx (the MINX debug container:
+#                   ROM + symbols + line table + variables + embedded source —
+#                   everything a debugging emulator needs in one file)
 #   make run        build + run on the bundled emulator (development)
 #   make clean
 #
@@ -16,14 +18,19 @@ RUNNER  = $(abspath ../../build/emu/runner)
 export PATH := $(SDK)/bin:$(PATH)        # so the driver finds sdcpp/sdas88/sdldz80
 
 NAME    = hello
-CFLAGS  = -ms1c88 --opt-code-size
+CFLAGS  = -ms1c88 --opt-code-size --debug   # --debug feeds the .minx debug tables
 
-all: $(NAME).min
+all: $(NAME).min $(NAME).minx
 
 $(NAME).ihx: $(NAME).c
 	$(SDCC) $(CFLAGS) $< -o $@
 
 $(NAME).min: $(NAME).ihx
+	$(ROMGEN) $< $@
+
+# the debuggable bundle: auto-discovers $(NAME).{noi,map,cdb} next to the .ihx
+# and embeds $(NAME).c for source display
+$(NAME).minx: $(NAME).ihx
 	$(ROMGEN) $< $@
 
 run: $(NAME).min
@@ -33,7 +40,8 @@ run: $(NAME).min
 	$(RUNNER) $(NAME).min; echo "exit=$$?"
 
 clean:
-	rm -f $(NAME).ihx $(NAME).min $(NAME).asm $(NAME).rel \
-	      $(NAME).lst $(NAME).sym $(NAME).map $(NAME).lk $(NAME).noi $(NAME).mem
+	rm -f $(NAME).ihx $(NAME).min $(NAME).minx $(NAME).asm $(NAME).rel \
+	      $(NAME).lst $(NAME).sym $(NAME).map $(NAME).lk $(NAME).noi $(NAME).mem \
+	      $(NAME).cdb $(NAME).adb
 
 .PHONY: all run clean

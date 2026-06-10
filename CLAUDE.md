@@ -24,7 +24,9 @@ and builds the compiler.
 > builds a bootable Pokémon Mini ROM. `src/s1c88` started as a clone of SDCC's `z80` port (the z80 register
 > model fits the S1C88 well) and is fully retargeted to the real S1C88 ISA. The binary toolchain — `sdas88`
 > (full ISA, byte-verified, also the codegen validator, with same-module branch relaxation), `sdldz80`
-> (assemble→link + **banked `bcall`/`bjump`**, linker-resolved bank switching), `romgen` (C, → flat `.min`)
+> (assemble→link + **banked `bcall`/`bjump`**, linker-resolved bank switching), `romgen` (C, → flat `.min`,
+> or the **MINX** `.minx` debug container — `docs/s1c88/minx-format.md`, reader `minxdump`; the format is
+> **in design iteration on PR #37 — do not merge it without an explicit ask**)
 > — plus the production `crt0`, `s1c88.lib`, and `<pm.h>` device header are all in place. Codegen is
 > functionally complete (all numbered ABI tasks closed; native `DIV`/`MLT`; 3-byte banked function pointers;
 > S1C88 **MAXIMUM-mode** call model; int×int→long widening multiply), every gate green (corpus 20/20

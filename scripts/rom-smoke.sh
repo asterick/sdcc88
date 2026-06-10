@@ -2,6 +2,9 @@
 #
 # rom-smoke.sh — end-to-end banked toolchain test: assemble (sdas88) -> link (sdldz80) -> romgen ->
 # flat .min, and verify a multi-bank program's auto-banked bcall + physical placement.
+# Also packs the same link into the MINX debug container (romgen's second output format,
+# docs/s1c88/minx-format.md) and verifies its structure, CRCs, symtab, and that the ROM
+# section is byte-identical to the flat .min.
 #
 # Bank layout (Pokémon Mini): code areas live at linker address (bank<<16)|logic.
 #   _HOME    bank 0 (common)  -> 0x2100      (logic == physical)
@@ -51,7 +54,8 @@ EOF
 "$SDAS" -o "$tmp/r.rel" "$tmp/r.asm" >/dev/null 2>&1 || { echo "FAIL: assemble"; exit 1; }
 # _FAR is __far data: located at its PHYSICAL address (bank 3 = phys 0x18000..),
 # declared to romgen with --far so it bypasses the (bank<<16)|logic code mapping.
-"$SDLD" -nwxi -b _HOME=0x2100 -b _CODE_1=0x18000 -b _CODE_2=0x28000 -b _FAR=0x18800 "$tmp/r.ihx" "$tmp/r.rel" >/dev/null 2>&1 \
+# -j/-m also emit r.noi/r.map, the sidecars the MINX leg below rolls up
+"$SDLD" -nwxjmi -b _HOME=0x2100 -b _CODE_1=0x18000 -b _CODE_2=0x28000 -b _FAR=0x18800 "$tmp/r.ihx" "$tmp/r.rel" >/dev/null 2>&1 \
   || { echo "FAIL: link"; exit 1; }
 "${SDCC}/bin/romgen" "$tmp/r.ihx" "$tmp/r.min" --far=0x18800-0x18fff || { echo "FAIL: romgen"; exit 1; }
 
@@ -79,5 +83,19 @@ case "$farrd" in "c5 00 88 b0 01 ce cd 45 ce c5 00"*) echo "  ok  __far page byt
 # bjump lt,_b2fn -> jrs ge,+7 (ce e3 07) ; ld nb,#2 (ce c4 02) ; jrl (f3 ..): the
 # invert-and-skip + cross-bank NB write composed (TODO #13 worst case).
 case "$ccfn" in "ce e3 07 ce c4 02 f3") echo "  ok  bjump lt,_b2fn -> jrs ge,+7 ; ld nb,#2 ; jrl (cross-bank conditional)";; *) echo "  FAIL conditional cross-bank bjump"; fail=1;; esac
+# --- MINX container leg: same link packed as a chunk-tree debug bundle --------------
+# minxdump validates structure + CRC + table invariants; we additionally check the
+# extracted ROM is byte-identical to the flat .min and the banked/--far symbol
+# mappings landed in the SYM chunk.
+[ -x "${SDCC}/bin/minxdump" ] || "${REPO}/scripts/build-romgen.sh" >/dev/null
+"${SDCC}/bin/romgen" "$tmp/r.ihx" "$tmp/r.minx" --far=0x18800-0x18fff >/dev/null || { echo "FAIL: romgen --minx"; exit 1; }
+if "${SDCC}/bin/minxdump" --rom="$tmp/r.x.min" "$tmp/r.minx" > "$tmp/dump" \
+   && cmp -s "$tmp/r.x.min" "$tmp/r.min" \
+   && grep -q "_start .* value 0x002100 phys 0x002100" "$tmp/dump" \
+   && grep -q "_b1fn .* value 0x018000 phys 0x008000" "$tmp/dump" \
+   && grep -q "_ftbl .* value 0x018800 phys 0x018800" "$tmp/dump"
+then echo "  ok  MINX container (minxdump valid, ROM==min, banked+far symtab)"
+else echo "  FAIL MINX container"; sed -n '1,5p' "$tmp/dump" 2>/dev/null; fail=1; fi
+
 [ "$fail" -eq 0 ] && echo "== banked ROM pipeline GREEN ==" || echo "== ROM pipeline BROKEN =="
 exit "$fail"
