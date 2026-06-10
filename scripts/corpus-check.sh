@@ -46,7 +46,9 @@ fi
 # Normalize: drop the filename-derived `.module` line, the `;(null)` c1mode debug
 # comments, and the SDCC version banner — it embeds the build host OS
 # ("(Linux)" / "(Mac OS X)"), which would make every baseline host-specific.
-normalize() { grep -vE '^\s*\.module|^;\(null\)|^; Version 4\.5\.0' "$1"; }
+# Strip \r too: on Windows the mingw CRT writes the .asm in text mode (CRLF) —
+# line-ending noise, not codegen.
+normalize() { grep -vE '^\s*\.module|^;\(null\)|^; Version 4\.5\.0' "$1" | tr -d '\r'; }
 
 compile() { # $1 = src .c ; $2 = dest normalized asm
   # --c1mode has no preprocessor: strip comments/directives with the host cpp first (-P = no line markers).
