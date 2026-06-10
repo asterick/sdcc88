@@ -40,6 +40,7 @@ extern "C" void cpu_reset(Machine::State& cpu) {
 
 	cpu.status = Machine::STATUS_NORMAL;
 	cpu.osc1_overflow = 0;
+	cpu.vprobe = 0;
 
 	IRQ::reset(cpu);
 	Timers::reset(cpu);
@@ -105,6 +106,9 @@ static inline uint8_t cpu_read_reg(Machine::State& cpu, uint32_t address) {
 	case 0x2030 ... 0x203F:
 	case 0x2048 ... 0x204F:
 		return Timers::read(cpu, address);
+	case 0x2070:
+		// Volatile-probe (harness-only): return the counter, then post-increment.
+		return cpu.vprobe++;
 	default:
 		// open bus: unhandled register reads return the last bus value
 		return cpu.bus_cap;
@@ -123,6 +127,10 @@ static inline void cpu_write_reg(Machine::State& cpu, uint8_t data, uint32_t add
 	case 0x2030 ... 0x203F:
 	case 0x2048 ... 0x204F:
 		Timers::write(cpu, data, address);
+		break ;
+	case 0x2070:
+		// Volatile-probe (harness-only): a write seeds the counter.
+		cpu.vprobe = data;
 		break ;
 	default:
 		// open bus: unhandled register writes are dropped
