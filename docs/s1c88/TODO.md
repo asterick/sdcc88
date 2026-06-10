@@ -142,14 +142,19 @@ which our C impls don't honor). `build-runtime.sh` prefers repo libc sources and
 - **✅ qsort / bsearch — DONE** (now in the lib; the callback ICE below is fixed).
   Validated on the emulator (sort + search through a `__reentrant` comparator) and via
   the `17_fnptr_arg` regression.
-- **[M] #17-printf — Tier 2, partly unblocked.** `sprintf`/`vprintf`/`printf_*` all
-  COMPILE now (the callback ICE is fixed). What remains is the lib integration: a
-  `putchar()` contract decision (the PM has no console — likely emit-to-LCD or the
-  emulator mailbox) and picking a printf variant. `sprintf`-to-buffer is the most useful
-  piece for real games and needs no putchar; it's the natural next add.
-- **[M] #17-setjmp — Tier 2, needs hand asm.** Upstream `_setjmp.c` is mcs51-only
-  (`#include <8051.h>`); an s1c88 `setjmp`/`longjmp` must be written as port asm (save/
-  restore SP, return PC, callee-saved IX/IY).
+- **✅ #17-printf — DONE.** `printf`/`vprintf`/`sprintf`/`vsprintf`/`puts` are in the lib
+  (formatter core `_print_format` from `printf_large`, built `USE_FLOATS=0` — no `%f`, so a
+  `%d`/`%s`/`%x` printf doesn't pull the float routines). `putchar()` contract: the default
+  (repo-owned `device/lib/s1c88/putchar.c`) stores to the minimon debug console
+  (`DEBUG_OUT`, RAM `0x1FF8`); it's a standalone module, so a user `putchar()` (e.g. LCD via
+  PRC) overrides it through ordinary archive selection. This also fixed a latent gap:
+  the **standard headers weren't installed** — `build-runtime.sh` now copies SDCC's
+  `device/include` (stdlib/stdio/string/ctype + the `asm/` trees) to the driver's include
+  dir, so user code can `#include` them. Validated: `tests/diff/cases/sprintf.c` (13 values
+  vs host), `examples/hello` now prints via `printf`, putchar-override confirmed.
+- **[M] #17-setjmp — deferred.** Upstream `_setjmp.c` is mcs51-only (`#include <8051.h>`);
+  an s1c88 `setjmp`/`longjmp` must be written as port asm (save/restore SP, return PC,
+  callee-saved IX/IY). Deferred — rarely needed on this target; pick up on demand.
 - **[L] #17-malloc — deferred by request.** Needs a heap area + `_sdcc_heap` wired into
   crt0/linker; a real design choice on a 4 KB-RAM device.
 
