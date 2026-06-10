@@ -15,13 +15,15 @@
         single chunk-tree binary built for a debugger that has NO filesystem
         access and parses NO structured text. romgen does all the text parsing
         on the host — the linker's .noi (symbols), .map (areas), and sdcc
-        --debug .cdb (line/function records) — and promotes everything to
-        binary tables: a sorted global line table, function extents, symbols,
-        memory areas, and the source files themselves embedded for display.
-        Sidecars are auto-discovered next to in.ihx (same stem); --map/--noi/
-        --cdb override the path (and then must exist). Source files are found
-        next to in.ihx / the cwd / each --srcdir. Format spec:
-        docs/s1c88/minx-format.md; reference reader: tools/minxdump.c.
+        --debug .cdb (line/function/type/variable records) — and promotes
+        everything to binary tables: sparse ROM segments, a sorted global line
+        table, function extents, symbols, memory areas, a type graph, variable
+        locations (register / IX-relative stack / static address), and the
+        source files themselves embedded for display. Sidecars are
+        auto-discovered next to in.ihx (same stem); --map/--noi/--cdb override
+        the path (and then must exist). Source files are found next to in.ihx /
+        the cwd / each --srcdir. Format spec: docs/s1c88/minx-format.md;
+        reference reader: tools/minxdump.c.
 
    Address mapping (both formats): sdcc88 lays banked code at linker address
    (bank<<16)|logic (logic = the 0x8000-0xFFFF window for banks >=1, or the
@@ -37,7 +39,7 @@
    byte, (sym >> 16), is the address the data bus sees). Declare those ranges with
    --far=start-end (repeatable, hex ok); keep far-data banks disjoint from code.
 
-   The ROM image's byte 0 is physical 0x2100 (the cart header), so
+   The flat ROM image's byte 0 is physical 0x2100 (the cart header), so
    file_offset = physical - 0x2100.
 -------------------------------------------------------------------------*/
 #include <stdio.h>
@@ -103,19 +105,43 @@ static int phys_of (uint32_t a, uint32_t *out)
 
    16-byte header, then a flat sequence of chunks. Chunk = 4-byte ASCII id +
    u32 payload size + payload, padded to 4 (pad not counted in size, but part
-   of the enclosing container/file). Container chunks (SRCS, FILE) hold a
+   of the enclosing container/file). Container chunks (ROM, SRCS, FILE) hold a
    sequence of child chunks. Everything little-endian. */
 
 #define MINX_VERSION 1
 #define MINX_HDRSIZE 16
 
-#define SYM_ROM   0x1   /* phys field valid (symbol maps into cart ROM) */
-#define SYM_LOCAL 0x2   /* scoped symbol (a NoICE DEFS record)          */
+#define SYM_ROM    0x1  /* phys field valid (symbol maps into cart ROM) */
+#define SYM_LOCAL  0x2  /* scoped symbol (a NoICE DEFS record)          */
 
-#define AREA_ABS  0x1   /* absolute area */
-#define AREA_OVR  0x2   /* overlay area  */
+#define AREA_ABS   0x1
+#define AREA_OVR   0x2
 
-#define NO_FILE   0xFFFFFFFFu
+/* TYPE record kinds (low byte of kind_flags) */
+enum
+{
+  TK_VOID = 0, TK_CHAR, TK_SHORT, TK_INT, TK_LONG, TK_FLOAT, TK_SBIT,
+  TK_BITFIELD,  /* extra = bit offset | (bit count << 16)  */
+  TK_STRUCT,    /* extra = STRU chunk ordinal              */
+  TK_ARRAY,     /* extra = element count, target = element */
+  TK_FUNCTION,  /* target = return type                    */
+  TK_POINTER    /* extra = cdb space letter, target = pointee */
+};
+#define TF_UNSIGNED 0x100
+
+/* VAR location kinds */
+enum { LOC_NONE = 0, LOC_STATIC, LOC_STACK, LOC_REGS };
+
+/* VAR flags */
+#define VF_FILESTATIC 0x1
+/* bits 8-15: the raw cdb address-space letter */
+
+/* FUNC flags */
+#define FN_FILESTATIC 0x1
+#define FN_INTERRUPT  0x2
+/* bits 8-15: interrupt number; bits 16-23: register bank */
+
+#define NO_REF 0xFFFFFFFFu
 
 static void wle16 (unsigned char *p, uint32_t v) { p[0] = v & 0xFF; p[1] = (v >> 8) & 0xFF; }
 static void wle32 (unsigned char *p, uint32_t v) { wle16 (p, v & 0xFFFF); wle16 (p + 2, v >> 16); }
@@ -316,23 +342,109 @@ static int sym_cmp (const void *a, const void *b)
 }
 
 /* ---- debug records: sdcc --debug .cdb ----
-   We promote the linker-resolved records to binary tables:
-     L:C$<file>$<line>$<level>$<block>:<HEXADDR>   -> line table entry
-     F:G$<name>$...                                -> <name> is a function
-     L:G$<name>$...:<HEXADDR>                      -> function entry address
-     L:XG$<name>$...:<HEXADDR>                     -> function exit label (the
-                                                      final return instruction)
-   Everything else (S:/T: type and variable records) is debugger fidelity we
-   haven't promoted yet — reserved for a future TYPE/VAR chunk pair. */
 
-struct linerec  { uint32_t phys, file, line, rsv; };
-struct funcinfo { char *name; uint32_t entry, end; int have_entry, have_end; };
+   Promoted records (the full grammar is the SDCC manual's "CDB File Format"):
+
+     T:F<module>$<name>[members]                struct/union layout
+     F:<scope>$<lvl>$<blk>(<type>),<spc>,...    function (frame size, interrupt)
+     S:<scope>$<lvl>$<blk>(<type>),<spc>,<onstk>,<offs>[,[regs]]  variable
+     L:C$<file>$<line>$<lvl>$<blk>:<addr>       line table entry
+     L:<scope>:<addr> / L:X<scope>:<addr>       address binding / function exit
+
+   <scope> is G$<name> (global), F<module>$<name> (file-static), or
+   L<module>.<function>$<name> (function-local). Stack offsets are relative to
+   IX, the frame pointer set by the prologue (push ix ; ld ix,sp). */
+
+struct scoperef
+{
+  char kind;              /* 'G', 'F', 'L' */
+  char scopename[200];    /* module, or module.function for 'L' */
+  char name[200];
+  char level[24];         /* raw "<level>_<sub>" token */
+  char block[24];
+};
+
+/* parse "<scope>$<name>$<level>$<block>" starting at p; *rest -> terminator */
+static int parse_scoperef (const char *p, struct scoperef *r, const char **rest)
+{
+  const char *d;
+  size_t n;
+  memset (r, 0, sizeof *r);
+  r->kind = *p;
+  if (r->kind != 'G' && r->kind != 'F' && r->kind != 'L')
+    return -1;
+  p++;
+  d = strchr (p, '$');
+  if (!d) return -1;
+  n = (size_t) (d - p);
+  if (n >= sizeof r->scopename) return -1;
+  memcpy (r->scopename, p, n); r->scopename[n] = '\0';
+  p = d + 1;
+
+  d = strchr (p, '$');
+  if (!d) return -1;
+  n = (size_t) (d - p);
+  if (n == 0 || n >= sizeof r->name) return -1;
+  memcpy (r->name, p, n); r->name[n] = '\0';
+  p = d + 1;
+
+  d = strchr (p, '$');
+  if (!d) return -1;
+  n = (size_t) (d - p);
+  if (n >= sizeof r->level) return -1;
+  memcpy (r->level, p, n); r->level[n] = '\0';
+  p = d + 1;
+
+  n = strcspn (p, "(:,");
+  if (n >= sizeof r->block) return -1;
+  memcpy (r->block, p, n); r->block[n] = '\0';
+  *rest = p + n;
+  return 0;
+}
+
+/* "1_0" -> level 1, sub 0; "0" -> level 0, sub 0 */
+static void parse_level (const char *tok, uint32_t *level, uint32_t *sub)
+{
+  char *us;
+  *level = (uint32_t) strtoul (tok, &us, 10);
+  *sub = (us && *us == '_') ? (uint32_t) strtoul (us + 1, NULL, 10) : 0;
+}
+
+struct typerec  { uint32_t kind_flags, size, target, extra; };
+struct member   { uint32_t name, offset, type; };
+struct structdef
+{
+  char *name;
+  char *rawmembers;          /* the [...] body, parsed in phase B */
+  uint32_t name_off, size;
+  struct member *members;
+  uint32_t n_members, cap_members;
+};
+struct linerec  { uint32_t phys, file, line, scope; };
+struct funcinfo
+{
+  struct scoperef ref;
+  uint32_t entry, end;       /* physical */
+  int have_entry, have_end;
+  uint32_t rettype, frame, flags;
+  uint32_t emit_index;       /* index in the emitted FUNC table */
+};
+struct varinfo
+{
+  struct scoperef ref;
+  uint32_t name, type, levelblock, loc_kind, loc, flags;
+  int is_funcvar;            /* S record whose type is a bare function: skip */
+};
 
 struct cdbinfo
 {
-  struct linerec  *lines; uint32_t n_lines,  cap_lines;
-  struct funcinfo *funcs; uint32_t n_funcs,  cap_funcs;
-  char           **files; uint32_t n_files,  cap_files;
+  struct linerec   *lines;   uint32_t n_lines,   cap_lines;
+  struct funcinfo  *funcs;   uint32_t n_funcs,   cap_funcs;
+  struct varinfo   *vars;    uint32_t n_vars,    cap_vars;
+  struct typerec   *types;   uint32_t n_types,   cap_types;
+  struct structdef *structs; uint32_t n_structs, cap_structs;
+  char            **files;   uint32_t n_files,   cap_files;
+  buf *st;
 };
 
 static uint32_t file_id (struct cdbinfo *ci, const char *name)
@@ -346,79 +458,422 @@ static uint32_t file_id (struct cdbinfo *ci, const char *name)
   return ci->n_files++;
 }
 
-static struct funcinfo *find_func (struct cdbinfo *ci, const char *name, int add)
+static uint32_t type_intern (struct cdbinfo *ci, uint32_t kind_flags, uint32_t size,
+                             uint32_t target, uint32_t extra)
+{
+  uint32_t i;
+  for (i = 0; i < ci->n_types; i++)
+    if (ci->types[i].kind_flags == kind_flags && ci->types[i].size == size
+        && ci->types[i].target == target && ci->types[i].extra == extra)
+      return i;
+  ci->types = grow (ci->types, ci->n_types, &ci->cap_types, sizeof *ci->types);
+  ci->types[ci->n_types].kind_flags = kind_flags;
+  ci->types[ci->n_types].size = size;
+  ci->types[ci->n_types].target = target;
+  ci->types[ci->n_types].extra = extra;
+  return ci->n_types++;
+}
+
+static uint32_t struct_ordinal (struct cdbinfo *ci, const char *name)
+{
+  uint32_t i;
+  for (i = 0; i < ci->n_structs; i++)
+    if (strcmp (ci->structs[i].name, name) == 0)
+      return i;
+  return NO_REF;
+}
+
+/* parse a cdb type chain "{<size>}<tok>,<tok>,...:<sign>"; returns TYPE index.
+   Tokens, right to left (base first): SC/SS/SI/SL/SF/SV/SX primitives,
+   SB<bitoff>$<bits> bitfield, ST<name> struct, then declarators DA<n>d array,
+   DF function, DG/DC/DD/DX/DI/DP pointers (X = __far, 3 bytes). */
+static uint32_t parse_typechain (struct cdbinfo *ci, const char *s, size_t len)
+{
+  char chain[256];
+  uint32_t total = 0;
+  int uns = 0;
+  char *toks[16];
+  int n_toks = 0, t;
+
+  if (len >= sizeof chain) return NO_REF;
+  memcpy (chain, s, len); chain[len] = '\0';
+
+  char *p = chain;
+  if (*p == '{') total = (uint32_t) strtoul (p + 1, &p, 10), p = strchr (p, '}') ? strchr (p, '}') + 1 : p;
+  char *colon = strrchr (p, ':');
+  if (colon) { uns = (colon[1] == 'U'); *colon = '\0'; }
+
+  for (char *tok = strtok (p, ","); tok && n_toks < 16; tok = strtok (NULL, ","))
+    toks[n_toks++] = tok;
+  if (!n_toks) return NO_REF;
+
+  /* base type (last token) */
+  char *base = toks[n_toks - 1];
+  uint32_t kf = 0, size = 0, extra = 0, idx;
+  uint32_t uflag = uns ? TF_UNSIGNED : 0;
+  if      (strcmp (base, "SC") == 0) kf = TK_CHAR  | uflag, size = 1;
+  else if (strcmp (base, "SS") == 0) kf = TK_SHORT | uflag, size = 2;
+  else if (strcmp (base, "SI") == 0) kf = TK_INT   | uflag, size = 2;
+  else if (strcmp (base, "SL") == 0) kf = TK_LONG  | uflag, size = 4;
+  else if (strcmp (base, "SF") == 0) kf = TK_FLOAT, size = 4;
+  else if (strcmp (base, "SV") == 0) kf = TK_VOID,  size = 0;
+  else if (strcmp (base, "SX") == 0) kf = TK_SBIT | uflag, size = 1;
+  else if (strncmp (base, "SB", 2) == 0)
+    {
+      char *d = strchr (base + 2, '$');
+      uint32_t bo = (uint32_t) strtoul (base + 2, NULL, 10);
+      uint32_t bits = d ? (uint32_t) strtoul (d + 1, NULL, 10) : 1;
+      kf = TK_BITFIELD | uflag; size = 1; extra = bo | (bits << 16);
+    }
+  else if (strncmp (base, "ST", 2) == 0)
+    {
+      uint32_t ord = struct_ordinal (ci, base + 2);
+      kf = TK_STRUCT; extra = ord;
+      size = (ord != NO_REF) ? ci->structs[ord].size : 0;
+    }
+  else
+    return NO_REF;
+  idx = type_intern (ci, kf, size, NO_REF, extra);
+
+  /* declarators, innermost first */
+  for (t = n_toks - 2; t >= 0; t--)
+    {
+      char *tok = toks[t];
+      uint32_t prev_size = ci->types[idx].size;
+      if (strncmp (tok, "DA", 2) == 0)
+        {
+          uint32_t count = (uint32_t) strtoul (tok + 2, NULL, 10);
+          idx = type_intern (ci, TK_ARRAY, count * prev_size, idx, count);
+        }
+      else if (strcmp (tok, "DF") == 0)
+        idx = type_intern (ci, TK_FUNCTION, 3, idx, 0);
+      else if (tok[0] == 'D' && tok[1] && !tok[2])
+        {
+          uint32_t psize = (tok[1] == 'X' || tok[1] == 'C' || tok[1] == 'F') ? 3 : 2;
+          idx = type_intern (ci, TK_POINTER, psize, idx, (uint32_t) tok[1]);
+        }
+      else
+        return NO_REF;
+    }
+  if (total && ci->types[idx].size != total && ci->types[idx].kind_flags != TK_STRUCT)
+    {
+      /* trust the cdb's total size for the outermost type */
+      uint32_t kf2 = ci->types[idx].kind_flags;
+      idx = type_intern (ci, kf2, total, ci->types[idx].target, ci->types[idx].extra);
+    }
+  return idx;
+}
+
+/* phase B: parse a struct's raw member text:
+   ({<offset>}S:S$<name>$0_0$0(<typechain>),Z,0,0)... */
+static void parse_members (struct cdbinfo *ci, struct structdef *sd)
+{
+  const char *p = sd->rawmembers;
+  uint32_t maxend = 0;
+
+  while ((p = strstr (p, "({")) != NULL)
+    {
+      uint32_t off = (uint32_t) strtoul (p + 2, NULL, 10);
+      const char *s = strstr (p, "S:S$");
+      if (!s) break;
+      s += 4;
+      const char *d = strchr (s, '$');
+      if (!d) break;
+      char mname[200];
+      size_t nl = (size_t) (d - s);
+      if (nl == 0 || nl >= sizeof mname) break;
+      memcpy (mname, s, nl); mname[nl] = '\0';
+      const char *tp = strchr (d, '(');
+      if (!tp) break;
+      const char *te = strchr (tp, ')');
+      if (!te) break;
+      uint32_t ty = parse_typechain (ci, tp + 1, (size_t) (te - tp - 1));
+
+      sd->members = grow (sd->members, sd->n_members, &sd->cap_members, sizeof *sd->members);
+      sd->members[sd->n_members].name = strtab_add (ci->st, mname);
+      sd->members[sd->n_members].offset = off;
+      sd->members[sd->n_members].type = ty;
+      sd->n_members++;
+      if (ty != NO_REF && off + ci->types[ty].size > maxend)
+        maxend = off + ci->types[ty].size;
+      p = te;
+    }
+  if (sd->size < maxend)
+    sd->size = maxend;
+}
+
+static struct funcinfo *find_func (struct cdbinfo *ci, const struct scoperef *r, int add)
 {
   uint32_t i;
   for (i = 0; i < ci->n_funcs; i++)
-    if (strcmp (ci->funcs[i].name, name) == 0)
+    if (ci->funcs[i].ref.kind == r->kind
+        && strcmp (ci->funcs[i].ref.scopename, r->scopename) == 0
+        && strcmp (ci->funcs[i].ref.name, r->name) == 0)
       return &ci->funcs[i];
   if (!add) return NULL;
   ci->funcs = grow (ci->funcs, ci->n_funcs, &ci->cap_funcs, sizeof *ci->funcs);
   memset (&ci->funcs[ci->n_funcs], 0, sizeof ci->funcs[0]);
-  ci->funcs[ci->n_funcs].name = xstrdup (name);
+  ci->funcs[ci->n_funcs].ref = *r;
+  ci->funcs[ci->n_funcs].rettype = NO_REF;
+  ci->funcs[ci->n_funcs].emit_index = NO_REF;
   return &ci->funcs[ci->n_funcs++];
+}
+
+/* match a var to an L: address record: same scope + name + level + block */
+static struct varinfo *find_var (struct cdbinfo *ci, const struct scoperef *r)
+{
+  uint32_t i;
+  for (i = 0; i < ci->n_vars; i++)
+    if (ci->vars[i].ref.kind == r->kind
+        && strcmp (ci->vars[i].ref.scopename, r->scopename) == 0
+        && strcmp (ci->vars[i].ref.name, r->name) == 0
+        && strcmp (ci->vars[i].ref.level, r->level) == 0
+        && strcmp (ci->vars[i].ref.block, r->block) == 0)
+      return &ci->vars[i];
+  return NULL;
+}
+
+/* S:/F: record tail after the type ")": ",<space>,<onstack>,<offset>[,[regs]]"
+   (F records continue ",<interrupt>,<intno>,<regbank>") */
+static int parse_tail (const char *p, char *space, int *onstack, long *offs, char *regs, size_t regsz)
+{
+  if (*p != ',') return -1;
+  *space = p[1];
+  p += 2;
+  if (*p != ',') return -1;
+  *onstack = (int) strtol (p + 1, (char **) &p, 10);
+  if (*p != ',') return -1;
+  *offs = strtol (p + 1, (char **) &p, 10);
+  regs[0] = '\0';
+  if (p[0] == ',' && p[1] == '[')
+    {
+      const char *e = strchr (p + 2, ']');
+      if (e && (size_t) (e - p - 2) < regsz)
+        {
+          memcpy (regs, p + 2, (size_t) (e - p - 2));
+          regs[e - p - 2] = '\0';
+        }
+    }
+  return 0;
 }
 
 static void parse_cdb (const char *text, size_t textlen, struct cdbinfo *ci)
 {
-  const char *p = text, *end = text + textlen;
+  const char *p;
+  int pass;
 
-  while (p < end)
+  /* phase A: register struct names (so ST<name> refs resolve in any order) */
+  for (p = text; p < text + textlen; )
     {
-      const char *eol = memchr (p, '\n', (size_t) (end - p));
-      size_t linelen = eol ? (size_t) (eol - p) : (size_t) (end - p);
-      char ln[512];
-      if (linelen >= sizeof ln) { p = eol ? eol + 1 : end; continue; }
-      memcpy (ln, p, linelen);
-      ln[linelen] = '\0';
-      while (linelen && (ln[linelen-1] == '\r' || ln[linelen-1] == ' ')) ln[--linelen] = '\0';
-      p = eol ? eol + 1 : end;
-
-      if (strncmp (ln, "F:G$", 4) == 0)
+      const char *eol = memchr (p, '\n', (size_t) (text + textlen - p));
+      size_t linelen = eol ? (size_t) (eol - p) : (size_t) (text + textlen - p);
+      if (linelen > 4 && memcmp (p, "T:F", 3) == 0)
         {
-          char *dollar = strchr (ln + 4, '$');
-          if (!dollar) continue;
-          *dollar = '\0';
-          find_func (ci, ln + 4, 1);
+          const char *d = memchr (p + 3, '$', linelen - 3);
+          const char *lb = d ? memchr (d, '[', linelen - (size_t)(d - p)) : NULL;
+          const char *rb = lb ? memchr (lb, ']', linelen - (size_t)(lb - p)) : NULL;
+          if (d && lb && rb)
+            {
+              char name[200];
+              size_t nl = (size_t) (lb - d - 1);
+              if (nl > 0 && nl < sizeof name)
+                {
+                  memcpy (name, d + 1, nl); name[nl] = '\0';
+                  if (struct_ordinal (ci, name) == NO_REF)
+                    {
+                      ci->structs = grow (ci->structs, ci->n_structs, &ci->cap_structs, sizeof *ci->structs);
+                      memset (&ci->structs[ci->n_structs], 0, sizeof ci->structs[0]);
+                      ci->structs[ci->n_structs].name = xstrdup (name);
+                      ci->structs[ci->n_structs].name_off = strtab_add (ci->st, name);
+                      char *raw = malloc ((size_t) (rb - lb));
+                      if (!raw) { fprintf (stderr, "romgen: out of memory\n"); exit (2); }
+                      memcpy (raw, lb + 1, (size_t) (rb - lb - 1));
+                      raw[rb - lb - 1] = '\0';
+                      ci->structs[ci->n_structs].rawmembers = raw;
+                      ci->n_structs++;
+                    }
+                }
+            }
         }
-      else if (strncmp (ln, "L:C$", 4) == 0)
-        {
-          /* L:C$hello.c$26$0_0$12:21E4 */
-          char *file = ln + 4;
-          char *d1 = strchr (file, '$');
-          if (!d1) continue;
-          char *colon = strrchr (d1 + 1, ':');
-          if (!colon) continue;
-          *d1 = '\0';
-          uint32_t lno  = (uint32_t) strtoul (d1 + 1, NULL, 10);
-          uint32_t addr = (uint32_t) strtoul (colon + 1, NULL, 16);
-          uint32_t phys;
-          if (lno == 0 || phys_of (addr, &phys) != 0)
-            continue;
-          ci->lines = grow (ci->lines, ci->n_lines, &ci->cap_lines, sizeof *ci->lines);
-          ci->lines[ci->n_lines].phys = phys;
-          ci->lines[ci->n_lines].file = file_id (ci, file);
-          ci->lines[ci->n_lines].line = lno;
-          ci->lines[ci->n_lines].rsv  = 0;
-          ci->n_lines++;
-        }
-      else if (strncmp (ln, "L:G$", 4) == 0 || strncmp (ln, "L:XG$", 5) == 0)
-        {
-          int is_end = (ln[2] == 'X');
-          char *name = ln + (is_end ? 5 : 4);
-          char *dollar = strchr (name, '$');
-          char *colon = strrchr (name, ':');
-          if (!dollar || !colon || colon < dollar) continue;
-          *dollar = '\0';
-          uint32_t addr = (uint32_t) strtoul (colon + 1, NULL, 16);
-          uint32_t phys;
-          struct funcinfo *fn = find_func (ci, name, 0);
-          if (!fn || phys_of (addr, &phys) != 0)
-            continue;
-          if (is_end) { fn->end = phys;   fn->have_end = 1; }
-          else        { fn->entry = phys; fn->have_entry = 1; }
-        }
+      p = eol ? eol + 1 : text + textlen;
     }
+
+  /* phase A2: struct sizes from the members' own {total} chain sizes — done
+     before any TK_STRUCT type record is interned, so declaration order (and
+     struct-in-struct nesting) can't yield a zero-sized struct type */
+  for (uint32_t s = 0; s < ci->n_structs; s++)
+    {
+      struct structdef *sd = &ci->structs[s];
+      const char *m = sd->rawmembers;
+      uint32_t maxend = 0;
+      while ((m = strstr (m, "({")) != NULL)
+        {
+          uint32_t off = (uint32_t) strtoul (m + 2, NULL, 10);
+          const char *tp = strstr (m + 2, "({");      /* the member's typechain */
+          if (!tp) break;
+          uint32_t total = (uint32_t) strtoul (tp + 2, NULL, 10);
+          if (off + total > maxend) maxend = off + total;
+          m = tp + 2;
+        }
+      sd->size = maxend;
+    }
+
+  /* phase B: member layouts */
+  for (uint32_t s = 0; s < ci->n_structs; s++)
+    parse_members (ci, &ci->structs[s]);
+
+  /* phase C, two passes: F:/S: records first, then L: bindings (the linker
+     appends L records, but don't depend on the order) */
+  for (pass = 0; pass < 2; pass++)
+    for (p = text; p < text + textlen; )
+      {
+        const char *eol = memchr (p, '\n', (size_t) (text + textlen - p));
+        size_t linelen = eol ? (size_t) (eol - p) : (size_t) (text + textlen - p);
+        char ln[512];
+        const char *next = eol ? eol + 1 : text + textlen;
+        if (linelen >= sizeof ln) { p = next; continue; }
+        memcpy (ln, p, linelen);
+        ln[linelen] = '\0';
+        while (linelen && (ln[linelen-1] == '\r' || ln[linelen-1] == ' ')) ln[--linelen] = '\0';
+        p = next;
+
+        if (pass == 0 && (ln[0] == 'F' || ln[0] == 'S') && ln[1] == ':')
+          {
+            struct scoperef r;
+            const char *rest;
+            if (parse_scoperef (ln + 2, &r, &rest) != 0 || *rest != '(')
+              continue;
+            const char *te = strchr (rest, ')');
+            if (!te) continue;
+            uint32_t ty = parse_typechain (ci, rest + 1, (size_t) (te - rest - 1));
+            char space = 0, regs[64];
+            int onstack = 0;
+            long offs = 0;
+            if (parse_tail (te + 1, &space, &onstack, &offs, regs, sizeof regs) != 0)
+              continue;
+
+            int is_function = (ty != NO_REF
+                               && (ci->types[ty].kind_flags & 0xFF) == TK_FUNCTION);
+            if (ln[0] == 'F')
+              {
+                /* F:<scope>(type),<spc>,<onstk>,<frame>,<interrupt>,<intno>,<regbank> */
+                struct funcinfo *fn = find_func (ci, &r, 1);
+                fn->rettype = (ty != NO_REF) ? ci->types[ty].target : NO_REF;
+                fn->frame = (uint32_t) offs;
+                if (r.kind == 'F') fn->flags |= FN_FILESTATIC;
+                const char *q = te + 1;
+                int field = 0, intr = 0, intno = 0, rbank = 0;
+                for (; *q; q++)
+                  if (*q == ',')
+                    {
+                      field++;
+                      if (field == 4) intr  = (int) strtol (q + 1, NULL, 10);
+                      if (field == 5) intno = (int) strtol (q + 1, NULL, 10);
+                      if (field == 6) rbank = (int) strtol (q + 1, NULL, 10);
+                    }
+                if (intr) fn->flags |= FN_INTERRUPT;
+                fn->flags |= ((uint32_t) (intno & 0xFF) << 8) | ((uint32_t) (rbank & 0xFF) << 16);
+              }
+            else
+              {
+                if (is_function)
+                  {
+                    /* duplicate of the F record (frame size etc.) — FUNC covers it */
+                    if (!find_func (ci, &r, 0))
+                      {
+                        struct funcinfo *fn = find_func (ci, &r, 1);
+                        fn->rettype = ci->types[ty].target;
+                        fn->frame = (uint32_t) offs;
+                        if (r.kind == 'F') fn->flags |= FN_FILESTATIC;
+                      }
+                    continue;
+                  }
+                uint32_t level, sub;
+                parse_level (r.level, &level, &sub);
+                ci->vars = grow (ci->vars, ci->n_vars, &ci->cap_vars, sizeof *ci->vars);
+                struct varinfo *v = &ci->vars[ci->n_vars++];
+                memset (v, 0, sizeof *v);
+                v->ref = r;
+                v->name = strtab_add (ci->st, r.name);
+                v->type = ty;
+                v->levelblock = (level & 0xFF) | ((sub & 0xFF) << 8)
+                              | (((uint32_t) strtoul (r.block, NULL, 10) & 0xFFFF) << 16);
+                v->flags = ((uint32_t) (unsigned char) space << 8)
+                         | (r.kind == 'F' ? VF_FILESTATIC : 0);
+                if (onstack)
+                  { v->loc_kind = LOC_STACK; v->loc = (uint32_t) offs; }
+                else if (space == 'R')
+                  {
+                    if (regs[0]) { v->loc_kind = LOC_REGS; v->loc = strtab_add (ci->st, regs); }
+                    else v->loc_kind = LOC_NONE;
+                  }
+                else
+                  v->loc_kind = LOC_NONE;   /* static: address bound by an L record */
+              }
+          }
+        else if (pass == 1 && strncmp (ln, "L:C$", 4) == 0)
+          {
+            /* L:C$<file>$<line>$<level>$<block>:<addr> */
+            char *file = ln + 4;
+            char *d1 = strchr (file, '$');
+            if (!d1) continue;
+            char *d2 = strchr (d1 + 1, '$');
+            char *colon = strrchr (d1 + 1, ':');
+            if (!colon) continue;
+            *d1 = '\0';
+            uint32_t lno = (uint32_t) strtoul (d1 + 1, NULL, 10);
+            uint32_t level = 0, sub = 0, block = 0;
+            if (d2 && d2 < colon)
+              {
+                parse_level (d2 + 1, &level, &sub);
+                char *d3 = strchr (d2 + 1, '$');
+                if (d3 && d3 < colon)
+                  block = (uint32_t) strtoul (d3 + 1, NULL, 10);
+              }
+            uint32_t addr = (uint32_t) strtoul (colon + 1, NULL, 16);
+            uint32_t phys;
+            if (lno == 0 || phys_of (addr, &phys) != 0)
+              continue;
+            ci->lines = grow (ci->lines, ci->n_lines, &ci->cap_lines, sizeof *ci->lines);
+            ci->lines[ci->n_lines].phys = phys;
+            ci->lines[ci->n_lines].file = file_id (ci, file);
+            ci->lines[ci->n_lines].line = lno;
+            ci->lines[ci->n_lines].scope = (block & 0xFFFF) | ((level & 0xFF) << 16)
+                                         | ((sub & 0xFF) << 24);
+            ci->n_lines++;
+          }
+        else if (pass == 1 && ln[0] == 'L' && ln[1] == ':' && ln[2] != 'A')
+          {
+            /* L:<scope>:<addr> (address binding) or L:X<scope>:<addr> (fn exit) */
+            int is_end = (ln[2] == 'X');
+            struct scoperef r;
+            const char *rest;
+            if (parse_scoperef (ln + (is_end ? 3 : 2), &r, &rest) != 0 || *rest != ':')
+              continue;
+            uint32_t addr = (uint32_t) strtoul (rest + 1, NULL, 16);
+            struct funcinfo *fn = find_func (ci, &r, 0);
+            if (fn)
+              {
+                uint32_t phys;
+                if (phys_of (addr, &phys) != 0)
+                  continue;
+                if (is_end) { fn->end = phys;   fn->have_end = 1; }
+                else        { fn->entry = phys; fn->have_entry = 1; }
+              }
+            else if (!is_end)
+              {
+                struct varinfo *v = find_var (ci, &r);
+                if (v && v->loc_kind == LOC_NONE)
+                  {
+                    /* static data: store the bus address (physical for ROM-
+                       mapped const data; RAM/absolute addresses unchanged) */
+                    uint32_t phys;
+                    v->loc_kind = LOC_STATIC;
+                    v->loc = (phys_of (addr, &phys) == 0) ? phys : addr;
+                  }
+              }
+          }
+      }
 }
 
 static int line_cmp (const void *a, const void *b)
@@ -434,7 +889,7 @@ static int func_cmp (const void *a, const void *b)
 {
   const struct funcinfo *x = a, *y = b;
   if (x->entry != y->entry) return x->entry < y->entry ? -1 : 1;
-  return strcmp (x->name, y->name);
+  return strcmp (x->ref.name, y->ref.name);
 }
 
 /* ---- areas: the linker .map area table ----
@@ -559,6 +1014,7 @@ int main (int argc, char **argv)
   if (!f) { perror (inpath); return 2; }
 
   unsigned char *img = NULL;
+  unsigned char *wr = NULL;   /* parallel map: 1 = byte was written (SEG runs) */
   size_t cap = 0, size = 0;   /* size = highest written offset + 1 */
   uint32_t hi = 0;            /* extended linear address (high 16 bits) */
   char line[600];             /* a hex record is <= 0xFF*2 + overhead */
@@ -614,10 +1070,16 @@ int main (int argc, char **argv)
                   ncap += ncap / 2;          /* grow with headroom */
                   unsigned char *ni = realloc (img, ncap);
                   if (!ni) { fprintf (stderr, "romgen: out of memory\n"); rc = 2; break; }
-                  memset (ni + cap, 0xFF, ncap - cap);   /* unused ROM = 0xFF */
-                  img = ni; cap = ncap;
+                  img = ni;
+                  unsigned char *nw = realloc (wr, ncap);
+                  if (!nw) { fprintf (stderr, "romgen: out of memory\n"); rc = 2; break; }
+                  wr = nw;
+                  memset (img + cap, 0xFF, ncap - cap);   /* unused ROM = 0xFF */
+                  memset (wr + cap, 0, ncap - cap);
+                  cap = ncap;
                 }
               img[off] = (unsigned char) val;
+              wr[off] = 1;
               if (off + 1 > size) size = off + 1;
               { unsigned bank = (unsigned) (phys / 0x8000u); if (bank < 2048) bankhit[bank] = 1; }
             }
@@ -627,7 +1089,7 @@ int main (int argc, char **argv)
         break;
     }
   fclose (f);
-  if (rc) { free (img); return rc; }
+  if (rc) { free (img); free (wr); return rc; }
 
   int n_banks = 0, bi;
   for (bi = 0; bi < 2048; bi++)
@@ -637,11 +1099,11 @@ int main (int argc, char **argv)
     {
       /* ---- flat .min ---- */
       FILE *o = fopen (outpath, "wb");
-      if (!o) { perror (outpath); free (img); return 2; }
-      if (size && fwrite (img, 1, size, o) != size) { perror (outpath); fclose (o); free (img); return 2; }
+      if (!o) { perror (outpath); free (img); free (wr); return 2; }
+      if (size && fwrite (img, 1, size, o) != size) { perror (outpath); fclose (o); free (img); free (wr); return 2; }
       fclose (o);
       printf ("wrote %s (%zu bytes, %d banks touched)\n", outpath, size, n_banks);
-      free (img);
+      free (img); free (wr);
       return 0;
     }
 
@@ -652,11 +1114,12 @@ int main (int argc, char **argv)
   struct minxsym *syms = NULL;
   struct arearec *areas = NULL;
   struct cdbinfo ci;
-  uint32_t n_syms = 0, n_areas = 0, n_embedded_src = 0, n_funcs_emitted = 0;
+  uint32_t n_syms = 0, n_areas = 0, n_embedded_src = 0, n_funcs_emitted = 0, n_segs = 0, n_vars_emitted = 0;
   size_t p;
   char tmp[256];
 
   memset (&ci, 0, sizeof ci);
+  ci.st = &strtab;
 
   /* sidecars: explicit paths must exist; auto-discovered ones are optional */
   struct { const char *arg, *ext, *what; unsigned char **dat; size_t *sz; } side[] = {
@@ -670,7 +1133,7 @@ int main (int argc, char **argv)
         {
           *side[i].dat = read_file (side[i].arg, side[i].sz);
           if (!*side[i].dat)
-            { fprintf (stderr, "romgen: cannot read --%s file '%s'\n", side[i].what, side[i].arg); free (img); return 2; }
+            { fprintf (stderr, "romgen: cannot read --%s file '%s'\n", side[i].what, side[i].arg); return 2; }
         }
       else
         {
@@ -698,10 +1161,22 @@ int main (int argc, char **argv)
   if (ci.n_funcs)
     qsort (ci.funcs, ci.n_funcs, sizeof *ci.funcs, func_cmp);
 
-  /* ROM */
+  /* ROM — container of sparse SEG runs (only bytes the program defines) */
   p = ck_open (&body, "ROM ");
-  buf_u32 (&body, CART_BASE);
-  buf_put (&body, img, size);
+  {
+    size_t off = 0;
+    while (off < size)
+      {
+        if (!wr[off]) { off++; continue; }
+        size_t start = off;
+        while (off < size && wr[off]) off++;
+        size_t sp2 = ck_open (&body, "SEG ");
+        buf_u32 (&body, (uint32_t) (CART_BASE + start));
+        buf_put (&body, img + start, off - start);
+        ck_close (&body, sp2);
+        n_segs++;
+      }
+  }
   ck_close (&body, p);
 
   /* AREA */
@@ -731,6 +1206,37 @@ int main (int argc, char **argv)
       free (rec.p);
     }
 
+  /* TYPE — the deduped type graph */
+  if (ci.n_types)
+    {
+      buf rec = { NULL, 0, 0 };
+      for (i = 0; i < (int) ci.n_types; i++)
+        {
+          buf_u32 (&rec, ci.types[i].kind_flags);  buf_u32 (&rec, ci.types[i].size);
+          buf_u32 (&rec, ci.types[i].target);      buf_u32 (&rec, ci.types[i].extra);
+        }
+      ck_blob (&body, "TYPE", rec.p, rec.len);
+      free (rec.p);
+    }
+
+  /* STRU — one chunk per struct/union, ordinal order (TK_STRUCT.extra refs) */
+  for (i = 0; i < (int) ci.n_structs; i++)
+    {
+      struct structdef *sd = &ci.structs[i];
+      p = ck_open (&body, "STRU");
+      buf_u32 (&body, sd->name_off);
+      buf_u32 (&body, sd->size);
+      buf_u32 (&body, sd->n_members);
+      for (uint32_t m = 0; m < sd->n_members; m++)
+        {
+          buf_u32 (&body, sd->members[m].name);
+          buf_u32 (&body, sd->members[m].offset);
+          buf_u32 (&body, sd->members[m].type);
+          buf_u32 (&body, 0);
+        }
+      ck_close (&body, p);
+    }
+
   /* LINE — the global line table, sorted by physical address */
   if (ci.n_lines)
     {
@@ -738,7 +1244,7 @@ int main (int argc, char **argv)
       for (i = 0; i < (int) ci.n_lines; i++)
         {
           buf_u32 (&rec, ci.lines[i].phys);  buf_u32 (&rec, ci.lines[i].file);
-          buf_u32 (&rec, ci.lines[i].line);  buf_u32 (&rec, 0);
+          buf_u32 (&rec, ci.lines[i].line);  buf_u32 (&rec, ci.lines[i].scope);
         }
       ck_blob (&body, "LINE", rec.p, rec.len);
       free (rec.p);
@@ -752,20 +1258,76 @@ int main (int argc, char **argv)
         {
           struct funcinfo *fn = &ci.funcs[i];
           if (!fn->have_entry) continue;
-          uint32_t file = NO_FILE, j;
+          uint32_t file = NO_REF, j;
           uint32_t fend = fn->have_end ? fn->end : fn->entry;
           for (j = 0; j < ci.n_lines; j++)
             if (ci.lines[j].phys >= fn->entry && ci.lines[j].phys <= fend)
               { file = ci.lines[j].file; break; }
-          buf_u32 (&rec, strtab_add (&strtab, fn->name));
+          buf_u32 (&rec, strtab_add (&strtab, fn->ref.name));
           buf_u32 (&rec, fn->entry);
           buf_u32 (&rec, fend);
           buf_u32 (&rec, file);
-          n_funcs_emitted++;
+          buf_u32 (&rec, fn->rettype);
+          buf_u32 (&rec, fn->frame);
+          buf_u32 (&rec, fn->flags);
+          buf_u32 (&rec, 0);
+          fn->emit_index = n_funcs_emitted++;
         }
       if (n_funcs_emitted)
         ck_blob (&body, "FUNC", rec.p, rec.len);
       free (rec.p);
+    }
+
+  /* VAR — globals + locals, sorted by (scope function, name). Local scope is
+     resolved by function name (var scope "module.func" -> FUNC table index). */
+  if (ci.n_vars)
+    {
+      struct emitvar { uint32_t scope, name, type, levelblock, loc_kind, loc, flags; };
+      struct emitvar *ev = malloc ((size_t) ci.n_vars * sizeof *ev);
+      if (!ev) { fprintf (stderr, "romgen: out of memory\n"); exit (2); }
+      for (i = 0; i < (int) ci.n_vars; i++)
+        {
+          struct varinfo *v = &ci.vars[i];
+          uint32_t scope = NO_REF;
+          if (v->ref.kind == 'L')
+            {
+              const char *fname = strrchr (v->ref.scopename, '.');
+              fname = fname ? fname + 1 : v->ref.scopename;
+              for (uint32_t j = 0; j < ci.n_funcs; j++)
+                if (ci.funcs[j].emit_index != NO_REF
+                    && strcmp (ci.funcs[j].ref.name, fname) == 0)
+                  { scope = ci.funcs[j].emit_index; break; }
+            }
+          ev[n_vars_emitted].scope = scope;
+          ev[n_vars_emitted].name = v->name;
+          ev[n_vars_emitted].type = v->type;
+          ev[n_vars_emitted].levelblock = v->levelblock;
+          ev[n_vars_emitted].loc_kind = v->loc_kind;
+          ev[n_vars_emitted].loc = v->loc;
+          ev[n_vars_emitted].flags = v->flags;
+          n_vars_emitted++;
+        }
+      /* sort: globals (scope NO_REF) last, else by emitted FUNC index, then name */
+      for (i = 1; i < (int) n_vars_emitted; i++)     /* insertion sort, n is small */
+        {
+          struct emitvar key = ev[i];
+          int j = i - 1;
+          while (j >= 0 && (ev[j].scope > key.scope
+                            || (ev[j].scope == key.scope && ev[j].name > key.name)))
+            { ev[j + 1] = ev[j]; j--; }
+          ev[j + 1] = key;
+        }
+      buf rec = { NULL, 0, 0 };
+      for (i = 0; i < (int) n_vars_emitted; i++)
+        {
+          buf_u32 (&rec, ev[i].name);       buf_u32 (&rec, ev[i].scope);
+          buf_u32 (&rec, ev[i].type);       buf_u32 (&rec, ev[i].levelblock);
+          buf_u32 (&rec, ev[i].loc_kind);   buf_u32 (&rec, ev[i].loc);
+          buf_u32 (&rec, ev[i].flags);      buf_u32 (&rec, 0);
+        }
+      ck_blob (&body, "VAR ", rec.p, rec.len);
+      free (rec.p);
+      free (ev);
     }
 
   /* SRCS — one FILE container per source file: NAME + (unless --no-src) TEXT.
@@ -815,7 +1377,7 @@ int main (int argc, char **argv)
       size_t esz;
       unsigned char *edat = read_file (embeds[i].path, &esz);
       if (!edat)
-        { fprintf (stderr, "romgen: cannot read --embed file '%s'\n", embeds[i].path); free (img); return 2; }
+        { fprintf (stderr, "romgen: cannot read --embed file '%s'\n", embeds[i].path); return 2; }
       p = ck_open (&body, "USR ");
       buf_u32 (&body, strtab_add (&strtab, embeds[i].name));
       buf_put (&body, edat, esz);
@@ -826,23 +1388,29 @@ int main (int argc, char **argv)
   /* NOTE — (key,val) string pairs; deterministic (no timestamps) */
   {
     buf rec = { NULL, 0, 0 };
-    struct { const char *k; const char *v; } kv[8];
+    struct { const char *k; const char *v; } kv[12];
     int nkv = 0;
-    char vsrc[64], vrom[32], vbank[16], vsym[16], vline[16], vfunc[16];
+    char vbase[16], vrom[32], vbank[16], vseg[16], vsym[16], vline[16], vfunc[16], vvar[16], vtype[16];
+    snprintf (vbase, sizeof vbase, "0x%04x", CART_BASE);
     snprintf (vrom,  sizeof vrom,  "%zu", size);
     snprintf (vbank, sizeof vbank, "%d", n_banks);
+    snprintf (vseg,  sizeof vseg,  "%u", n_segs);
     snprintf (vsym,  sizeof vsym,  "%u", n_syms);
     snprintf (vline, sizeof vline, "%u", ci.n_lines);
     snprintf (vfunc, sizeof vfunc, "%u", n_funcs_emitted);
-    snprintf (vsrc,  sizeof vsrc,  "0x%04x", CART_BASE);
+    snprintf (vvar,  sizeof vvar,  "%u", n_vars_emitted);
+    snprintf (vtype, sizeof vtype, "%u", ci.n_types);
     kv[nkv].k = "generator"; kv[nkv++].v = "romgen (sdcc88)";
     kv[nkv].k = "source";    kv[nkv++].v = inpath;
-    kv[nkv].k = "cart-base"; kv[nkv++].v = vsrc;
+    kv[nkv].k = "cart-base"; kv[nkv++].v = vbase;
     kv[nkv].k = "rom-bytes"; kv[nkv++].v = vrom;
     kv[nkv].k = "banks";     kv[nkv++].v = vbank;
+    kv[nkv].k = "segments";  kv[nkv++].v = vseg;
     kv[nkv].k = "symbols";   kv[nkv++].v = vsym;
     kv[nkv].k = "lines";     kv[nkv++].v = vline;
     kv[nkv].k = "functions"; kv[nkv++].v = vfunc;
+    kv[nkv].k = "variables"; kv[nkv++].v = vvar;
+    kv[nkv].k = "types";     kv[nkv++].v = vtype;
     for (i = 0; i < nkv; i++)
       {
         buf_u32 (&rec, strtab_add (&strtab, kv[i].k));
@@ -866,7 +1434,7 @@ int main (int argc, char **argv)
   {
     unsigned char hdr[MINX_HDRSIZE];
     FILE *o = fopen (outpath, "wb");
-    if (!o) { perror (outpath); free (img); return 2; }
+    if (!o) { perror (outpath); return 2; }
     memcpy (hdr, "MINX", 4);
     wle16 (hdr + 4, MINX_VERSION);
     wle16 (hdr + 6, 0);
@@ -875,18 +1443,21 @@ int main (int argc, char **argv)
     if (fwrite (hdr, 1, sizeof hdr, o) != sizeof hdr
         || (body.len && fwrite (body.p, 1, body.len, o) != body.len)
         || fclose (o) != 0)
-      { perror (outpath); free (img); return 2; }
+      { perror (outpath); return 2; }
   }
 
-  printf ("wrote %s (minx: %zu ROM bytes, %d banks, %u symbols, %u lines, %u functions, %u/%u sources embedded)\n",
-          outpath, size, n_banks, n_syms, ci.n_lines, n_funcs_emitted, n_embedded_src, ci.n_files);
+  printf ("wrote %s (minx: %zu ROM bytes in %u segments, %d banks, %u symbols, %u lines, "
+          "%u functions, %u variables, %u types, %u/%u sources embedded)\n",
+          outpath, size, n_segs, n_banks, n_syms, ci.n_lines,
+          n_funcs_emitted, n_vars_emitted, ci.n_types, n_embedded_src, ci.n_files);
 
-  free (img);
+  free (img); free (wr);
   free (mapdat); free (noidat); free (cdbdat);
   free (syms); free (areas);
   for (i = 0; i < (int) ci.n_files; i++) free (ci.files[i]);
-  for (i = 0; i < (int) ci.n_funcs; i++) free (ci.funcs[i].name);
-  free (ci.files); free (ci.funcs); free (ci.lines);
+  for (i = 0; i < (int) ci.n_structs; i++)
+    { free (ci.structs[i].name); free (ci.structs[i].rawmembers); free (ci.structs[i].members); }
+  free (ci.files); free (ci.funcs); free (ci.vars); free (ci.lines); free (ci.types); free (ci.structs);
   free (body.p); free (strtab.p);
   return 0;
 }

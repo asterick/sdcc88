@@ -1,18 +1,19 @@
 # The MINX container format (`.minx`)
 
 `romgen`'s second output format: a single binary that carries everything a
-**debugging emulator** needs — the bootable ROM image, symbols, memory areas, a
-source-line table, function extents, and the source files themselves — in one
-file. It is designed for a consumer that has **no filesystem access** and
-**parses no structured text**: `romgen` does all the text parsing on the host
-(the linker's `.noi`/`.map`, sdcc's `--debug` `.cdb`) and promotes the results
-to sorted binary tables; the only text inside is *display-only* (source code,
+**debugging emulator** needs — the ROM content as sparse segments, symbols,
+memory areas, a source-line table, function extents, a full type graph,
+variable locations, and the source files themselves — in one file. It is
+designed for a consumer that has **no filesystem access** and **parses no
+structured text**: `romgen` does all the text parsing on the host (the
+linker's `.noi`/`.map`, sdcc's `--debug` `.cdb`) and promotes the results to
+sorted binary tables; the only text inside is *display-only* (source code,
 names) and is reached through binary indices.
 
 ```bash
 sdcc -ms1c88 --debug game.c -o game.ihx
 romgen game.ihx game.min     # flat ROM, what emulators/flash carts consume
-romgen game.ihx game.minx    # MINX: ROM + symbols + lines + functions + sources
+romgen game.ihx game.minx    # MINX: segments + symbols + lines + funcs + types + vars + sources
 ```
 
 Container mode is selected by a `.minx` output extension or `--minx`.
@@ -21,11 +22,12 @@ physical-address field in the debug tables.
 
 Inputs are **auto-discovered** next to the input by swapping the `.ihx`
 extension: `game.noi` (symbols; the sdcc driver always passes `-j`), `game.map`
-(areas; `-m` always passed), and `game.cdb` (line/function records; present when
-compiled with `--debug`). Missing inputs just mean the corresponding chunks are
-absent. Explicit paths override discovery and then *must* exist. Source files
-are located by their `.cdb`-recorded names — tried as-is, next to the `.ihx`,
-then under each `--srcdir=` — and embedded verbatim (`--no-src` to skip).
+(areas; `-m` always passed), and `game.cdb` (line/function/type/variable
+records; present when compiled with `--debug`). Missing inputs just mean the
+corresponding chunks are absent. Explicit paths override discovery and then
+*must* exist. Source files are located by their `.cdb`-recorded names — tried
+as-is, next to the `.ihx`, then under each `--srcdir=` — and embedded verbatim
+(`--no-src` to skip).
 
 ```
 romgen in.ihx out.minx [--minx] [--far=start-end]...
@@ -34,9 +36,10 @@ romgen in.ihx out.minx [--minx] [--far=start-end]...
 ```
 
 Producer: `tools/romgen.c`. **Reference reader / validator: `tools/minxdump.c`**
-(`minxdump file.minx` validates + dumps; `--rom=out.min` extracts the flat ROM).
-Tests: `scripts/rom-smoke.sh` (banked/far mappings) and `scripts/minx-smoke.sh`
-(C-level debug info end-to-end).
+(`minxdump file.minx` validates + dumps; `--rom=out.min` reconstructs the flat
+ROM byte-identically). Tests: `scripts/rom-smoke.sh` (banked/far mappings) and
+`scripts/minx-smoke.sh` (C-level debug info end-to-end). `examples/hello`
+builds a `.minx` by default.
 
 ## Design
 
@@ -47,15 +50,22 @@ Tests: `scripts/rom-smoke.sh` (banked/far mappings) and `scripts/minx-smoke.sh`
   anywhere, and readers skip what they don't know by size.
 - **Tree for structure, flat tables for lookups.** Anything a debugger touches
   per-step (PC→line, PC→function, address→symbol) is a contiguous array of
-  fixed 16-byte records **sorted by address** — one binary search, no tree walk,
-  no allocation. The tree carries the repeating/nested payloads (per-file source
-  text, future per-scope variables).
+  fixed-stride records **sorted by address** — one binary search, no tree walk,
+  no allocation. The tree carries the repeating/nested payloads (ROM segments,
+  per-file source text).
+- **Sparse ROM.** The ROM is stored as the byte runs the program actually
+  defines (`SEG` records), not a flat `0xFF`-padded image — file size is
+  proportional to content (a mostly-empty multi-bank layout costs nothing),
+  and the emulator knows exactly which cart addresses are *defined*, so reads
+  from never-written ROM can be flagged as bugs. The flat `.min` remains
+  derivable: fill `0xFF`, copy each segment (that is what `minxdump --rom=`
+  does, byte-identically).
 - **Little-endian throughout**, matching the S1C88 and the rest of the toolchain.
 - **Deterministic** — no timestamps; same inputs → byte-identical output.
 - **Self-validating** — the header carries the total file size and a CRC-32
   (polynomial `0xEDB88320`, i.e. zlib `crc32()`) of everything after the header.
 - **One-buffer consumable** — load the file, walk in place; `minxdump.c` shows
-  the complete pattern in ~100 lines of plain C.
+  the complete pattern in plain C.
 
 ## File layout
 
@@ -79,30 +89,31 @@ chunk := { char id[4];  u32 size; }  payload[size]  pad-to-4
   boundary) is **not** in `size` but **is** part of the enclosing container/file
   — iterate children with `next = align4(payload_end)`.
 - Top level: the region from offset 16 to end-of-file is a chunk sequence.
-- **Container** chunks (`SRCS`, `FILE`) hold a chunk sequence as their payload.
-  Container-ness is defined per id (like RIFF's `LIST`), not flagged.
-- Chunk order is not guaranteed (today's writer emits `ROM` `AREA` `SYM` `LINE`
-  `FUNC` `SRCS` `USR`* `NOTE` `STR`); select by id. Unknown ids must be skipped.
-  A reader should locate `STR ` first — every `name` field below is an offset
-  into it.
+- **Container** chunks (`ROM `, `SRCS`, `FILE`) hold a chunk sequence as their
+  payload. Container-ness is defined per id (like RIFF's `LIST`), not flagged.
+- Chunk order is not guaranteed (today's writer emits `ROM ` `AREA` `SYM `
+  `TYPE` `STRU`* `LINE` `FUNC` `VAR ` `SRCS` `USR `* `NOTE` `STR `); select by
+  id. Unknown ids must be skipped. A reader should locate `STR ` (names),
+  `TYPE` and `FUNC` (cross-referenced indices) up front.
 
 ### Chunk catalog
 
 | Id | Kind | Payload |
 |---|---|---|
-| `ROM ` | leaf | `u32 load_addr` (= `0x2100`) + the flat ROM image, **byte-identical to the `.min` output** (gaps `0xFF`) |
+| `ROM ` | container | repeating `SEG ` children, ascending, non-overlapping |
+| `SEG ` | leaf | `u32 phys` + the defined ROM bytes starting at that physical address |
 | `STR ` | leaf | concatenated NUL-terminated strings; offset 0 is always `""`; last byte is NUL |
-| `SYM ` | leaf | symbol records[16 B], sorted by `value` |
-| `AREA` | leaf | linker area records[16 B] |
-| `LINE` | leaf | **the global line table**: records[16 B] sorted by physical address |
-| `FUNC` | leaf | function-extent records[16 B] sorted by entry |
+| `SYM ` | leaf | symbol records [16 B], sorted by `value` |
+| `AREA` | leaf | linker area records [16 B] |
+| `TYPE` | leaf | type-graph records [16 B]; referenced by index |
+| `STRU` | leaf, repeating | one per struct/union: header + member records; the Nth `STRU` chunk in file order is struct **ordinal** N |
+| `LINE` | leaf | **the global line table**: records [16 B] sorted by physical address |
+| `FUNC` | leaf | function records [32 B] sorted by entry |
+| `VAR ` | leaf | variable records [32 B] sorted by (scope function, name) |
 | `SRCS` | container | one `FILE` child per source file, in **file-id order** |
 | `FILE` | container | children: `NAME` (leaf: the path as recorded by the compiler, raw bytes, no NUL) and optionally `TEXT` (leaf: the full source text, verbatim, display-only) |
 | `USR ` | leaf | `u32 name` + raw bytes — one per `--embed=name=file` |
 | `NOTE` | leaf | metadata pairs `{u32 key, u32 val}` (both `STR ` offsets) |
-
-All record arrays use fixed 16-byte records, so `count = size / 16` and the
-arrays are binary-searchable in place.
 
 ## The address model
 
@@ -119,76 +130,141 @@ bank 0 (value < 0x10000)  : phys = value                       (common bank)
 bank N (value ≥ 0x10000)  : phys = N*0x8000 + (value & 0x7FFF)
 ```
 
-ROM file offset = `phys − 0x2100`. `LINE`/`FUNC` store physical addresses only
-(they describe ROM bytes); `SYM` stores both.
+Flat-ROM file offset = `phys − 0x2100`. `SEG`/`LINE`/`FUNC` store physical
+addresses (they describe ROM bytes); `SYM` stores both; `VAR` static locations
+store the **bus address** (physical for ROM-mapped const data; RAM addresses
+`0x1000-0x1FFF` unchanged).
 
-## Record layouts (all fields u32, little-endian)
+## Record layouts (fields u32, little-endian)
 
-**`SYM `** — `{ name, value, phys, flags }`, sorted by `value` (ties by name
-offset). From the linker's NoICE `DEF`/`DEFS` records, so asm-level names
+**`SYM `** [16 B] — `{ name, value, phys, flags }`, sorted by `value` (ties by
+name offset). From the linker's NoICE `DEF`/`DEFS` records, so asm-level names
 (`_main`, `s__CODE`, library internals) with underscore prefixes.
-`flags` bit 0 (`SYM_ROM`): `phys` is valid — the symbol maps into cart ROM
-(else `phys` = `0xFFFFFFFF`: RAM at `0x1000-0x1FFF`, absolutes, …).
-`flags` bit 1 (`SYM_LOCAL`): scoped symbol (NoICE `DEFS`).
+`flags` bit 0 (`SYM_ROM`): `phys` valid — maps into cart ROM (else `phys` =
+`0xFFFFFFFF`). `flags` bit 1 (`SYM_LOCAL`): scoped symbol (NoICE `DEFS`).
 
-**`AREA`** — `{ name, base, size, flags }` in `.map` order. `base` is a linker
-address. `flags`: bit 0 ABS, bit 1 OVR. Best-effort from the map's area table —
-gives a debugger the memory-region names (`_CODE`, `_DATA`, `_FAR`, …).
+**`AREA`** [16 B] — `{ name, base, size, flags }` in `.map` order. `base` is a
+linker address. `flags`: bit 0 ABS, bit 1 OVR. Best-effort from the map's area
+table — gives a debugger the memory-region names (`_CODE`, `_DATA`, `_FAR`, …).
 
-**`LINE`** — `{ phys, file, line, reserved }`, sorted by (`phys`, `line`).
-`file` is an ordinal into the `SRCS` children (`0xFFFFFFFF` = none). Built from
-the `.cdb`'s linker-resolved `L:C$file$line$…:addr` records. Several records may
+**`TYPE`** [16 B] — `{ kind_flags, size, target, extra }`, deduplicated;
+everything that mentions a type does so by index into this table. `size` is
+the storage size in bytes. `kind_flags` low byte:
+
+| kind | meaning | `target` | `extra` |
+|---|---|---|---|
+| 0 | void | — | — |
+| 1 | char | — | — |
+| 2 | short | — | — |
+| 3 | int | — | — |
+| 4 | long | — | — |
+| 5 | float | — | — |
+| 6 | sbit | — | — |
+| 7 | bitfield | — | bit offset \| (bit count << 16) |
+| 8 | struct/union | — | `STRU` ordinal (`0xFFFFFFFF` if unresolved) |
+| 9 | array | element type | element count |
+| 10 | function | return type | — |
+| 11 | pointer | pointee type | the cdb space letter (`'X'` = `__far`, 3 bytes; near pointers 2 bytes; function/code pointers 3) |
+
+`kind_flags` bit 8: unsigned. Unused `target`/`extra` are `0xFFFFFFFF`/`0`.
+
+**`STRU`** — payload `{ u32 name, u32 size, u32 member_count }` followed by
+member records [16 B] `{ name, byte_offset, type, reserved }` in declaration
+order. Unions are structs whose members share offsets; bitfield members carry
+their bit offset/width in their *type* (kind 7). Struct **ordinal** = position
+among `STRU` chunks in file order; `TYPE` kind-8 records reference it.
+
+**`LINE`** [16 B] — `{ phys, file, line, scope }`, sorted by (`phys`, `line`).
+`file` is an ordinal into the `SRCS` children (`0xFFFFFFFF` = none). `scope` =
+lexical block (low 16 bits) | scope level (bits 16-23) | sub-level (bits
+24-31), matching the `VAR` level/block fields so a debugger can prefer
+variables of the innermost live block. Built from the `.cdb`'s
+linker-resolved `L:C$file$line$level$block:addr` records. Several records may
 share one `phys` (e.g. a loop head); for PC→line take the **last** record with
 `phys ≤ PC`; for breakpoints scan for (`file`,`line`) and take its first `phys`.
 
-**`FUNC`** — `{ name, entry, end, file }`, sorted by `entry`; addresses
-physical. From `.cdb` `F:G$` (is-a-function) + `L:G$` (entry) + `L:XG$` (exit
-label — SDCC emits it at the function's final return instruction, so code lies
-in `[entry, end]`). `name` is the **C-level** name (no underscore prefix —
-`main`, not `_main`). `file` = the file of the first line record inside the
-extent, `0xFFFFFFFF` if none.
+**`FUNC`** [32 B] — `{ name, entry, end, file, rettype, frame, flags, rsv }`,
+sorted by `entry`; addresses physical. From `.cdb` `F:` records plus the
+linker's `L:`/`L:X` bindings (the exit label sits at the function's final
+return instruction, so code lies in `[entry, end]`). `name` is the **C-level**
+name (no underscore prefix). `rettype` is a `TYPE` index. `frame` is the stack
+frame size in bytes. `flags`: bit 0 file-static, bit 1 interrupt handler;
+bits 8-15 interrupt number; bits 16-23 register bank.
+
+**`VAR `** [32 B] — `{ name, scope, type, levelblock, loc_kind, loc, flags,
+rsv }`, sorted by (`scope`, `name` offset) with globals (`scope` =
+`0xFFFFFFFF`) last — so a function's variables are one contiguous,
+binary-searchable slice. `scope` is the `FUNC` table index of the owning
+function. `type` is a `TYPE` index. `levelblock` = scope level (low 8) |
+sub-level (bits 8-15) | lexical block (bits 16-31), for disambiguating
+same-named variables in sibling blocks against `LINE.scope`. `flags`: bit 0
+file-static; bits 8-15 the raw cdb address-space letter. Location:
+
+| `loc_kind` | meaning | `loc` |
+|---|---|---|
+| 0 | none (optimized out / unknown) | 0 |
+| 1 | static | the bus address (see address model) |
+| 2 | stack | signed offset (two's complement) **relative to IX**, the frame pointer |
+| 3 | registers | `STR ` offset of the register list, e.g. `"a"`, `"b,a"`, `"hl"` |
+
+**The frame model:** sdcc88 functions with stack frames execute `push ix ;
+ld ix,sp` in the prologue; all `loc_kind 2` offsets are relative to that IX
+value (parameters spilled by the callee and locals are both negative). A
+debugger halted inside the function body computes `IX + (int32_t)loc`.
 
 **`NOTE`** — `{ key, val }` string pairs. Current keys (tolerate unknown keys,
 any order, repeats): `generator`, `source` (the input path as given),
-`cart-base`, `rom-bytes`, `banks`, `symbols`, `lines`, `functions`, and one
-`far` per `--far` range. Informational only.
+`cart-base`, `rom-bytes` (flat extent), `banks`, `segments`, `symbols`,
+`lines`, `functions`, `variables`, `types`, and one `far` per `--far` range.
+Informational only.
 
 ## What a debugger does with it
 
 | Operation | Lookup |
 |---|---|
+| load ROM | memset `0xFF`, copy each `SEG` (and flag reads of undefined ROM) |
 | source display | `SRCS` → `FILE[i]` → `TEXT` (split on `\n` at load) |
 | PC → source line | binary-search `LINE` by `phys` (last record ≤ PC) |
 | PC → function | binary-search `FUNC` by `entry` (last record with `entry ≤ PC ≤ end`) |
 | breakpoint at file:line | scan `LINE` for (`file`,`line`), first `phys` |
 | step-over / step-out | `FUNC` extents |
+| locals at PC | PC → `FUNC` index → the `VAR` slice with that `scope` |
+| read a variable | `loc_kind`: memory at `loc` / `IX+loc` / named registers; format via `TYPE`/`STRU` |
+| watch a struct member | `VAR.type` → kind 8 → `STRU` ordinal → member offset/type |
 | address ↔ symbol | binary-search `SYM` |
 | memory-region names | `AREA` |
 
 Everything above is index arithmetic over one loaded buffer.
 
+## Fidelity notes / limitations
+
+- Variable records cover exactly what sdcc's `.cdb` emits: parameters are not
+  distinguished from locals, there are no live ranges (a register variable's
+  listed registers are where it *predominantly* lives), and compiler spill
+  temporaries appear as `sloc0…` names. `const` arrays in code space get no
+  `S:` record from sdcc, so they appear in `SYM` but not `VAR`.
+- Local-scope resolution matches variables to functions by function name; two
+  *static* functions with the same name in different modules would collide
+  (their variables merge under one `FUNC` entry).
+- `AREA` is a best-effort parse of the human-oriented `.map` area table.
+
 ## Extensibility / reserved
 
-Planned (not yet emitted) — readers that skip unknown chunks are already
-compatible:
-
-- **`TYPE` + per-scope variable chunks** — the `.cdb`'s `S:`/`T:` records
-  (variable locations: register/stack/static; struct layouts) promoted to
-  binary, enabling watch-window inspection. This is the next fidelity tier.
-- **Asm-level line table** — the `.cdb` `L:A$module$listingline:addr` records,
-  for source-stepping hand-written assembly.
-
-Versioning policy: additive changes (new chunk ids, new children inside
-containers, new `NOTE` keys, new flag bits) do **not** bump the header version;
-layout changes to existing records do.
+Readers that skip unknown chunks are forward-compatible. Planned: an
+**asm-level line table** (the `.cdb` `L:A$module$listingline:addr` records)
+for source-stepping hand-written assembly. Versioning policy: additive changes
+(new chunk ids, new children inside containers, new `NOTE` keys, new flag
+bits) do **not** bump the header version; layout changes to existing records do.
 
 ## Why this shape (and not ELF/DWARF)?
 
 ELF could carry the ROM and symbols but everything that matters here — the
-dual linker/physical address model, the line/function tables, embedded sources
-— would land in private vendor sections needing custom readers anyway, plus a
-psABI the S1C88 doesn't have. DWARF line programs are a bytecode interpreter a
-4 KiB-RAM-era console emulator shouldn't need. A chunk tree + sorted fixed
-records keeps the *familiar* parts of that shape (typed sections, string table,
-binary-searchable tables) at a complexity an afternoon of C can fully implement
-— `minxdump.c` is the existence proof.
+dual linker/physical address model, the line/function/variable tables, embedded
+sources — would land in private vendor sections needing custom readers anyway,
+plus a psABI the S1C88 doesn't have. DWARF expressions are a bytecode
+interpreter a 4 KiB-RAM-era console emulator shouldn't need; this target's
+location vocabulary is exactly three cases (static address, IX-relative,
+registers). A chunk tree + sorted fixed records keeps the *familiar* parts of
+that shape (typed sections, string table, binary-searchable tables) at a
+complexity an afternoon of C can fully implement — `minxdump.c` is the
+existence proof.

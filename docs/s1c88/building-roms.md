@@ -63,15 +63,17 @@ and real hardware.
 
 **Want source-level debugging bundled with the ROM?** `romgen` has a second output
 format: name the output `.minx` (or pass `--minx`) and it writes the **MINX
-container** — a single chunk-tree binary holding the ROM image (byte-identical to
-the `.min`), the symbol table, a sorted source-line table and function extents
-(from `--debug`), and the source files themselves embedded for display. A debugging
-emulator can consume it with no filesystem access and no text parsing:
+container** — a single chunk-tree binary holding the ROM as sparse segments (the
+flat `.min` stays recoverable byte-identically), the symbol table, and — from
+`--debug` — a sorted source-line table, function extents, the type graph, variable
+locations (registers / IX-relative stack / static addresses), and the source files
+themselves embedded for display. A debugging emulator can consume it with no
+filesystem access and no text parsing:
 
 ```bash
 sdcc -ms1c88 --debug game.c -o game.ihx
-romgen game.ihx game.minx           # ROM + symbols + lines + functions + sources
-minxdump game.minx                  # validate + inspect (--rom=out.min extracts)
+romgen game.ihx game.minx           # ROM + symbols + lines + funcs + types + vars + sources
+minxdump game.minx                  # validate + inspect (--rom=out.min reconstructs)
 ```
 
 Emulators and flash carts still want the flat `.min`; the `.minx` is for debuggers
