@@ -66,6 +66,9 @@ ck "TYPE graph renders struct pair \*"             grep -qE "struct pair \*" dum
 ck "VAR g_pair static address"                     grep -qE "^  g_pair .*struct pair .*@0x" dump
 ck "VAR arr is IX-relative stack"                  grep -qE "^  arr .*int\[2\] .*ix[+-]" dump
 ck "VAR counter is file-static"                    grep -qE "^  counter .*<file-static>.*@0x" dump
+ck "FUNC main establishes an IX frame"             grep -qE "^  main .*frame-ptr" dump
+ck "IO register map names the SFR space"           grep -qE "^  PRC_MODE .*0x002080 size 1" dump
+ck "rom-crc32 build identity in NOTE"              grep -qE "rom-crc32 = 0x[0-9a-f]{8}" dump
 ck "source text embedded"                          grep -q "game.c .*embedded" dump
 ck "symbols include _main"                         grep -q "_main " dump
 ck "container self-reports valid"                  grep -qx "ok" dump

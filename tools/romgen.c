@@ -134,11 +134,13 @@ enum { LOC_NONE = 0, LOC_STATIC, LOC_STACK, LOC_REGS };
 
 /* VAR flags */
 #define VF_FILESTATIC 0x1
+#define VF_ARTIFICIAL 0x2   /* compiler spill temp (sloc<N>) — UIs may hide */
 /* bits 8-15: the raw cdb address-space letter */
 
 /* FUNC flags */
 #define FN_FILESTATIC 0x1
 #define FN_INTERRUPT  0x2
+#define FN_HASFRAME   0x4   /* entry bytes are push ix ; ld ix,sp (A2 CF FA) */
 /* bits 8-15: interrupt number; bits 16-23: register bank */
 
 #define NO_REF 0xFFFFFFFFu
@@ -800,6 +802,9 @@ static void parse_cdb (const char *text, size_t textlen, struct cdbinfo *ci)
                               | (((uint32_t) strtoul (r.block, NULL, 10) & 0xFFFF) << 16);
                 v->flags = ((uint32_t) (unsigned char) space << 8)
                          | (r.kind == 'F' ? VF_FILESTATIC : 0);
+                if (strncmp (r.name, "sloc", 4) == 0
+                    && r.name[4] && strspn (r.name + 4, "0123456789") == strlen (r.name + 4))
+                  v->flags |= VF_ARTIFICIAL;
                 if (onstack)
                   { v->loc_kind = LOC_STACK; v->loc = (uint32_t) offs; }
                 else if (space == 'R')
@@ -939,6 +944,83 @@ static struct arearec *parse_map (const char *text, size_t textlen, buf *st, uin
   return areas;
 }
 
+/* ---- IO register map: parsed from the device header (<pm.h>) ----
+   Recognized define shapes (anything else — bit masks, VEC_* slots — is
+   skipped): NAME _SFR8(off) / _SFR16(off) (off + 0x2000), and the literal
+   pointer casts (*(volatile unsigned char|int *)addr). Names starting with
+   '_' are internal macros, skipped. */
+
+struct iorec { uint32_t name, addr, size, flags; };
+
+static struct iorec *parse_io (const char *text, size_t textlen, buf *st, uint32_t *out_count)
+{
+  struct iorec *io = NULL;
+  uint32_t count = 0, cap = 0;
+  const char *p = text, *end = text + textlen;
+
+  while (p < end)
+    {
+      const char *eol = memchr (p, '\n', (size_t) (end - p));
+      size_t linelen = eol ? (size_t) (eol - p) : (size_t) (end - p);
+      char ln[512];
+      if (linelen >= sizeof ln) { p = eol ? eol + 1 : end; continue; }
+      memcpy (ln, p, linelen);
+      ln[linelen] = '\0';
+      p = eol ? eol + 1 : end;
+
+      if (strncmp (ln, "#define ", 8) != 0)
+        continue;
+      char name[128];
+      size_t nl = strspn (ln + 8, "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_");
+      if (nl == 0 || nl >= sizeof name || ln[8] == '_')
+        continue;
+      memcpy (name, ln + 8, nl); name[nl] = '\0';
+
+      const char *rest = ln + 8 + nl, *m;
+      uint32_t addr, size;
+      if ((m = strstr (rest, "_SFR8(")) != NULL)
+        addr = 0x2000 + (uint32_t) strtoul (m + 6, NULL, 0), size = 1;
+      else if ((m = strstr (rest, "_SFR16(")) != NULL)
+        addr = 0x2000 + (uint32_t) strtoul (m + 7, NULL, 0), size = 2;
+      else if ((m = strstr (rest, "unsigned char *)")) != NULL)
+        addr = (uint32_t) strtoul (m + 16, NULL, 0), size = 1;
+      else if ((m = strstr (rest, "unsigned int *)")) != NULL)
+        addr = (uint32_t) strtoul (m + 15, NULL, 0), size = 2;
+      else
+        continue;
+      if (addr == 0)
+        continue;
+      io = grow (io, count, &cap, sizeof *io);
+      io[count].name = strtab_add (st, name);
+      io[count].addr = addr;
+      io[count].size = size;
+      io[count].flags = 0;
+      count++;
+    }
+  *out_count = count;
+  return io;
+}
+
+static int io_cmp (const void *a, const void *b)
+{
+  const struct iorec *x = a, *y = b;
+  if (x->addr != y->addr) return x->addr < y->addr ? -1 : 1;
+  return x->name < y->name ? -1 : x->name > y->name ? 1 : 0;
+}
+
+/* the device header ships with the toolchain: <bin>/../share/sdcc/include/s1c88/pm.h */
+static char *default_io_path (const char *argv0)
+{
+  const char *slash = strrchr (argv0, '/');
+  const char *tail = "/../share/sdcc/include/s1c88/pm.h";
+  size_t dl = slash ? (size_t) (slash - argv0) : 1;
+  char *p = malloc (dl + strlen (tail) + 1);
+  if (!p) return NULL;
+  memcpy (p, slash ? argv0 : ".", dl);
+  strcpy (p + dl, tail);
+  return p;
+}
+
 /* ------------------------------------------------------------------------- */
 
 static void usage (void)
@@ -946,17 +1028,17 @@ static void usage (void)
   fprintf (stderr,
     "usage: romgen in.ihx out.min  [--far=start-end]...\n"
     "       romgen in.ihx out.minx [--minx] [--far=start-end]...\n"
-    "              [--map=file] [--noi=file] [--cdb=file]\n"
+    "              [--map=file] [--noi=file] [--cdb=file] [--io=pm.h|--no-io]\n"
     "              [--srcdir=dir]... [--no-src] [--embed=name=file]...\n");
 }
 
 int main (int argc, char **argv)
 {
   const char *inpath = NULL, *outpath = NULL;
-  const char *map_arg = NULL, *noi_arg = NULL, *cdb_arg = NULL;
+  const char *map_arg = NULL, *noi_arg = NULL, *cdb_arg = NULL, *io_arg = NULL;
   const char *srcdirs[MAX_SRCDIR];
   struct { const char *name, *path; } embeds[MAX_EMBED];
-  int n_embed = 0, n_srcdir = 0, opt_minx = 0, opt_nosrc = 0;
+  int n_embed = 0, n_srcdir = 0, opt_minx = 0, opt_nosrc = 0, opt_noio = 0;
   int i;
 
   for (i = 1; i < argc; i++)
@@ -974,9 +1056,11 @@ int main (int argc, char **argv)
         }
       else if (strcmp (argv[i], "--minx") == 0)            opt_minx = 1;
       else if (strcmp (argv[i], "--no-src") == 0)          opt_nosrc = 1;
+      else if (strcmp (argv[i], "--no-io") == 0)           opt_noio = 1;
       else if (strncmp (argv[i], "--map=", 6) == 0)        map_arg = argv[i] + 6;
       else if (strncmp (argv[i], "--noi=", 6) == 0)        noi_arg = argv[i] + 6;
       else if (strncmp (argv[i], "--cdb=", 6) == 0)        cdb_arg = argv[i] + 6;
+      else if (strncmp (argv[i], "--io=", 5) == 0)         io_arg = argv[i] + 5;
       else if (strncmp (argv[i], "--srcdir=", 9) == 0)
         {
           if (n_srcdir >= MAX_SRCDIR) { fprintf (stderr, "romgen: too many --srcdir\n"); return 2; }
@@ -1149,6 +1233,33 @@ int main (int argc, char **argv)
   if (cdbdat)
     parse_cdb ((const char *) cdbdat, cdbsz, &ci);
 
+  /* IO register map: --io= must exist; the default (the toolchain's pm.h,
+     found relative to this binary) is optional */
+  struct iorec *io = NULL;
+  uint32_t n_io = 0;
+  if (!opt_noio)
+    {
+      unsigned char *iodat = NULL;
+      size_t iosz = 0;
+      if (io_arg)
+        {
+          iodat = read_file (io_arg, &iosz);
+          if (!iodat)
+            { fprintf (stderr, "romgen: cannot read --io file '%s'\n", io_arg); return 2; }
+        }
+      else
+        {
+          char *def = default_io_path (argv[0]);
+          if (def) { iodat = read_file (def, &iosz); free (def); }
+        }
+      if (iodat)
+        {
+          io = parse_io ((const char *) iodat, iosz, &strtab, &n_io);
+          if (n_io) qsort (io, n_io, sizeof *io, io_cmp);
+          free (iodat);
+        }
+    }
+
   if (ci.n_lines)
     {
       qsort (ci.lines, ci.n_lines, sizeof *ci.lines, line_cmp);
@@ -1263,6 +1374,15 @@ int main (int argc, char **argv)
           for (j = 0; j < ci.n_lines; j++)
             if (ci.lines[j].phys >= fn->entry && ci.lines[j].phys <= fend)
               { file = ci.lines[j].file; break; }
+          /* backtrace support: does the entry establish an IX frame?
+             prologue = push ix ; ld ix,sp = A2 CF FA */
+          if (fn->entry >= CART_BASE)
+            {
+              size_t eo = fn->entry - CART_BASE;
+              if (eo + 3 <= size && wr[eo] && wr[eo+1] && wr[eo+2]
+                  && img[eo] == 0xA2 && img[eo+1] == 0xCF && img[eo+2] == 0xFA)
+                fn->flags |= FN_HASFRAME;
+            }
           buf_u32 (&rec, strtab_add (&strtab, fn->ref.name));
           buf_u32 (&rec, fn->entry);
           buf_u32 (&rec, fend);
@@ -1330,6 +1450,19 @@ int main (int argc, char **argv)
       free (ev);
     }
 
+  /* IO — the hardware register map (watch windows name the SFR space) */
+  if (n_io)
+    {
+      buf rec = { NULL, 0, 0 };
+      for (i = 0; i < (int) n_io; i++)
+        {
+          buf_u32 (&rec, io[i].name);  buf_u32 (&rec, io[i].addr);
+          buf_u32 (&rec, io[i].size);  buf_u32 (&rec, io[i].flags);
+        }
+      ck_blob (&body, "IO  ", rec.p, rec.len);
+      free (rec.p);
+    }
+
   /* SRCS — one FILE container per source file: NAME + (unless --no-src) TEXT.
      File ids in LINE/FUNC are ordinals into this sequence. */
   if (ci.n_files)
@@ -1388,11 +1521,13 @@ int main (int argc, char **argv)
   /* NOTE — (key,val) string pairs; deterministic (no timestamps) */
   {
     buf rec = { NULL, 0, 0 };
-    struct { const char *k; const char *v; } kv[12];
+    struct { const char *k; const char *v; } kv[14];
     int nkv = 0;
-    char vbase[16], vrom[32], vbank[16], vseg[16], vsym[16], vline[16], vfunc[16], vvar[16], vtype[16];
+    char vbase[16], vrom[32], vbank[16], vseg[16], vsym[16], vline[16], vfunc[16], vvar[16], vtype[16], vcrc[16], vio[16];
     snprintf (vbase, sizeof vbase, "0x%04x", CART_BASE);
     snprintf (vrom,  sizeof vrom,  "%zu", size);
+    snprintf (vcrc,  sizeof vcrc,  "0x%08x", crc32_buf (img, size));
+    snprintf (vio,   sizeof vio,   "%u", n_io);
     snprintf (vbank, sizeof vbank, "%d", n_banks);
     snprintf (vseg,  sizeof vseg,  "%u", n_segs);
     snprintf (vsym,  sizeof vsym,  "%u", n_syms);
@@ -1404,6 +1539,8 @@ int main (int argc, char **argv)
     kv[nkv].k = "source";    kv[nkv++].v = inpath;
     kv[nkv].k = "cart-base"; kv[nkv++].v = vbase;
     kv[nkv].k = "rom-bytes"; kv[nkv++].v = vrom;
+    kv[nkv].k = "rom-crc32"; kv[nkv++].v = vcrc;   /* CRC-32 of the flat .min image */
+    kv[nkv].k = "io-regs";   kv[nkv++].v = vio;
     kv[nkv].k = "banks";     kv[nkv++].v = vbank;
     kv[nkv].k = "segments";  kv[nkv++].v = vseg;
     kv[nkv].k = "symbols";   kv[nkv++].v = vsym;
@@ -1453,7 +1590,7 @@ int main (int argc, char **argv)
 
   free (img); free (wr);
   free (mapdat); free (noidat); free (cdbdat);
-  free (syms); free (areas);
+  free (syms); free (areas); free (io);
   for (i = 0; i < (int) ci.n_files; i++) free (ci.files[i]);
   for (i = 0; i < (int) ci.n_structs; i++)
     { free (ci.structs[i].name); free (ci.structs[i].rawmembers); free (ci.structs[i].members); }

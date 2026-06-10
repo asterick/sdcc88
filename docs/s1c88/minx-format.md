@@ -110,6 +110,7 @@ chunk := { char id[4];  u32 size; }  payload[size]  pad-to-4
 | `LINE` | leaf | **the global line table**: records [16 B] sorted by physical address |
 | `FUNC` | leaf | function records [32 B] sorted by entry |
 | `VAR ` | leaf | variable records [32 B] sorted by (scope function, name) |
+| `IO  ` | leaf | hardware register map records [16 B], sorted by address |
 | `SRCS` | container | one `FILE` child per source file, in **file-id order** |
 | `FILE` | container | children: `NAME` (leaf: the path as recorded by the compiler, raw bytes, no NUL) and optionally `TEXT` (leaf: the full source text, verbatim, display-only) |
 | `USR ` | leaf | `u32 name` + raw bytes — one per `--embed=name=file` |
@@ -180,16 +181,51 @@ lexical block (low 16 bits) | scope level (bits 16-23) | sub-level (bits
 24-31), matching the `VAR` level/block fields so a debugger can prefer
 variables of the innermost live block. Built from the `.cdb`'s
 linker-resolved `L:C$file$line$level$block:addr` records. Several records may
-share one `phys` (e.g. a loop head); for PC→line take the **last** record with
-`phys ≤ PC`; for breakpoints scan for (`file`,`line`) and take its first `phys`.
+share one `phys` (e.g. a loop head); for breakpoints scan for (`file`,`line`)
+and take its first `phys`.
+
+**The line-coverage rule (normative).** A line record covers the half-open
+range from its `phys` to the next record's `phys`, **clamped to the enclosing
+`FUNC` extent `[entry, end]`** — and a PC that lies inside no `FUNC` extent is
+on **no** source line. The clamp matters: C functions interleave in the
+address space with library/runtime code that has no line records, so a naive
+"last record ≤ PC" would attribute runtime addresses to the previous
+function's final line. PC→line is therefore: binary-search `FUNC` (last
+`entry ≤ PC`, require `PC ≤ end`), then binary-search `LINE` (last record with
+`phys ≤ PC`) and require the found record to lie inside the same extent.
+*Step into* under a source-line-only model is "run until the PC is covered" —
+code with no coverage (crt0, `s1c88.lib`, `__asm` blocks) is stepped over by
+construction; `SYM` still names those regions for status display.
 
 **`FUNC`** [32 B] — `{ name, entry, end, file, rettype, frame, flags, rsv }`,
 sorted by `entry`; addresses physical. From `.cdb` `F:` records plus the
 linker's `L:`/`L:X` bindings (the exit label sits at the function's final
 return instruction, so code lies in `[entry, end]`). `name` is the **C-level**
 name (no underscore prefix). `rettype` is a `TYPE` index. `frame` is the stack
-frame size in bytes. `flags`: bit 0 file-static, bit 1 interrupt handler;
-bits 8-15 interrupt number; bits 16-23 register bank.
+frame size in bytes. `flags`: bit 0 file-static, bit 1 interrupt handler,
+bit 2 **frame established** (romgen verified the entry bytes are the prologue
+`push ix ; ld ix,sp` = `A2 CF FA`); bits 8-15 interrupt number; bits 16-23
+register bank.
+
+**Backtraces (the frame walk).** The Pokémon Mini runs the S1C88 in MAXIMUM
+mode: every call pushes a 3-byte return frame (`CB`, then `PCH`, then `PCL`;
+the stack grows down). A function whose `FUNC` record has flag bit 2 set has,
+after its prologue, this layout relative to IX:
+
+```
+[IX+0..IX+1]  caller's IX (little-endian u16)
+[IX+2]        return PCL      } the return address: PC = PCH:PCL,
+[IX+3]        return PCH      } bank = CB — linker-style address
+[IX+4]        return CB       } (CB<<16)|PC when PC ≥ 0x8000, else PC
+[IX+5...]     caller-pushed arguments
+```
+
+Unwind: map the return address to physical (the standard mapping above), look
+it up in `FUNC`/`LINE` for the caller's frame row, then continue with
+`IX ← u16[IX]`. Stop when the return address leaves every `FUNC` extent (the
+crt0/BIOS boundary) or the flag-bit-2 chain breaks — frameless leaf functions
+(no flag) can appear only as the innermost frame, where the debugger still
+knows the PC directly.
 
 **`VAR `** [32 B] — `{ name, scope, type, levelblock, loc_kind, loc, flags,
 rsv }`, sorted by (`scope`, `name` offset) with globals (`scope` =
@@ -198,7 +234,9 @@ binary-searchable slice. `scope` is the `FUNC` table index of the owning
 function. `type` is a `TYPE` index. `levelblock` = scope level (low 8) |
 sub-level (bits 8-15) | lexical block (bits 16-31), for disambiguating
 same-named variables in sibling blocks against `LINE.scope`. `flags`: bit 0
-file-static; bits 8-15 the raw cdb address-space letter. Location:
+file-static; bit 1 **artificial** (a compiler spill temporary, `sloc<N>` —
+full fidelity is preserved but UIs should hide these by default); bits 8-15
+the raw cdb address-space letter. Location:
 
 | `loc_kind` | meaning | `loc` |
 |---|---|---|
@@ -212,11 +250,20 @@ ld ix,sp` in the prologue; all `loc_kind 2` offsets are relative to that IX
 value (parameters spilled by the callee and locals are both negative). A
 debugger halted inside the function body computes `IX + (int32_t)loc`.
 
+**`IO  `** [16 B] — `{ name, addr, size, flags }`, sorted by address: the
+hardware register map, so watch windows can name the SFR space (`PRC_MODE`,
+`IRQ_ENA1`, `KEY_PAD`, …) without any device knowledge. Parsed at pack time
+from the toolchain's `<pm.h>` (found relative to the `romgen` binary;
+`--io=file` overrides, `--no-io` omits). Aliases are real: a 16-bit register
+and its `_L`/`_H` byte halves each get a record at the same address.
+
 **`NOTE`** — `{ key, val }` string pairs. Current keys (tolerate unknown keys,
 any order, repeats): `generator`, `source` (the input path as given),
-`cart-base`, `rom-bytes` (flat extent), `banks`, `segments`, `symbols`,
-`lines`, `functions`, `variables`, `types`, and one `far` per `--far` range.
-Informational only.
+`cart-base`, `rom-bytes` (flat extent), `rom-crc32` (**CRC-32 of the
+SEG-reconstructed flat ROM — i.e. of the matching `.min` file**; an emulator
+handed a `.min` and a `.minx` separately can verify they are the same build),
+`io-regs`, `banks`, `segments`, `symbols`, `lines`, `functions`, `variables`,
+`types`, and one `far` per `--far` range.
 
 ## What a debugger does with it
 
@@ -224,15 +271,18 @@ Informational only.
 |---|---|
 | load ROM | memset `0xFF`, copy each `SEG` (and flag reads of undefined ROM) |
 | source display | `SRCS` → `FILE[i]` → `TEXT` (split on `\n` at load) |
-| PC → source line | binary-search `LINE` by `phys` (last record ≤ PC) |
+| PC → source line | binary-search `FUNC` then `LINE` (the line-coverage rule above) |
 | PC → function | binary-search `FUNC` by `entry` (last record with `entry ≤ PC ≤ end`) |
 | breakpoint at file:line | scan `LINE` for (`file`,`line`), first `phys` |
 | step-over / step-out | `FUNC` extents |
-| locals at PC | PC → `FUNC` index → the `VAR` slice with that `scope` |
+| backtrace | the frame walk above (`FUNC` flag bit 2 + the IX frame layout) |
+| locals at PC | PC → `FUNC` index → the `VAR` slice with that `scope` (hide bit-1 artificials) |
 | read a variable | `loc_kind`: memory at `loc` / `IX+loc` / named registers; format via `TYPE`/`STRU` |
 | watch a struct member | `VAR.type` → kind 8 → `STRU` ordinal → member offset/type |
 | address ↔ symbol | binary-search `SYM` |
+| name an SFR access | binary-search `IO` |
 | memory-region names | `AREA` |
+| match a loose `.min` | compare its CRC-32 to the `rom-crc32` NOTE key |
 
 Everything above is index arithmetic over one loaded buffer.
 
@@ -250,11 +300,14 @@ Everything above is index arithmetic over one loaded buffer.
 
 ## Extensibility / reserved
 
-Readers that skip unknown chunks are forward-compatible. Planned: an
-**asm-level line table** (the `.cdb` `L:A$module$listingline:addr` records)
-for source-stepping hand-written assembly. Versioning policy: additive changes
-(new chunk ids, new children inside containers, new `NOTE` keys, new flag
-bits) do **not** bump the header version; layout changes to existing records do.
+Readers that skip unknown chunks are forward-compatible. The debugging model
+is deliberately **C-source-line granularity**: an asm-level line table (the
+`.cdb` `L:A$…` records + embedded listings) was considered and dropped — code
+without line coverage is stepped over by the coverage rule, which keeps the
+container free of listing text. It can return as a new chunk id if the model
+ever changes. Versioning policy: additive changes (new chunk ids, new children
+inside containers, new `NOTE` keys, new flag bits) do **not** bump the header
+version; layout changes to existing records do.
 
 ## Why this shape (and not ELF/DWARF)?
 

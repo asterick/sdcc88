@@ -64,6 +64,7 @@ static size_t filesz;
 static const unsigned char *strtab;   static uint32_t strtablen;
 static const unsigned char *typetab;  static uint32_t n_types;
 static const unsigned char *functab;  static uint32_t n_funcs;
+static uint32_t rom_flat_crc;         static int have_rom_crc;
 
 static const char *str (uint32_t off)
 {
@@ -269,6 +270,36 @@ int main (int argc, char **argv)
         if (memcmp (id, "STRU", 4) == 0 && csz >= 12 && n_structs < MAX_STRUCTS)
           struct_names[n_structs++] = rle32 (file + cpay);
     }
+    /* reconstruct the flat ROM's CRC so a NOTE rom-crc32 key can be verified */
+    if (find_chunk (top, top_end, "ROM ", &pay, &sz))
+      {
+        size_t spos = pay, send = pay + sz, spay; uint32_t ssz;
+        char sid[5];
+        uint32_t maxend = 0;
+        while (next_chunk (&spos, send, sid, &spay, &ssz))
+          if (memcmp (sid, "SEG ", 4) == 0 && ssz >= 4)
+            {
+              uint32_t phys = rle32 (file + spay), len = ssz - 4;
+              if (phys >= CART_BASE && phys - CART_BASE + len > maxend)
+                maxend = phys - CART_BASE + len;
+            }
+        unsigned char *flat = malloc (maxend ? maxend : 1);
+        if (flat)
+          {
+            memset (flat, 0xFF, maxend);
+            spos = pay;
+            while (next_chunk (&spos, send, sid, &spay, &ssz))
+              if (memcmp (sid, "SEG ", 4) == 0 && ssz >= 4)
+                {
+                  uint32_t phys = rle32 (file + spay), len = ssz - 4;
+                  if (phys >= CART_BASE && phys - CART_BASE + len <= maxend)
+                    memcpy (flat + (phys - CART_BASE), file + spay + 4, len);
+                }
+            rom_flat_crc = crc32_buf (flat, maxend);
+            have_rom_crc = 1;
+            free (flat);
+          }
+      }
   }
 
   /* --- walk + dump top-level chunks --- */
@@ -404,9 +435,10 @@ int main (int argc, char **argv)
                 if (fend < entry) fail ("FUNC end before entry");
                 prev = entry;
                 render_type (ret, txt, sizeof txt, 0);
-                printf ("  %-28s 0x%06x..0x%06x  %s  -> %s, frame %u%s%s",
+                printf ("  %-28s 0x%06x..0x%06x  %s  -> %s, frame %u%s%s%s",
                         str (rle32 (rec)), entry, fend, file_name (fid), txt, frame,
-                        (fl & 0x1) ? ", static" : "", (fl & 0x2) ? ", interrupt" : "");
+                        (fl & 0x1) ? ", static" : "", (fl & 0x2) ? ", interrupt" : "",
+                        (fl & 0x4) ? ", frame-ptr" : "");
                 if (fl & 0x2) printf (" %u", (fl >> 8) & 0xFF);
                 printf ("\n");
               }
@@ -440,6 +472,7 @@ int main (int argc, char **argv)
                   case LOC_NONE:   printf ("-"); break;
                   default: fail ("unknown VAR location kind"); printf ("?");
                   }
+                if (fl & 0x2) printf ("  (artificial)");
                 printf ("\n");
               }
           }
@@ -464,12 +497,33 @@ int main (int argc, char **argv)
             if (sz < 4) { fail ("short USR chunk"); continue; }
             printf ("USR    %-28s %u bytes\n", str (rle32 (file + pay)), sz - 4);
           }
+        else if (memcmp (id, "IO  ", 4) == 0)
+          {
+            if (sz % 16) fail ("IO size not a multiple of 16");
+            printf ("IO     %u registers\n", sz / 16);
+            uint32_t prev = 0;
+            for (uint32_t r = 0; r + 16 <= sz; r += 16)
+              {
+                const unsigned char *rec = file + pay + r;
+                uint32_t addr = rle32 (rec + 4);
+                if (addr < prev) fail ("IO not sorted by address");
+                prev = addr;
+                printf ("  %-24s 0x%06x size %u\n", str (rle32 (rec)), addr, rle32 (rec + 8));
+              }
+          }
         else if (memcmp (id, "NOTE", 4) == 0)
           {
             if (sz % 8) fail ("NOTE size not a multiple of 8");
             printf ("NOTE   %u entries\n", sz / 8);
             for (uint32_t r = 0; r + 8 <= sz; r += 8)
-              printf ("  %s = %s\n", str (rle32 (file + pay + r)), str (rle32 (file + pay + r + 4)));
+              {
+                const char *k = str (rle32 (file + pay + r));
+                const char *v = str (rle32 (file + pay + r + 4));
+                printf ("  %s = %s\n", k, v);
+                if (strcmp (k, "rom-crc32") == 0 && have_rom_crc
+                    && (uint32_t) strtoul (v, NULL, 0) != rom_flat_crc)
+                  fail ("rom-crc32 does not match the SEG-reconstructed flat ROM");
+              }
           }
         else if (memcmp (id, "STR ", 4) == 0)
           printf ("STR    %u bytes\n", sz);
