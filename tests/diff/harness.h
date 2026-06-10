@@ -127,6 +127,27 @@ static void diff_ef(const char *tag, f32 v)
 }
 #define EMIT_F32(tag, x) diff_ef((tag), (f32)(x))
 
+/* ── Adding a case ──────────────────────────────────────────────────────────
+ * Drop a tests/diff/cases/*.c defining diff_run(), then run the three gates
+ * (scripts/{corpus-check,emu-test,diff-test}.sh). Two authoring constraints,
+ * learned the hard way:
+ *
+ *   - Keep per-iteration work in SMALL straight-line helper functions called
+ *     from the loop (as `arith` does) — never one giant macro-expanded diff_run.
+ *     SDCC's codegen is superlinear in basic-block size: a ~6000-line function
+ *     effectively hangs the compiler (measured 1.4s->6.5s->42s->infinity as one
+ *     function grew). Inherent to SDCC, not an s1c88 bug — but a macro-heavy
+ *     test can hit it.
+ *   - Mind the near common-bank budget (0x2100-0x7FFF): a too-large case
+ *     overflows it (`romgen: common-bank overflow`) — split it or trim coverage.
+ *
+ * `volatile` is testable via the emulator's side-effecting probe register at
+ * 0x2070 (third_party/minimon-core machine.cc): a READ returns a counter then
+ * post-increments, a WRITE seeds it — so N volatile reads yield N consecutive
+ * values. See cases/volatile.c (sensitivity-checked: it diverges if `volatile`
+ * is dropped, proving it detects elimination/coalescing).
+ * ───────────────────────────────────────────────────────────────────────── */
+
 void diff_run(void);
 
 #endif /* DIFF_HARNESS_H */

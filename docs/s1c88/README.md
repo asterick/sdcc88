@@ -46,7 +46,7 @@ the extraction note at the bottom.)
 ## sdcc88 backend decisions
 
 This folder holds reference + design docs (how the compiler and processor work). Project state lives in
-`../../CLAUDE.md` (overview + conventions) and the forward backlog in `../../TODO.md`; the end-user guide is
+`../../CLAUDE.md` (overview + conventions); the end-user guide is
 [building-roms.md](building-roms.md).
 
 - [abi-decision.md](abi-decision.md) — **authoritative design**: the base-port choice (clone of SDCC's

@@ -21,8 +21,7 @@ The base-port choice and the target ABI / z80→s1c88 register mapping are docum
 > returns, faithful Epson arg order), IY index-register arguments, `__far` 3-byte banked pointers (the EP=0
 > invariant), native `DIV`/`MLT`, the MAXIMUM-mode 3-byte CB:PC call model, the branch cluster
 > (`jrs`/`jrl`/`carl`), compares (`cp ba,hl`/`#imm` + `jrs LT/GE`), the 16-bit/8-bit ALU, shifts/rotates,
-> and `__critical`. The differential suite is clean. The forward backlog (code-size peepholes, the
-> `UNIMPLEMENTED`-boundary lift, the flag-token cleanup) is in the repo-root [`TODO.md`](../../TODO.md).
+> and `__critical`. The differential suite is clean and the numbered backlog is complete.
 >
 > The other 9 z80 variant `PORT` structs have been pruned; this is a single-variant port that runs the
 > plain-z80 codegen path (`IS_Z80` hardcoded 1). The globals that used to collide with the z80 port were
@@ -47,8 +46,7 @@ The base-port choice and the target ABI / z80→s1c88 register mapping are docum
 Drive any change from `../../docs/s1c88/` (distilled Epson manuals) — especially
 [`instruction-set.md`](../../docs/s1c88/instruction-set.md), [`addressing-modes.md`](../../docs/s1c88/addressing-modes.md),
 and the authoritative [`abi-decision.md`](../../docs/s1c88/abi-decision.md) (register model, argument ABI,
-the EP=0 `__far` invariant, native `DIV`, the MAXIMUM-mode call model). The forward backlog is the
-repo-root [`TODO.md`](../../TODO.md).
+the EP=0 `__far` invariant, native `DIV`, the MAXIMUM-mode call model).
 
 **Always rebuild via the overlay** — `../../scripts/dev.sh` (or `corpus-check.sh`) re-overlays this
 directory and rebuilds; never run raw `make -C build/.../src` (it compiles a stale copy). After any change,
