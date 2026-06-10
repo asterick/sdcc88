@@ -3,7 +3,7 @@
 > **Status:** decided 2026-05-29; the retarget it describes is **complete**. This is the authoritative
 > record of the *target ABI* and the *base port* for sdcc88's S1C88 backend — the register model, argument
 > ABI, the EP=0 `__far` invariant, native `DIV`, and the MAXIMUM-mode call model are all implemented and
-> verified. The forward backlog is the repo-root [`TODO.md`](../../TODO.md).
+> verified. The numbered backlog is complete; the port is in maintenance.
 > **Sources:** SDCC 4.5.0 `src/z80`; the Epson C ABI in [c-compiler.md](c-compiler.md); the S1C88
 > register/ISA model in [architecture.md](architecture.md) and [instruction-set.md](instruction-set.md).
 

@@ -15,8 +15,8 @@ SDCC, drops in our port, registers it, and builds the whole SDK.
 > Codegen is fully retargeted from its z80 origin to the real S1C88 ISA (the faithful BA+HL register model,
 > IY index args, `__far` 3-byte banked pointers, native `DIV`/`MLT`, the MAXIMUM-mode 3-byte CB:PC call
 > model). The differential test suite is clean — no known correctness bugs. The bundled libc covers
-> `string.h`, `stdlib.h`, `ctype.h`, and `printf`/`sprintf` (`<stdio.h>`). Ongoing work is the forward
-> backlog in [`TODO.md`](TODO.md).
+> `string.h`, `stdlib.h`, `ctype.h`, and `printf`/`sprintf` (`<stdio.h>`). The numbered backlog is complete;
+> the port is in maintenance.
 
 The port started as a clone of SDCC's **z80** backend (the z80 register model fits the S1C88 far better than
 the earlier stm8 base) and is fully re-pointed to the S1C88 register set, ABI, and instruction encodings.
@@ -79,7 +79,6 @@ host-vs-emulator differential (`diff-test`), on-emulator execution (`emu-test`),
 - `docs/s1c88/` — how the compiler and processor work: distilled Epson references (architecture, ISA,
   addressing, memory model, toolchain) plus the design docs `abi-decision.md` (authoritative ABI),
   `building-roms.md` (end-user guide), `banked-branch.md`, and `sdas88-retarget.md`.
-- `TODO.md` — the forward backlog (a task list, so it lives at the repo root, not under `docs/`).
 
 ## License
 

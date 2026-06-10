@@ -5,8 +5,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 > **▶ Resuming / "pick up where you left off"?** This file is the entry point. TL;DR: `./scripts/dev.sh`
 > confirms the build is green; `scripts/corpus-check.sh` + `scripts/emu-test.sh` + `scripts/diff-test.sh`
 > are the gates (or `scripts/run-tests.sh` for all at once). **Always rebuild via the overlay
-> (`dev.sh`/`corpus-check.sh`), never raw `make -C build/.../src`** (it compiles a stale copy). The forward
-> work list is the repo-root **[`TODO.md`](TODO.md)**. Work via self-contained PRs (meaningful names);
+> (`dev.sh`/`corpus-check.sh`), never raw `make -C build/.../src`** (it compiles a stale copy). The numbered backlog is
+> **complete** — any new work is tracked via PRs. Work via self-contained PRs (meaningful names);
 > **`main` is protected** — direct push blocked, the `ci` **build & test** check must be green to merge
 > (reviews not required).
 
@@ -39,7 +39,8 @@ and builds the compiler.
 > numbered backlog is **complete** — #14e (stale-symtab), #16 (`UNIMPLEMENTED`-boundary lift), #20
 > (z80-artifact scrub) and #12 (code size: dead-token cleanup done; the two size peepholes are inert on the
 > corpus, parked) all closed, and #11 differential mining concluded (the suite is comprehensive). The
-> **[`TODO.md`](TODO.md)** forward backlog is empty. Design/ABI: **`docs/s1c88/abi-decision.md`**; end-user guide:
+> backlog is **complete** — `setjmp`/`malloc` are out of scope by design (no realistic use on the device).
+> Design/ABI: **`docs/s1c88/abi-decision.md`**; end-user guide:
 > **`docs/s1c88/building-roms.md`**; the toolchain: `docs/s1c88/{sdas88-retarget,banked-branch}.md`.
 
 ## The codegen design (read `docs/s1c88/abi-decision.md`)
@@ -149,7 +150,7 @@ Start at `docs/s1c88/README.md`; the backend decisions are in `docs/s1c88/abi-de
   before opening it; clearly label any intentionally-red WIP.
 - **Keep the docs current as part of each PR — they must never lag behind a merged branch.** Whenever a
   branch has an outstanding PR, bring the affected docs up to date *in that PR*: the root **`README.md`**
-  (the user-facing status — refresh it whenever capability/status changes), **`TODO.md`** (mark items done /
-  add new ones), and `docs/s1c88/abi-decision.md` when an ABI/design decision evolves. `docs/s1c88/` is for
-  *how the compiler and processor work*; task/state lives in `TODO.md` (root) and this file. Completed work
-  is recorded in git history + commit messages, not re-listed in `TODO.md`.
+  (the user-facing status — refresh it whenever capability/status changes) and `docs/s1c88/abi-decision.md`
+  when an ABI/design decision evolves. `docs/s1c88/` is for *how the compiler and processor work*. Completed
+  work and any remaining task/state are recorded in git history + commit messages + the Claude memories, not
+  in a tracked backlog file (the numbered backlog is complete; there is no `TODO.md`).

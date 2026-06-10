@@ -479,7 +479,7 @@ a same-bank disp is provably within `carl` range, so stage (i) already drops eve
 conservative margin only guards >32.5 KB intra-bank spans that no real PM program has. **Stage (iii)
 carl→cars NOT pursued** — 1 B corpus-wide for the highest-risk emit surgery of any stage (two-relocation
 coordination, disp16→disp8, fixpoint). **#14c is complete at stage (i)+split-slot reclaim (150 B,
-default-on).** See TODO.md #14c.
+default-on).**
 
 ### #14d — vector-slot NOP reorder (cycles, not bytes) — ✅ DONE + DEFAULT-ON (2026-06-09)
 
