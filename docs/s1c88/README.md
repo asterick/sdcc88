@@ -57,6 +57,10 @@ This folder holds reference + design docs (how the compiler and processor work).
 - [banked-branch.md](banked-branch.md) — the `bcall`/`bjump` (`CALL`/`JUMP`) pseudo-instructions: auto
   short/long form + auto `ld nb,#bank` code-bank switch, resolved by the linker via a rewrite relocation
   (the `R_J11` model). **Status: works end-to-end** — assemble→link→`romgen` builds a multi-bank ROM.
+- [minx-format.md](minx-format.md) — the **MINX container** (`.minx`), `romgen`'s second output format: a
+  chunk-tree binary with the ROM as sparse segments, symbols, the global line table, function extents,
+  the type graph + variable locations, and embedded source text — built for a debugging emulator with no
+  filesystem access and no text parsing.
 
 ## ABI quick-reference (for the SDCC retarget)
 

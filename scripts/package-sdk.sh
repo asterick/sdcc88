@@ -10,7 +10,7 @@
 # first when spawning sdcpp/sdas88/sdldz80), so the unpacked tree works from
 # any directory with no environment setup:
 #
-#   bin/        sdcc sdcpp sdas88 sdldz80 romgen     (real binaries, stripped —
+#   bin/        sdcc sdcpp sdas88 sdldz80 romgen minxdump   (real binaries, stripped —
 #               the build tree's bin/sdcc + bin/sdcpp are configure-generated
 #               wrappers with the absolute build path baked in, so we copy the
 #               real driver from src/ and the real cpp from support/cpp/gcc/)
@@ -22,7 +22,7 @@
 #   share/sdcc/ include/ (libc + <pm.h>) and lib/s1c88/ (crt0.rel + s1c88.lib
 #               + member .rel objects — the .lib is a text index, the members
 #               must travel with it)
-#   docs/       building-roms.md (the end-user guide)
+#   docs/       building-roms.md (the end-user guide) + minx-format.md (the debug container)
 #   examples/   hello/ (sources only — a copy-me starter project)
 #   LICENSE     SDCC's COPYING (GPL-2.0-or-later; the binaries are SDCC-derived)
 #
@@ -70,6 +70,7 @@ cp "${SDCC}/support/cpp/gcc/cpp"  "${STAGE}/bin/sdcpp"
 cp "${SDCC}/bin/sdas88"           "${STAGE}/bin/sdas88"
 cp "${SDCC}/bin/sdldz80"          "${STAGE}/bin/sdldz80"
 cp "${SDCC}/bin/romgen"           "${STAGE}/bin/romgen"
+cp "${SDCC}/bin/minxdump"         "${STAGE}/bin/minxdump"
 
 # sdcpp's cc1 backend, at the libexecsubdir shape the driver relocates to
 TRIPLE="$(sed -n 's/^target_noncanonical:=//p' "${SDCC}/support/cpp/gcc/Makefile")"
@@ -91,6 +92,7 @@ fi
 cp -r "${SDCC}/share" "${STAGE}/share"
 
 cp "${REPO}/docs/s1c88/building-roms.md" "${STAGE}/docs/"
+cp "${REPO}/docs/s1c88/minx-format.md"   "${STAGE}/docs/"
 cp "${SDCC}/COPYING" "${STAGE}/LICENSE"
 cp "${REPO}/examples/hello/hello.c" "${REPO}/examples/hello/Makefile" \
    "${REPO}/examples/hello/README.md" "${STAGE}/examples/hello/"
@@ -106,6 +108,7 @@ The tree is relocatable — unpack it anywhere, no environment setup needed:
 \`\`\`bash
 bin/sdcc -ms1c88 game.c -o game.ihx   # preprocess + compile + link (crt0 + s1c88.lib)
 bin/romgen game.ihx game.min          # pack into a flat .min ROM
+bin/romgen game.ihx game.minx         # ...or the MINX debug container (ROM+symbols+lines+sources)
 \`\`\`
 
 - \`docs/building-roms.md\` — the end-user guide (memory map, \`__far\` banking,
