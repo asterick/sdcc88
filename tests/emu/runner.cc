@@ -21,6 +21,12 @@
 //       0x1FF8       char-out: guest stores a nonzero byte, host prints + clears it
 //                    (host polls between every instruction, so one store per char
 //                    can never be lost)
+//   - volatile-probe MMIO register (machine.cc, in the 0x2000-0x20FF reg window):
+//       0x2070       a side-effecting byte for testing that codegen honours
+//                    `volatile`: a READ returns a counter then post-increments it,
+//                    a WRITE seeds it. N volatile reads => N consecutive values, so
+//                    a dropped/merged/hoisted/reordered volatile access diverges
+//                    from the host model (tests/diff/cases/volatile.c).
 //   - exit: the production crt0 calls the BIOS shutdown vector (`int (0x48)`) when
 //     main returns; the shutdown routine halts with main's return value still in BA.
 //     The host reads the exit code off BA on halt — there is NO exit RAM mailbox, so

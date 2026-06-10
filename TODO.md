@@ -41,8 +41,17 @@ fair game. Workflow: add the case, run the three gates, fix what surfaces, add a
 libc, long long, long shifts, pointer arith, sprintf, struct args, switch, unions, **read-modify-write**
 (`compound` scalar + `aggregate` struct/array members), **`__far` pointers** (`farptr`: read/write/RMW/
 arith/diff/compare), **recursion** (`recursion`: tree/mutual/Ackermann + live-locals-across-call),
-**irregular control flow** (`cflow2`: Duff's device, goto FSM, nested switch/loop), and **bit-manipulation
-idioms** (`bitops`: rotates, bswap, popcount, clz/ctz, sext, saturating).
+**irregular control flow** (`cflow2`: Duff's device, goto FSM, nested switch/loop), **bit-manipulation
+idioms** (`bitops`: rotates, bswap, popcount, clz/ctz, sext, saturating), **mixed-width conversion trees**
+(`mixedwidth`: nested/chained sign-extend/zero-extend/narrow), and **`volatile`** (`volatile`: no
+elimination / coalescing / hoisting / reordering, via the emulator's side-effecting probe register).
+
+> **The `volatile` probe register (0x2070):** plain memory can't test `volatile` differentially (reading a
+> cell twice yields the same value whether codegen read once or twice). The emulator core (`machine.cc`)
+> now has a side-effecting MMIO register at **0x2070** — a READ returns a counter then post-increments, a
+> WRITE seeds it — so N volatile reads must return N consecutive values. The `volatile` case is
+> sensitivity-checked: dropping the `volatile` qualifier makes it DIVERGE (the compiler legally coalesces /
+> eliminates the reads), proving it actually detects volatile violations. Harness-only, not real PM hardware.
 
 > **Bug found by `bitops` (fixed, PR #29):** a variable-count **left shift** of a value held in `L`/`H`
 > miscompiled to an **infinite loop**. `sla`/`srl` only take `a`/`b`/`(hl)`, so the body shifts an L/H byte

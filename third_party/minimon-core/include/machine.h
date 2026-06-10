@@ -126,6 +126,14 @@ namespace Machine {
 		int osc1_overflow;
 		Status status;
 
+		// Volatile-probe register (0x2070): a side-effecting MMIO byte used to
+		// test that the compiler honours `volatile`. A READ returns the counter
+		// then post-increments it; a WRITE seeds it. So N volatile reads yield N
+		// distinct values — if codegen eliminates, coalesces, hoists, or reorders
+		// a volatile access, the observed sequence diverges from the host model.
+		// Harness-only (not real Pokemon-Mini hardware).
+		uint8_t vprobe;
+
 		// Unified guest address space (RAM at 0x1000..0x1FFF, cartridge/far data
 		// from 0x2100 up) as one writable byte array — so far writes to ROM-space
 		// physical addresses stick and can be read back. The BIOS (0x0000..0x0FFF)
