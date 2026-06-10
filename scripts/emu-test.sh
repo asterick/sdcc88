@@ -78,7 +78,7 @@ LIBDIR="${SDCC}/share/sdcc/lib/s1c88"
 RT_SRCS="_divuint _divsint _moduint _modsint _mulint"
 RT_RELS=""
 for r in $RT_SRCS; do
-  if ! cc -E -P -x c -I "${SDCC}/device/include" -D_SDCC_NO_ASM_LIB_FUNCS \
+  if ! cc -std=gnu17 -E -P -x c -I "${SDCC}/device/include" -D_SDCC_NO_ASM_LIB_FUNCS \
         "${SDCC}/device/lib/${r}.c" > "${OUT}/${r}.i" 2>"${OUT}/err" \
      || ! "$SDCCBIN" -ms1c88 --c1mode -o "${OUT}/${r}.asm" < "${OUT}/${r}.i" 2>"${OUT}/err" \
      || ! "$SDAS" -o "${OUT}/${r}.rel" "${OUT}/${r}.asm" > "${OUT}/err" 2>&1; then
@@ -94,7 +94,7 @@ for src in "${EMU}"/cases/*.c; do
   [ -z "$TAP" ] && printf "  %-14s " "$b"
 
   # host cpp (no sdcpp in this build) -> sdcc -> sdas88
-  if ! cc -E -P -x c -I "$EMU" "$src" > "${OUT}/${b}.i" 2>"${OUT}/err"; then
+  if ! cc -std=gnu17 -E -P -x c -I "$EMU" "$src" > "${OUT}/${b}.i" 2>"${OUT}/err"; then
     report_fail "$b" "CPP-FAIL" "${OUT}/err"; continue
   fi
   if ! "$SDCCBIN" -ms1c88 --c1mode -o "${OUT}/${b}.asm" < "${OUT}/${b}.i" 2>"${OUT}/err" \

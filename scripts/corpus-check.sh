@@ -52,7 +52,7 @@ normalize() { grep -vE '^\s*\.module|^;\(null\)|^; Version 4\.5\.0' "$1" | tr -d
 
 compile() { # $1 = src .c ; $2 = dest normalized asm
   # --c1mode has no preprocessor: strip comments/directives with the host cpp first (-P = no line markers).
-  cc -E -P -x c "$1" > "${OUT}/pp.c" 2>/dev/null || { echo "!! cpp FAILED: $1"; return 1; }
+  cc -std=gnu17 -E -P -x c "$1" > "${OUT}/pp.c" 2>/dev/null || { echo "!! cpp FAILED: $1"; return 1; }
   "${SDCCBIN}" -ms1c88 --c1mode -o "${OUT}/raw.asm" < "${OUT}/pp.c" 2>"${OUT}/err" || {
     echo "!! compile FAILED: $1"; cat "${OUT}/err"; return 1; }
   if grep -qiE 'Internal Error|backtrace|FATAL' "${OUT}/err"; then

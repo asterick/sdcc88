@@ -78,7 +78,7 @@ RT_FLOAT="_fsadd _fssub _fsmul _fsdiv _fseq _fslt _fscmp \
           _schar2fs _sint2fs _slong2fs _uchar2fs _uint2fs _ulong2fs"
 : > "${OUT}/rt.lib"
 for r in $RT_INT $RT_LL $RT_FLOAT; do
-  if ! cc -E -P -x c -I "${SDCC}/device/include" -D_SDCC_NO_ASM_LIB_FUNCS \
+  if ! cc -std=gnu17 -E -P -x c -I "${SDCC}/device/include" -D_SDCC_NO_ASM_LIB_FUNCS \
         "${SDCC}/device/lib/${r}.c" > "${OUT}/${r}.i" 2>"${OUT}/err" \
      || ! "$SDCCBIN" -ms1c88 --c1mode -o "${OUT}/${r}.asm" < "${OUT}/${r}.i" 2>"${OUT}/err" \
      || ! "$SDAS" -o "${OUT}/${r}.rel" "${OUT}/${r}.asm" > "${OUT}/err" 2>&1; then
@@ -103,7 +103,7 @@ for src in "${DIFF}"/cases/*.c; do
   "${OUT}/host" > "${OUT}/golden" 2>/dev/null
 
   # --- candidate: sdcc88 -> sdas88 -> link -> romgen -> emulator ---
-  if ! cc -E -P -I "$DIFF" "${OUT}/wrap.c" > "${OUT}/${b}.i" 2>"${OUT}/err"; then
+  if ! cc -std=gnu17 -E -P -I "$DIFF" "${OUT}/wrap.c" > "${OUT}/${b}.i" 2>"${OUT}/err"; then
     report_fail "$b" "CPP-FAIL" "${OUT}/err"; continue
   fi
   if ! "$SDCCBIN" -ms1c88 --c1mode -o "${OUT}/${b}.asm" < "${OUT}/${b}.i" 2>"${OUT}/err" \
