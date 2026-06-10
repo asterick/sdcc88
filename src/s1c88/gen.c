@@ -11645,7 +11645,18 @@ genLeftShift (const iCode *ic)
   bool z80n_de = ((result->aop->size == 2 && (0 || 0) ||
     result->aop->size == 1 && (0 || 0))) && true;
 
+  /* The variable-count shift body routes any L/H byte of the shifted value (and
+     any memory byte) through A as scratch — sla/srl only take a/b/(hl).  So A
+     must NOT be the loop counter when the value lives in L/H or memory, or the
+     body clobbers the count mid-loop (ld a,l; sla a; ld l,a) and it never
+     terminates.  genRightShift already enforces this; this closes the matching
+     gap for genLeftShift (found via the bitops rotate diff test). */
+  bool a_unsafe_counter = result->aop->type != AOP_REG ||
+    result->aop->regs[L_IDX] >= 0 || result->aop->regs[H_IDX] >= 0 ||
+    left->aop->regs[L_IDX] >= 0 || left->aop->regs[H_IDX] >= 0;
+
   if (right->aop->type == AOP_REG && !bitVectBitValue (ic->rSurv, right->aop->aopu.aop_reg[0]->rIdx) && right->aop->aopu.aop_reg[0]->rIdx != IYL_IDX && (sameRegs (left->aop, result->aop) || left->aop->type != AOP_REG) &&
+    !(a_unsafe_counter && right->aop->aopu.aop_reg[0]->rIdx == A_IDX) &&
     (result->aop->type != AOP_REG ||
     result->aop->aopu.aop_reg[0]->rIdx != right->aop->aopu.aop_reg[0]->rIdx &&
     !aopInReg (result->aop, 0, right->aop->aopu.aop_reg[0]->rIdx) && !aopInReg (result->aop, 1, right->aop->aopu.aop_reg[0]->rIdx) && !aopInReg (result->aop, 2, right->aop->aopu.aop_reg[0]->rIdx) && !aopInReg (result->aop, 3, right->aop->aopu.aop_reg[0]->rIdx)))
@@ -11653,7 +11664,7 @@ genLeftShift (const iCode *ic)
   else if (isRegDead (B_IDX, ic) && (sameRegs (left->aop, result->aop) || left->aop->type != AOP_REG || shift_by_lit) &&
     !aopInReg (result->aop, 0, B_IDX) && !aopInReg (result->aop, 1, B_IDX) && !aopInReg (result->aop, 2, B_IDX) && !aopInReg (result->aop, 3, B_IDX))
     countreg = B_IDX;
-  else if (isRegDead (A_IDX, ic) && result->aop->regs[A_IDX] < 0 && left->aop->regs[A_IDX] < 0)
+  else if (isRegDead (A_IDX, ic) && !a_unsafe_counter && result->aop->regs[A_IDX] < 0 && left->aop->regs[A_IDX] < 0)
     countreg = A_IDX;
   else if (isRegDead (B_IDX, ic) && result->aop->regs[B_IDX] < 0 && left->aop->regs[B_IDX] < 0)
     countreg = B_IDX;

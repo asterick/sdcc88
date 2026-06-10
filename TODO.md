@@ -38,9 +38,17 @@ several real **silent** miscompiles that byte-identical assembly never could. An
 fair game. Workflow: add the case, run the three gates, fix what surfaces, add a regression for any bug.
 
 **Covered so far:** integer arith/casts/shifts (`arith`), bitfields, calls, control flow, float, fnptr,
-libc, long long, long shifts, pointer arith, sprintf, struct args, switch, unions — and now
-**read-modify-write** (`compound`: compound-assign `+= … >>=` and `++`/`--` across every width/signedness ×
-direct/indexed/indirect addressing modes).
+libc, long long, long shifts, pointer arith, sprintf, struct args, switch, unions, **read-modify-write**
+(`compound` scalar + `aggregate` struct/array members), **`__far` pointers** (`farptr`: read/write/RMW/
+arith/diff/compare), **recursion** (`recursion`: tree/mutual/Ackermann + live-locals-across-call),
+**irregular control flow** (`cflow2`: Duff's device, goto FSM, nested switch/loop), and **bit-manipulation
+idioms** (`bitops`: rotates, bswap, popcount, clz/ctz, sext, saturating).
+
+> **Bug found by `bitops` (fixed, PR #29):** a variable-count **left shift** of a value held in `L`/`H`
+> miscompiled to an **infinite loop**. `sla`/`srl` only take `a`/`b`/`(hl)`, so the body shifts an L/H byte
+> via `ld a,L; sla a; ld L,a` (A as scratch) — but `genLeftShift` could pick **A as the loop counter**, so
+> the body clobbered the count and the loop never terminated. `genRightShift` already guarded this; the fix
+> closes the matching gap in `genLeftShift`. Corpus byte-identical (the pattern isn't in the corpus).
 
 > **Test-authoring rule (learned writing `compound`):** keep per-iteration work in **small straight-line
 > helper functions** called from the loop (as `arith` does), never a single giant macro-expanded
