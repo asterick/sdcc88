@@ -98,7 +98,19 @@ jobs:
         run: ./build.sh
 
       - name: Run the unified test suite (TAP)
-        run: ./scripts/run-tests.sh
+        run: DIFF_SAVE_DIR="$PWD/build/diff-products" ./scripts/run-tests.sh
+
+      # The differential suite's guest pipeline products (.asm/.ihx/.min per
+      # case), kept even on failure so a host-dependent codegen divergence can
+      # be byte-diffed against another platform's products offline.
+      - name: Upload diff-test pipeline products
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: diff-products-darwin-arm64
+          path: build/diff-products/
+          if-no-files-found: ignore
+          retention-days: 7
 
       - name: Package the SDK
         run: ./scripts/package-sdk.sh

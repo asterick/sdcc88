@@ -48,7 +48,7 @@ EOF
 
 # Concatenate the data bytes of every type-00 ihx record, in file order (the
 # single _CODE block at org 0).
-got="$(awk '
+got="$(gawk '
   /^:/ {
     ll = strtonum("0x" substr($0,2,2)); t = substr($0,8,2);
     if (t != "00") next;
