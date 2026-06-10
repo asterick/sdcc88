@@ -48,7 +48,7 @@ replace restart {
 	add	hl, %2
 } by {
 	; common peephole 2b removed add hl, %2 due to unused result.
-} if notUsed('hl' 'cf' 'nf')
+} if notUsed('hl' 'cf')
 
 replace restart {
 	%1	%2
@@ -1302,7 +1302,7 @@ replace restart {
 	ld	a, %1
 	; common peephole 100b removed redundant or after %2
 
-} if same(%2 'inc' 'dec'), notUsed('cf' 'hf' 'nf' 'sf' 'pf')
+} if same(%2 'inc' 'dec'), notUsed('cf' 'nf' 'vf')
 
 replace restart {
 	xor	a,%1
@@ -2048,7 +2048,7 @@ replace restart {
 	dec	%1
 } by {
 	; common peephole 156c removed inc %1 / dec %1 pair.
-} if same(%1 'a' 'b' 'c' 'd' 'e' 'h' 'l' 'ixh' 'ixl' 'iyh' 'iyl'), notUsed('zf' 'vf' 'sf' 'nf' 'hf')
+} if same(%1 'a' 'b' 'c' 'd' 'e' 'h' 'l' 'ixh' 'ixl' 'iyh' 'iyl'), notUsed('zf' 'vf' 'nf')
 
 replace restart {
 	inc	%2

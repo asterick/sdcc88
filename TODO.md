@@ -73,14 +73,18 @@ fix the cheap reachable ones, delete the genuinely-impossible guards. Categories
 
 ---
 
-## #20 — z80-artifact scrub remainder
+## ✅ #20 — z80-artifact scrub — DONE
 
-The bulk is done. Remaining: the peephole **flag-token model** (`pf`/`sf`/`hf`/`nf`/`vf`/`lf` — z80 flag
-names). NOT a clean rename — the S1C88 has Z/C/V/N (no S/P/H; N is negative, not add-subtract), so it's a
-real flag-semantics task that overlaps the #12-flag-reuse analysis. Defer until it's worth a careful pass.
+The full scrub is complete: dead multi-dialect asm machinery removed, the `jp→jr→jrs` chain collapsed, and
+the peephole **flag-token model** corrected to the real S1C88 flag set. The z80 model carried six flags
+(`zf`/`cf`/`sf`/`pf`/`nf`/`hf`); the S1C88 has only **four** — Z/C/V/N. The z80 `nf` (add-subtract) and `hf`
+(half-carry) don't exist here and were only ever read by `daa` (which the port never emits), so they were
+dead — removed from `peep.c` + `peeph.def`. The remaining tokens are renamed to S1C88 names: `pf`→`vf` (V
+overflow), `sf`→`nf` (N negative). **Corpus byte-identical** — proving the change is behavior-preserving (it
+removes genuinely-dead bookkeeping and renames consistently), not a codegen change.
 
-**MUST NOT touch:** `TARGET_Z80_LIKE` / `TARGET_IS_Z80` / `IS_Z80` (shared SDCC core — the port depends on
-being z80-like) and `sdldz80` (the ASxxxx linker-binary / build-script contract).
+**MUST NOT touch (by design):** `TARGET_Z80_LIKE` / `TARGET_IS_Z80` / `IS_Z80` (shared SDCC core — the port
+depends on being z80-like) and `sdldz80` (the ASxxxx linker-binary / build-script contract).
 
 ---
 
