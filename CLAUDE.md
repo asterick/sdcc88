@@ -25,12 +25,12 @@ and builds the compiler.
 > model fits the S1C88 well) and is fully retargeted to the real S1C88 ISA. The binary toolchain — `sdas88`
 > (full ISA, byte-verified, also the codegen validator, with same-module branch relaxation), `sdldz80`
 > (assemble→link + **banked `bcall`/`bjump`**, linker-resolved bank switching), `romgen` (C, → flat `.min`,
-> or the **MINX** `.minx` debug container — `docs/s1c88/minx-format.md`, reader `minxdump`; the format is
-> **in design iteration on PR #37 — do not merge it without an explicit ask**)
+> or the **MINX** `.minx` debug container — sparse ROM segments + the full source-line debug tables, spec
+> `docs/s1c88/minx-format.md`, reader `minxdump`; **complete, merged via PR #37**)
 > — plus the production `crt0`, `s1c88.lib`, and `<pm.h>` device header are all in place. Codegen is
 > functionally complete (all numbered ABI tasks closed; native `DIV`/`MLT`; 3-byte banked function pointers;
 > S1C88 **MAXIMUM-mode** call model; int×int→long widening multiply), every gate green (corpus 20/20
-> byte-identical, emu-test 18/18, diff-test 25, run-tests 67/67), and the differential-mining suite is
+> byte-identical, emu-test 18/18, diff-test 25, run-tests 69/69), and the differential-mining suite is
 > **clean with no known correctness bugs** (integer / pointer / far-pointer / struct / union / fnptr /
 > long-long / float / recursion / control-flow / bit-ops / mixed-width / `volatile` / libc all verified).
 > The bundled libc covers `string.h`, `stdlib.h`, `ctype.h`, and
