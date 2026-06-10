@@ -13452,7 +13452,13 @@ genPointerGet (const iCode *ic)
     pair = getPairId (left->aop);
   else
     {
-      if (!isPairDead (pair, ic) && size > 1 && (getPairId (left->aop) != pair || rightval || bit_field || size > 2)) // For simple cases, restoring via dec is cheaper than push / pop.
+      /* A live pointer allocated ACROSS the pair in the wrong byte order (low in
+         H and/or high in L — a layout the tree allocator may pick) is destroyed
+         by fetchPairLong's in-place swap, and the dec-fixup below can't restore
+         it (it only undoes incs on a properly-ordered pair). Save the pair even
+         for single-byte reads then. */
+      bool left_swapped_in_pair = aopInReg (left->aop, 0, _pairs[pair].h_idx) || aopInReg (left->aop, 1, _pairs[pair].l_idx);
+      if (!isPairDead (pair, ic) && (size > 1 || left_swapped_in_pair) && (getPairId (left->aop) != pair || rightval || bit_field || size > 2)) // For simple cases, restoring via dec is cheaper than push / pop.
         _push (pair), pushed_pair = TRUE;
       if (left->aop->type == AOP_IMMD)
         {
