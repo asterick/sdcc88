@@ -445,10 +445,14 @@ cost steering wins); they bite only under extreme register/pointer pressure.
 | **Permutation cycle through A** | `genMove_o` | a register-shuffle cycle that routes through A but isn't the plain `A<->B` swap (the only one with a native `ex a,b`) |
 | **Giant struct return** | `genReceive` (struct-by-value) | returning a struct **> 255 bytes** — the byte-copy loop counter is 8-bit |
 | **HL-restore vs return-in-HL conflict** | `genRet` | a callee that must both restore a saved HL *and* return its result in HL |
-| **Struct-by-value arg parks BOTH HL and BA** | `genPointerPush` | a call that passes a struct by value followed by register args occupying *both* HL and BA, e.g. `f(struct, char, int)` — the struct push needs HL (walk pointer) + A/B (vehicle), and only the single dead IY is available to stash one parked pair. The common `f(struct, int)`/`f(struct, ptr)`/`f(u8, struct, int)` forms (one parked pair) compile correctly — they stash that pair via IY |
+| ~~**Struct-by-value arg parks BOTH HL and BA**~~ **(FIXED)** | `genPointerPush` | a call that passes a struct by value followed by register args occupying *both* HL and BA, e.g. `f(struct, char, int)`/`f(struct, int, int)` — the struct push needs HL (walk pointer) + A/B (vehicle), and only the single dead IY was available to stash one parked pair. **Now fixed:** the first parked pair stashes into IY, the second into the near-RAM `__sdcc_fptr` scratch cell (free during the push — it is only loaded at an indirect call's dispatch, after BA is restored). Covered by emu `18_structarg2` |
 
-**Status: documented (this table). The "lift" is a future target** — systematically construct a
-triggering C snippet for each, classify reachable-vs-cost-avoided, *fix* the cheap reachable ones
-(most are "find one more scratch slot" cases), and delete the genuinely-impossible guards. The cost
-steering makes triggers hard to hand-write (that difficulty *is* the evidence they rarely fire), so the
-lift is a real research pass, not a quick edit. None is a correctness risk today.
+**Status: the lift research pass is DONE.** An instrumented census (the `UNIMPLEMENTED` macro made to *log*
+`file:line` + dry-vs-real instead of aborting) compiled the full test battery (corpus + diff + emu) under
+all four `{default, --reserve-regs-iy, --opt-code-speed}` combos, plus hand-built triggers for every
+category above. Result: **65 of the 66 sites are cost-avoided** — they fire only during the allocator's dry
+run (the `cost(4000)` steering wins) and are never reached in real emit. The **one** site reachable in real
+emit was the `genPointerPush` "both pairs parked" case (a FATAL internal error on `f(struct, char, int)`),
+now **fixed** (above). The remaining 65 are genuine loud traps that never fire on real code; they are *not*
+deleted (a not-triggered guard is not a proven-impossible guard — the census shows what is reached, not what
+is unreachable), and none is a correctness risk.

@@ -5379,20 +5379,21 @@ genPointerPush (const iCode *ic)
   /* The push needs HL as the walk pointer and A/B as the byte/word vehicle. A
      preceding SEND may have parked an argument in either pair (HL for the int/
      pointer overflow regs, BA when the struct is the FIRST argument so the next
-     int arg takes BA). Save whichever pair holds a sent value into the dead IY
-     across the push, then restore it before the call. Only one IY slot exists,
-     so a call that parked sent args in BOTH pairs (e.g. f(struct, int, int))
-     traps loudly rather than miscompiling. */
+     int arg takes BA). Save whichever pair holds a sent value across the push,
+     then restore it before the call: the first parked pair goes into the dead
+     IY, and when BOTH pairs are parked (e.g. f(struct, char, int)) the second
+     goes into the near-RAM __sdcc_fptr scratch cell — free here, since the push
+     precedes the call and even an indirect call only loads __sdcc_fptr at
+     dispatch, after BA has been restored below. */
   bool stash_hl = !isRegDead (HL_IDX, ic) || send_h || send_l;
   bool stash_ba = send_a || send_b;
-
-  if (stash_hl && stash_ba)
-    UNIMPLEMENTED;
+  bool stash_ba_fptr = stash_hl && stash_ba;   /* both parked: BA spills to __sdcc_fptr */
 
   /* A live A that is NOT a saved sent-arg can't be clobbered by the vehicle. */
   if (!isRegDead (A_IDX, ic) && !stash_ba)
     UNIMPLEMENTED;
 
+  /* IY holds the first parked pair: HL when both are parked, else whichever one is. */
   asmop *stashed = stash_hl ? ASMOP_HL : stash_ba ? ASMOP_BA : 0;
   if (stashed)
     {
@@ -5400,6 +5401,12 @@ genPointerPush (const iCode *ic)
         UNIMPLEMENTED;
       emit2 ("ld iy, %s", stash_hl ? "hl" : "ba");
       cost2 (2, 0);
+    }
+  if (stash_ba_fptr)
+    {
+      emit2 (".globl __sdcc_fptr");
+      emit2 ("ld (__sdcc_fptr), ba");
+      cost (3, 5);
     }
 
   genMove (ASMOP_HL, IC_LEFT (ic)->aop, true, true, stashed ? false : isRegDead (IY_IDX, ic));
@@ -5455,8 +5462,14 @@ genPointerPush (const iCode *ic)
       emit2 ("ld %s, iy", stash_hl ? "hl" : "ba");
       cost2 (2, 0);
       spillPair (PAIR_IY);
-      if (stash_ba)
+      if (stash_ba && !stash_ba_fptr)
         spillPair (PAIR_BA);
+    }
+  if (stash_ba_fptr)
+    {
+      emit2 ("ld ba, (__sdcc_fptr)");
+      cost (3, 5);
+      spillPair (PAIR_BA);
     }
   spillPair (PAIR_HL);
 
