@@ -189,12 +189,11 @@ s1c88MightReadFlagCondition(const char *cond, const char *what)
   while(isspace (*cond))
     cond++;
 
-  /* S1C88 v/nv test the overflow flag, modeled as the z80 P/V token "pf"
-     ("vf" aliases to it).  (Replaces the z80 parity conditions po/pe.) */
+  /* S1C88 v/nv test the overflow flag V (token "vf"; replaces the z80 po/pe). */
   if(tolower(cond[0]) == 'v' || !STRNCASECMP(cond, "nv", 2))
-    return !strcmp(what, "pf");
+    return !strcmp(what, "vf");
   if(tolower(cond[0]) == 'm' || tolower(cond[0]) == 'p')
-    return !strcmp(what, "sf");
+    return !strcmp(what, "nf");
 
   // skip inverted conditions
   if(tolower(cond[0]) == 'n')
@@ -279,10 +278,6 @@ s1c88MightReadFlag(const lineNode *pl, const char *what)
      ISINST(pl->line, "adc") ||
      ISINST(pl->line, "ccf"))
     return (!strcmp(what, "cf"));
-
-  if(ISINST(pl->line, "daa"))
-    return (!strcmp(what, "cf") || !strcmp(what, "nf") ||
-            !strcmp(what, "hf"));
 
   if(ISINST(pl->line, "push"))
     return (argCont(pl->line + 4, "af"));
@@ -618,7 +613,7 @@ s1c88SurelyWritesFlag(const lineNode *pl, const char *what)
     But it is most popular instruction so place it first */
   if(ISINST(pl->line, "ld"))
     {
-      if(!!strcmp(what, "pf") ||
+      if(!!strcmp(what, "vf") ||
           !argCont(pl->line+3, "a"))
         return false;
       const char *p = strchr(pl->line+4, ',');
@@ -632,7 +627,7 @@ s1c88SurelyWritesFlag(const lineNode *pl, const char *what)
      ISINST(pl->line, "rrca") ||
      ISINST(pl->line, "rra")  ||
      ISINST(pl->line, "rla"))
-    return (!!strcmp(what, "zf") && !!strcmp(what, "sf") && !!strcmp(what, "pf"));
+    return (!!strcmp(what, "zf") && !!strcmp(what, "nf") && !!strcmp(what, "vf"));
 
   if(ISINST(pl->line, "adc") ||
      ISINST(pl->line, "and") ||
@@ -672,15 +667,12 @@ s1c88SurelyWritesFlag(const lineNode *pl, const char *what)
      ISINST(pl->line, "outi"))
     return (!!strcmp(what, "cf"));
 
-  if(ISINST(pl->line, "daa"))
-    return (!!strcmp(what, "nf"));
-
   if(ISINST(pl->line, "ccf") ||
     ISINST(pl->line, "scf"))
-    return (!strcmp(what, "hf") || !strcmp(what, "nf") || !strcmp(what, "cf"));
+    return (!strcmp(what, "cf"));     /* S1C88 scf/ccf touch only C */
 
   if(ISINST(pl->line, "cpl"))
-    return (!strcmp(what, "hf") || !strcmp(what, "nf"));
+    return false;                     /* S1C88 cpl sets none of Z/C/V/N */
 
   if(ISINST(pl->line, "inc") || ISINST(pl->line, "dec"))
     {
@@ -712,14 +704,14 @@ s1c88SurelyWritesFlag(const lineNode *pl, const char *what)
           !strncmp(arg, "ba,", 3) || !strncmp(arg, "ba ,", 4))
         return true;
       // add sp,X (or unknown): conservatively don't claim Z/S/P.
-      return (!!strcmp(what, "zf") && !!strcmp(what, "sf") && !!strcmp(what, "pf"));
+      return (!!strcmp(what, "zf") && !!strcmp(what, "nf") && !!strcmp(what, "vf"));
     }
 
   if(ISINST(pl->line, "ldd") ||
     ISINST(pl->line, "lddr") ||
     ISINST(pl->line, "ldi") ||
     ISINST(pl->line, "ldir"))
-    return (!strcmp(what, "hf") || !strcmp(what, "pf") || !strcmp(what, "nf"));
+    return (!strcmp(what, "vf"));
 
   // pop af writes
   if(ISINST(pl->line, "pop"))
@@ -732,7 +724,7 @@ s1c88SurelyWritesFlag(const lineNode *pl, const char *what)
 
   if(ISINST(pl->line, "rld") ||
     ISINST(pl->line, "rrd"))
-    return (!strcmp(what, "hf") || !strcmp(what, "pf") || !strcmp(what, "nf"));
+    return (!strcmp(what, "vf"));
 
   if(ISINST(pl->line, "djnz") ||
     ISINST(pl->line, "ex") ||
@@ -1121,10 +1113,11 @@ s1c88notUsed (const char *what, lineNode *endPl, lineNode *head)
       what++;
     }
 
+  /* S1C88 has FOUR flags: Z, C, V (overflow), N (negative).  The z80 nf
+     (add-subtract) and hf (half-carry) do not exist here. */
   if(strcmp(what, "f") == 0)
     return s1c88notUsed("zf", endPl, head) && s1c88notUsed("cf", endPl, head) &&
-           s1c88notUsed("sf", endPl, head) && s1c88notUsed("pf", endPl, head) &&
-           s1c88notUsed("nf", endPl, head) && s1c88notUsed("hf", endPl, head);
+           s1c88notUsed("nf", endPl, head) && s1c88notUsed("vf", endPl, head);
 
   if(strcmp(what, "iy") == 0)
     {
@@ -1146,9 +1139,9 @@ s1c88notUsed (const char *what, lineNode *endPl, lineNode *head)
       return(s1c88notUsed(low, endPl, head) && s1c88notUsed(high, endPl, head));
     }
 
-  // P/V and L/V (rabbits) are the same flag
-  if(!strcmp(what, "vf") || !strcmp(what, "lf"))
-    what = "pf";
+  // L/V (Rabbit) names the overflow flag V on the S1C88
+  if(!strcmp(what, "lf"))
+    what = "vf";
 
   // SM83 does not use what it does not have
   // but this allows to write rules for all Z80ies
