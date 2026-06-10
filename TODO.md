@@ -64,12 +64,16 @@ there is its real ISR prologue; corpus byte-identical (link output unchanged). R
 
 ---
 
-## #16 — codegen-boundary lift (research pass)
+## ✅ #16 — codegen-boundary lift (research pass) — DONE
 
-The ~66 `UNIMPLEMENTED` sites are **loud traps, never silent miscompiles** (a `cost(4000)` dry-run penalty
-steers the allocator away). Construct a triggering C snippet per site, classify reachable-vs-cost-avoided,
-fix the cheap reachable ones, delete the genuinely-impossible guards. Categories cataloged in
-`docs/s1c88/abi-decision.md` "Known codegen boundaries". None is a correctness risk today.
+The 66 `UNIMPLEMENTED` sites are **loud traps, never silent miscompiles** (a `cost(4000)` dry-run penalty
+steers the allocator away). An instrumented census (the macro made to log dry-vs-real instead of aborting)
+compiled the full test battery under all `{default, --reserve-regs-iy, --opt-code-speed}` combos plus
+hand-built triggers per category. **Result: 65/66 are cost-avoided** (fire only in the dry run, never in
+real emit); the **one** reachable site — `genPointerPush` aborting on `f(struct, char, int)` — is now
+**fixed** (second parked pair stashes into the `__sdcc_fptr` scratch cell; emu `18_structarg2`). The other
+65 are left as live traps: a not-triggered guard isn't a proven-impossible guard, so deleting them would be
+unsound. See `docs/s1c88/abi-decision.md` "Known codegen boundaries". None was a correctness risk.
 
 ---
 
@@ -88,9 +92,9 @@ depends on being z80-like) and `sdldz80` (the ASxxxx linker-binary / build-scrip
 
 ---
 
-## Deferred — pick up on demand
+## Out of scope (won't do)
 
-- **#17-setjmp** — upstream `_setjmp.c` is mcs51-only (`#include <8051.h>`); an s1c88 `setjmp`/`longjmp`
-  needs port asm (save/restore SP, return PC, callee-saved IX/IY). Rarely needed on this target.
-- **#17-malloc** — needs a heap area + `_sdcc_heap` wired into crt0/linker; a real design choice on a 4 KB-RAM
-  device.
+- **`setjmp`/`longjmp`** and **`malloc`/`free`** — not pursued. A Pokémon Mini ROM has no realistic use for
+  either (no non-local-jump-heavy C, and dynamic allocation is impractical on 4 KB of RAM). Both need real
+  port work (setjmp = hand asm; malloc = a heap area + `_sdcc_heap` wiring) for no benefit, so they stay
+  unimplemented by design.
