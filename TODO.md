@@ -37,6 +37,19 @@ ABI-shaped behaviour) is run through `corpus-check` + `emu-test` + `diff-test`. 
 several real **silent** miscompiles that byte-identical assembly never could. Any untested C construct is
 fair game. Workflow: add the case, run the three gates, fix what surfaces, add a regression for any bug.
 
+**Covered so far:** integer arith/casts/shifts (`arith`), bitfields, calls, control flow, float, fnptr,
+libc, long long, long shifts, pointer arith, sprintf, struct args, switch, unions — and now
+**read-modify-write** (`compound`: compound-assign `+= … >>=` and `++`/`--` across every width/signedness ×
+direct/indexed/indirect addressing modes).
+
+> **Test-authoring rule (learned writing `compound`):** keep per-iteration work in **small straight-line
+> helper functions** called from the loop (as `arith` does), never a single giant macro-expanded
+> `diff_run`. SDCC's codegen is **superlinear in function/basic-block size** — a ~4000-line function takes
+> minutes and a ~6000-line one effectively hangs the compiler (measured: 1.4s→6.5s→42s→∞ as one function
+> grew). This is an inherent SDCC characteristic, not an s1c88 bug; real code rarely hits it, but a
+> macro-heavy test can. Also watch the **near common-bank budget** (0x2100–0x7FFF): a too-large case
+> overflows it (`romgen: common-bank overflow`) — split it or trim coverage.
+
 ---
 
 ## Code size (#12) — yardstick `scripts/size-check.sh`
