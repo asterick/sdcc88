@@ -28,18 +28,19 @@ and builds the compiler.
 > — plus the production `crt0`, `s1c88.lib`, and `<pm.h>` device header are all in place. Codegen is
 > functionally complete (all numbered ABI tasks closed; native `DIV`/`MLT`; 3-byte banked function pointers;
 > S1C88 **MAXIMUM-mode** call model; int×int→long widening multiply), every gate green (corpus 20/20
-> byte-identical, emu-test 17/17, diff-test 16, run-tests 56/56), and the differential-mining suite is
-> **clean with no known correctness bugs** (integer / pointer / struct / union / fnptr / long-long / float
-> / libc all verified). The bundled libc covers `string.h`, `stdlib.h`, `ctype.h`, and
+> byte-identical, emu-test 18/18, diff-test 25, run-tests 67/67), and the differential-mining suite is
+> **clean with no known correctness bugs** (integer / pointer / far-pointer / struct / union / fnptr /
+> long-long / float / recursion / control-flow / bit-ops / mixed-width / `volatile` / libc all verified).
+> The bundled libc covers `string.h`, `stdlib.h`, `ctype.h`, and
 > `printf`/`sprintf` (`<stdio.h>`, default `putchar` → `DEBUG_OUT`).
 >
 > Linker cross-module relaxation (#14c) is **done and default-on** — every link reclaims same-bank
-> cross-module `ld nb` bytes (opt out `SDLD_NO_RELAX=1`; `size-check.sh`'s `#14c relax` section). Ongoing
-> work on the existing source base is the **forward backlog in [`TODO.md`](TODO.md)** (repo root): more
-> differential coverage (#11), code-size work (#12, yardstick `size-check.sh`), the `UNIMPLEMENTED`-boundary
-> lift (#16), the stale-symtab debug-info fix (#14e), and the z80-lineage flag-token cleanup (#20).
-> Design/ABI: **`docs/s1c88/abi-decision.md`**; end-user guide: **`docs/s1c88/building-roms.md`**; the
-> toolchain: `docs/s1c88/{sdas88-retarget,banked-branch}.md`.
+> cross-module `ld nb` bytes (opt out `SDLD_NO_RELAX=1`; `size-check.sh`'s `#14c relax` section). The
+> numbered backlog is essentially closed — #14e (stale-symtab), #16 (`UNIMPLEMENTED`-boundary lift), #20
+> (z80-artifact scrub) all done, and #11 differential mining concluded (the suite is comprehensive). The
+> remaining **forward backlog in [`TODO.md`](TODO.md)** (repo root) is just the low-value #12 code-size
+> peepholes (inert on the current corpus). Design/ABI: **`docs/s1c88/abi-decision.md`**; end-user guide:
+> **`docs/s1c88/building-roms.md`**; the toolchain: `docs/s1c88/{sdas88-retarget,banked-branch}.md`.
 
 ## The codegen design (read `docs/s1c88/abi-decision.md`)
 
