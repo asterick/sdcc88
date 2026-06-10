@@ -69,7 +69,7 @@ fi
 # Reads relocated-listing lines, classifies each bcall/bjump slot from its FINAL
 # bytes, and prints one TSV record per slot: module cat disp cur min saved target
 analyze_rst() {  # $1 = module label, $2 = .rst path
-awk -v MOD="$1" '
+gawk -v MOD="$1" '
   function h(x){ return strtonum("0x" x) }                 # hex byte -> int
   function s8(d){ return (d>=128) ? d-256 : d }            # signed int8 test helper
   # collect the per-line object bytes (tokens before the leading TAB)

@@ -59,8 +59,10 @@ EOF
   || { echo "FAIL: link"; exit 1; }
 "${SDCC}/bin/romgen" "$tmp/r.ihx" "$tmp/r.min" --far=0x18800-0x18fff || { echo "FAIL: romgen"; exit 1; }
 
-# Verify with a hexdump of the three physical regions.
-hx() { od -An -tx1 -j "$1" -N "$2" "$tmp/r.min" | tr -s ' ' | sed 's/^ //'; }
+# Verify with a hexdump of the three physical regions. Rejoin od's fields with
+# awk: BSD od (macOS) pads the line with trailing whitespace, which broke the
+# exact-match case patterns below under `tr -s ' ' | sed 's/^ //'`.
+hx() { od -An -tx1 -j "$1" -N "$2" "$tmp/r.min" | awk '{for(i=1;i<=NF;i++)printf "%s%s",(c++?" ":""),$i}'; }
 home="$(hx 0 8)"        # _start @ physical 0x2100 (file 0)
 b1="$(hx $((0x8000-0x2100)) 3)"    # _b1fn  @ physical 0x08000
 b2="$(hx $((0x10000-0x2100)) 3)"   # _b2fn  @ physical 0x10000

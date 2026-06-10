@@ -145,5 +145,14 @@ for src in "${DIFF}"/cases/*.c; do
   fi
 done
 
+# DIFF_SAVE_DIR=<dir>: keep the per-case guest pipeline products (.i .asm .rel
+# .ihx .min) for offline comparison — e.g. byte-diffing a CI host's codegen
+# against another host's. The work dir itself is a mktemp cleaned on exit.
+if [ -n "${DIFF_SAVE_DIR:-}" ]; then
+  mkdir -p "$DIFF_SAVE_DIR"
+  cp -f "${OUT}"/*.i "${OUT}"/*.asm "${OUT}"/*.rel "${OUT}"/*.ihx "${OUT}"/*.min \
+        "$DIFF_SAVE_DIR"/ 2>/dev/null || true
+fi
+
 if [ -z "$TAP" ]; then echo "== diff-test: ${pass} passed, ${fail} failed =="; fi
 [ "$fail" -eq 0 ]

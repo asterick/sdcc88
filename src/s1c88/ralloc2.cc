@@ -850,7 +850,15 @@ static bool HLinst_ok(const assignment &a, unsigned short int i, const G_t &G, c
     return(true);
   if(ic->op == IPUSH) // Can handle anything.
     return(true);
-  if(POINTER_GET(ic) && input_in_L && input_in_H && (getSize(operandType(IC_RESULT(ic))) == 1 || !result_in_HL))
+  // A pointer occupying both L and H is fine for codegen — but a 2-byte pointer
+  // allocated SWAPPED (low in H, high in L) that survives the ic forces
+  // genPointerGet into a save/restore of the pair (the in-place swap that forms
+  // hl would otherwise destroy it). Don't bless that layout here; let the
+  // default reject it so the allocator picks the proper order. (Found by the
+  // macOS CI diff gate: darwin's Boost tie-break chose the swapped layout for
+  // cflow2's count_ab pointer and miscompiled it.)
+  if(POINTER_GET(ic) && input_in_L && input_in_H && (getSize(operandType(IC_RESULT(ic))) == 1 || !result_in_HL) &&
+    (getSize(operandType(IC_LEFT(ic))) != 2 || operand_is_pair(left, a, i, G) || dying_L && dying_H))
     return(true);
   if(ic->op == ADDRESS_OF &&
     (operand_in_reg(result, REG_IYL, ia, i, G) && ia.registers[REG_IYL][1] > 0 && I[ia.registers[REG_IYL][1]].byte == 0 && operand_in_reg(result, REG_IYH, ia, i, G)))

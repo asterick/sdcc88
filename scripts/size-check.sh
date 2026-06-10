@@ -62,7 +62,7 @@ _rom() {
   local e=""; [ "$2" = 1 ] && e="SDLD_NO_RELAX=1"
   env $e "${SDLD}" -nwxi -b _CODE=0x2100 -b _STUB=0x7000 -b _DATA=0x1000 \
       "${OUT}/l.ihx" $1 -k "${LIBDIR}" -l s1c88 >/dev/null 2>&1 || { echo ERR; return; }
-  awk '/^:/{ ll=strtonum("0x" substr($0,2,2)); t=substr($0,8,2);
+  gawk '/^:/{ ll=strtonum("0x" substr($0,2,2)); t=substr($0,8,2);
             if (t=="00") s+=ll } END{ print s+0 }' "${OUT}/l.ihx"
 }
 

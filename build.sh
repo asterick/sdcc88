@@ -38,7 +38,12 @@ if [ ! -f "${TARBALL}" ]; then
   echo ">> downloading SDCC ${SDCC_VER}"
   curl -fSL -A "Mozilla/5.0" "${TARBALL_URL}" -o "${TARBALL}"
 fi
-echo "${SDCC_SHA256}  ${TARBALL}" | sha256sum -c -
+# sha256sum on GNU systems, shasum (perl, always present) on macOS
+if command -v sha256sum >/dev/null 2>&1; then
+  echo "${SDCC_SHA256}  ${TARBALL}" | sha256sum -c -
+else
+  echo "${SDCC_SHA256}  ${TARBALL}" | shasum -a 256 -c -
+fi
 
 # 2. Extract with Python (no dependency on a bzip2 binary).
 if [ ! -d "${SDCC}" ]; then
@@ -82,7 +87,9 @@ echo ">> teaching stdarg.h / sdcc-lib.h that s1c88 is z80-like"
 for h in stdarg.h sdcc-lib.h; do
   f="${SDCC}/device/include/${h}"
   if [ -f "$f" ] && ! grep -q '__SDCC_s1c88' "$f"; then
-    sed -i 's/defined(__SDCC_z80)/defined(__SDCC_s1c88) || defined(__SDCC_z80)/g' "$f"
+    # -i with an explicit suffix is the form both GNU and BSD sed accept
+    sed -i.s1c88bak 's/defined(__SDCC_z80)/defined(__SDCC_s1c88) || defined(__SDCC_z80)/g' "$f"
+    rm -f "${f}.s1c88bak"
   fi
 done
 

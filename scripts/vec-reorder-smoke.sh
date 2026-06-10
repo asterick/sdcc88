@@ -36,7 +36,7 @@ EOF
 slot() {  # $1 = extra linker env already exported
 	"$SDLD" -nwxi -b _CODE=0x0100 "$tmp/v.ihx" "$tmp/v.rel" >/dev/null 2>&1 \
 		|| { echo "FAIL: link"; exit 1; }
-	awk '
+	gawk '
 	  /^:/ {
 	    ll = strtonum("0x" substr($0,2,2));
 	    addr = strtonum("0x" substr($0,4,4));

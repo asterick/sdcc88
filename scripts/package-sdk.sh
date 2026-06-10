@@ -3,7 +3,8 @@
 # package-sdk.sh — stage the built SDK as a relocatable tree and tar it up.
 #
 # Produces build/dist/sdcc88-sdk/ (the staged tree) and
-# build/dist/sdcc88-sdk-<version>-linux-x64.tar.gz. The layout is the standard
+# build/dist/sdcc88-sdk-<version>-<os>-<arch>.tar.gz for the HOST platform
+# (linux-x64, darwin-arm64, ...). The layout is the standard
 # SDCC install shape, which the driver resolves relative to its own binary
 # (path(argv0)/../share/sdcc/{include,lib} for headers+runtime, path(argv0)
 # first when spawning sdcpp/sdas88/sdldz80), so the unpacked tree works from
@@ -45,9 +46,20 @@ SDCC="${REPO}/build/sdcc-4.5.0"
 "${REPO}/scripts/build-runtime.sh" >/dev/null
 
 VERSION="${SDK_VERSION:-$(git -C "$REPO" describe --tags --always --dirty 2>/dev/null || echo unknown)}"
+case "$(uname -s)" in
+  Darwin) HOST_OS=darwin ;;
+  Linux)  HOST_OS=linux ;;
+  *)      HOST_OS="$(uname -s | tr '[:upper:]' '[:lower:]')" ;;
+esac
+case "$(uname -m)" in
+  x86_64)        HOST_ARCH=x64 ;;
+  arm64|aarch64) HOST_ARCH=arm64 ;;
+  *)             HOST_ARCH="$(uname -m)" ;;
+esac
+PLATFORM="${HOST_OS}-${HOST_ARCH}"
 DIST="${REPO}/build/dist"
 STAGE="${DIST}/sdcc88-sdk"
-TARBALL="${DIST}/sdcc88-sdk-${VERSION}-linux-x64.tar.gz"
+TARBALL="${DIST}/sdcc88-sdk-${VERSION}-${PLATFORM}.tar.gz"
 
 echo ">> staging ${STAGE}"
 rm -rf "$STAGE"
@@ -70,6 +82,12 @@ cp "${SDCC}/support/cpp/gcc/cc1" "${LIBEXEC}/cc1"
 
 strip "${STAGE}/bin/"* "${LIBEXEC}/cc1" 2>/dev/null \
   || echo "   (strip unavailable — shipping unstripped)"
+# macOS: stripping invalidates the linker's ad-hoc code signature; arm64 refuses
+# to exec unsigned binaries, so re-sign ad-hoc (the relocation smoke below would
+# catch a miss, but only with a cryptic "Killed: 9").
+if [ "$HOST_OS" = darwin ]; then
+  codesign -f -s - "${STAGE}/bin/"* "${LIBEXEC}/cc1"
+fi
 
 cp -r "${SDCC}/share" "${STAGE}/share"
 
@@ -80,7 +98,7 @@ cp "${REPO}/examples/hello/hello.c" "${REPO}/examples/hello/Makefile" \
    "${REPO}/examples/hello/README.md" "${STAGE}/examples/hello/"
 
 cat > "${STAGE}/README.md" <<EOF
-# sdcc88 SDK ${VERSION} (linux-x64)
+# sdcc88 SDK ${VERSION} (${PLATFORM})
 
 A C toolchain for the **Pokémon Mini** (Epson S1C88) — SDCC 4.5.0 retargeted to
 the S1C88 core. Built from https://github.com/asterick/sdcc88.
@@ -97,7 +115,7 @@ bin/romgen game.ihx game.minx         # ...or the MINX debug container (ROM+symb
   interrupts, \`<pm.h>\`).
 - \`examples/hello\` — a copy-me starter project (\`make SDK=/path/to/this/dir\`).
 
-Binaries are x86-64 Linux, dynamically linked against glibc/libstdc++.
+Binaries are ${PLATFORM}, dynamically linked against the system C/C++ runtime.
 SDCC is GPL-2.0-or-later — see \`LICENSE\`.
 EOF
 
@@ -136,7 +154,7 @@ else
 fi
 
 echo ">> tarring ${TARBALL}"
-rm -f "${DIST}"/sdcc88-sdk-*.tar.gz
+rm -f "${DIST}"/sdcc88-sdk-*-"${PLATFORM}".tar.gz
 tar -czf "$TARBALL" -C "$DIST" sdcc88-sdk
 ls -lh "$TARBALL" | awk '{print "   " $5 "  " $9}'
 echo ">> package-sdk OK"

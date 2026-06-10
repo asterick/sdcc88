@@ -1,6 +1,5 @@
 ;--------------------------------------------------------
 ; File Created by SDCC : free open source ISO C Compiler
-; Version 4.5.0 #15242 (Linux)
 ;--------------------------------------------------------
 	
 	.optsdcc -ms1c88 sdcccall(1)
