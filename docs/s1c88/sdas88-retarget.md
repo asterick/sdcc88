@@ -120,3 +120,18 @@ sdas88 keeps the stock ASxxxx macro processor (`asmcro.c`). Two non-obvious feat
   the operator is `'`, **not** `\` (which sdas leaves literal). This is what lets `device/lib/s1c88/crt0.s`
   generate the 27-slot cartridge IRQ vector table (`bjump _irq_v'n` + `.globl _irq_v'n`, each `.org`-pinned)
   from a single `.irp` over `1..26` instead of 54 hand-written lines — byte-identical output.
+
+## ⚠ The branch displacement convention (read before touching branch emission)
+
+The S1C88 computes a taken relative branch as **PC ← PC(after full fetch) + disp − 1**
+(Epson §4.3.3 `JRS rr → PC←PC+rr+1`; PokeMini `JMPS: PC = PC + OFFSET − 1`). So an **8-bit
+rr is relative to the rr byte's own address**, and a **16-bit qqrr is relative to (first disp
+byte + 1)** — both one byte EARLIER than the z80 next-instruction base the ASxxxx code
+inherits. sdas88 was off by one on EVERY relative branch until `47eb41c`; nothing caught it
+because no ROM is executed at assemble time.
+
+The fix is assembler-side only: local resolution uses the S1C88 base, and cross-area `R_PCR`
+relocs get a **+1 addend bias** so the stock z80-convention linker (`sdldz80` — it cannot be
+target-gated) lands on the right base. `scripts/branch-smoke.sh` byte-locks every form
+(jrs/cars/jrl/carl/djr/jp-lowering, fwd + back); run it whenever branch emission or the linker
+patch changes.

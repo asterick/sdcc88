@@ -45,9 +45,10 @@ the extraction note at the bottom.)
 
 ## sdcc88 backend decisions
 
-- [HANDOFF.md](HANDOFF.md) — **the resume entry point**: current state, the exact next action, and the
-  load-bearing gotchas. [TODO.md](TODO.md) — the forward work list. [building-roms.md](building-roms.md) —
-  the end-user guide.
+This folder holds reference + design docs (how the compiler and processor work). Project state lives in
+`../../CLAUDE.md` (overview + conventions) and the forward backlog in `../../TODO.md`; the end-user guide is
+[building-roms.md](building-roms.md).
+
 - [abi-decision.md](abi-decision.md) — **authoritative design**: the base-port choice (clone of SDCC's
   **z80** port), the target S1C88 C ABI / z80→s1c88 register mapping, the argument ABI, Task #9 `__far`
   pointers, Native DIV, and the MAXIMUM-mode call model.

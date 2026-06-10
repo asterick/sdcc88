@@ -303,7 +303,7 @@ closer, so a branch that fit can never stop fitting. So #14b adds NO `asmain.c` 
 (`e_base.e_ap != 0`); #14b must instead relax the **same-area** relocatable case, where
 the displacement is `e_addr − dot.s_addr` (known each pass). Port the ~30-line bit table
 from `asstm8`/`asf8` into `s1c88mch.c`. Watch the branch-displacement convention
-(§ HANDOFF: one byte earlier than z80) at *each* form.
+(§ sdas88-retarget.md: one byte earlier than z80) at *each* form.
 
 **Opportunity measured (#14a):** on real fully-linked programs (examples/hello +
 `scripts/relax/{fixmath,sprite}.c`), **user-code call sites shrink ~53% — 143 B saved of
