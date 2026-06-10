@@ -61,21 +61,24 @@ header + interrupt vector table + C startup) and `s1c88.lib` (the div/mul/mem/st
 support routines). The `.min` is byte 0 = physical `0x2100`; it boots on PokeMini
 and real hardware.
 
-**Want symbols and debug info bundled with the ROM?** `romgen` has a second output
+**Want source-level debugging bundled with the ROM?** `romgen` has a second output
 format: name the output `.minx` (or pass `--minx`) and it writes the **MINX
-container** — a single ELF-like sectioned binary holding the ROM image (byte-identical
-to the `.min`), a binary symbol table, and the linker's `.map`/`.noi` (and `.cdb`
-with `--debug`) embedded verbatim, auto-discovered next to the `.ihx`:
+container** — a single chunk-tree binary holding the ROM image (byte-identical to
+the `.min`), the symbol table, a sorted source-line table and function extents
+(from `--debug`), and the source files themselves embedded for display. A debugging
+emulator can consume it with no filesystem access and no text parsing:
 
 ```bash
 sdcc -ms1c88 --debug game.c -o game.ihx
-romgen game.ihx game.minx           # ROM + symtab + map/noi/cdb, one file
+romgen game.ihx game.minx           # ROM + symbols + lines + functions + sources
+minxdump game.minx                  # validate + inspect (--rom=out.min extracts)
 ```
 
-Emulators and flash carts still want the flat `.min`; the `.minx` is for debuggers,
-symbol servers, and archiving a build with its metadata intact. The format is
-specified in [minx-format.md](minx-format.md) (includes a ~20-line Python reference
-decoder; the flat ROM is recoverable from the container with one slice).
+Emulators and flash carts still want the flat `.min`; the `.minx` is for debuggers
+and for archiving a build with its metadata intact. The format is specified in
+[minx-format.md](minx-format.md); `tools/minxdump.c` is the reference reader.
+Sources are found next to the `.ihx` (or via `--srcdir=`); pass `--no-src` to keep
+your source text out of the file.
 
 The simplest way is the example project, which wraps both steps in a Makefile:
 

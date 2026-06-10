@@ -83,42 +83,19 @@ case "$farrd" in "c5 00 88 b0 01 ce cd 45 ce c5 00"*) echo "  ok  __far page byt
 # bjump lt,_b2fn -> jrs ge,+7 (ce e3 07) ; ld nb,#2 (ce c4 02) ; jrl (f3 ..): the
 # invert-and-skip + cross-bank NB write composed (TODO #13 worst case).
 case "$ccfn" in "ce e3 07 ce c4 02 f3") echo "  ok  bjump lt,_b2fn -> jrs ge,+7 ; ld nb,#2 ; jrl (cross-bank conditional)";; *) echo "  FAIL conditional cross-bank bjump"; fail=1;; esac
-# --- MINX container leg: same link packed as a sectioned debug bundle ---------------
+# --- MINX container leg: same link packed as a chunk-tree debug bundle --------------
+# minxdump validates structure + CRC + table invariants; we additionally check the
+# extracted ROM is byte-identical to the flat .min and the banked/--far symbol
+# mappings landed in the SYM chunk.
+[ -x "${SDCC}/bin/minxdump" ] || "${REPO}/scripts/build-romgen.sh" >/dev/null
 "${SDCC}/bin/romgen" "$tmp/r.ihx" "$tmp/r.minx" --far=0x18800-0x18fff >/dev/null || { echo "FAIL: romgen --minx"; exit 1; }
-if python3 - "$tmp" <<'EOF'
-import struct, sys, zlib
-tmp = sys.argv[1]
-d = open(tmp + '/r.minx', 'rb').read()
-magic, ver, hsz, nsec, toff, esz, stridx, fsz, flags = struct.unpack_from('<4sHHIIIIII', d, 0)
-assert magic == b'MINX' and ver == 1 and hsz == 32 and esz == 32, 'bad header'
-assert fsz == len(d), 'file size field mismatch'
-secs = [struct.unpack_from('<8I', d, toff + i * esz) for i in range(nsec)]
-st = secs[stridx]
-strtab = d[st[2]:st[2] + st[3]]
-name = lambda off: strtab[off:strtab.index(b'\0', off)].decode()
-by_type = {}
-for t, nm, off, size, addr, crc, _r0, _r1 in secs:
-    assert off % 4 == 0, 'unaligned section'
-    assert zlib.crc32(d[off:off + size]) & 0xFFFFFFFF == crc, 'CRC mismatch in ' + name(nm)
-    by_type[t] = (off, size, addr)
-for t in (1, 2, 3, 4, 6):   # ROM, SYMTAB, STRTAB, NOTE, NOI
-    assert t in by_type, 'missing section type %d' % t
-off, size, addr = by_type[1]
-assert addr == 0x2100, 'ROM load address'
-assert d[off:off + size] == open(tmp + '/r.min', 'rb').read(), 'ROM section != flat .min'
-syms, prev = {}, -1
-off, size, _ = by_type[2]
-for i in range(off, off + size, 16):
-    nm, value, phys, fl = struct.unpack_from('<4I', d, i)
-    assert value >= prev, 'symtab not sorted'
-    prev = value
-    syms[name(nm)] = (value, phys, fl)
-assert syms['_start'] == (0x2100, 0x2100, 1), '_start'
-assert syms['_b1fn'] == (0x18000, 0x8000, 1), '_b1fn (banked code mapping)'
-assert syms['_ftbl'] == (0x18800, 0x18800, 1), '_ftbl (--far physical mapping)'
-EOF
-then echo "  ok  MINX container (header, CRCs, ROM==min, banked+far symtab)"
-else echo "  FAIL MINX container"; fail=1; fi
+if "${SDCC}/bin/minxdump" --rom="$tmp/r.x.min" "$tmp/r.minx" > "$tmp/dump" \
+   && cmp -s "$tmp/r.x.min" "$tmp/r.min" \
+   && grep -q "_start .* value 0x002100 phys 0x002100" "$tmp/dump" \
+   && grep -q "_b1fn .* value 0x018000 phys 0x008000" "$tmp/dump" \
+   && grep -q "_ftbl .* value 0x018800 phys 0x018800" "$tmp/dump"
+then echo "  ok  MINX container (minxdump valid, ROM==min, banked+far symtab)"
+else echo "  FAIL MINX container"; sed -n '1,5p' "$tmp/dump" 2>/dev/null; fail=1; fi
 
 [ "$fail" -eq 0 ] && echo "== banked ROM pipeline GREEN ==" || echo "== ROM pipeline BROKEN =="
 exit "$fail"

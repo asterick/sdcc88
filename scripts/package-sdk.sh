@@ -9,7 +9,7 @@
 # first when spawning sdcpp/sdas88/sdldz80), so the unpacked tree works from
 # any directory with no environment setup:
 #
-#   bin/        sdcc sdcpp sdas88 sdldz80 romgen     (real binaries, stripped —
+#   bin/        sdcc sdcpp sdas88 sdldz80 romgen minxdump   (real binaries, stripped —
 #               the build tree's bin/sdcc + bin/sdcpp are configure-generated
 #               wrappers with the absolute build path baked in, so we copy the
 #               real driver from src/ and the real cpp from support/cpp/gcc/)
@@ -58,6 +58,7 @@ cp "${SDCC}/support/cpp/gcc/cpp"  "${STAGE}/bin/sdcpp"
 cp "${SDCC}/bin/sdas88"           "${STAGE}/bin/sdas88"
 cp "${SDCC}/bin/sdldz80"          "${STAGE}/bin/sdldz80"
 cp "${SDCC}/bin/romgen"           "${STAGE}/bin/romgen"
+cp "${SDCC}/bin/minxdump"         "${STAGE}/bin/minxdump"
 
 # sdcpp's cc1 backend, at the libexecsubdir shape the driver relocates to
 TRIPLE="$(sed -n 's/^target_noncanonical:=//p' "${SDCC}/support/cpp/gcc/Makefile")"
@@ -89,7 +90,7 @@ The tree is relocatable — unpack it anywhere, no environment setup needed:
 \`\`\`bash
 bin/sdcc -ms1c88 game.c -o game.ihx   # preprocess + compile + link (crt0 + s1c88.lib)
 bin/romgen game.ihx game.min          # pack into a flat .min ROM
-bin/romgen game.ihx game.minx         # ...or the MINX debug container (ROM+symbols+map)
+bin/romgen game.ihx game.minx         # ...or the MINX debug container (ROM+symbols+lines+sources)
 \`\`\`
 
 - \`docs/building-roms.md\` — the end-user guide (memory map, \`__far\` banking,

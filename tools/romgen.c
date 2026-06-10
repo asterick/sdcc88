@@ -9,14 +9,19 @@
         (so the shipped toolchain has no Python dependency); behaviour identical.
 
      romgen in.ihx out.minx [--minx] [--far=start-end]...
-            [--map=file] [--noi=file] [--cdb=file] [--embed=name=file]...
+            [--map=file] [--noi=file] [--cdb=file]
+            [--srcdir=dir]... [--no-src] [--embed=name=file]...
         MINX container (selected by the .minx output extension or --minx): a
-        single sectioned binary — ELF-like — that rolls the ROM image, a parsed
-        binary symbol table (from the linker's NoICE .noi), and the link-time
-        debug artifacts (.map/.noi/.cdb, embedded verbatim) into one file.
+        single chunk-tree binary built for a debugger that has NO filesystem
+        access and parses NO structured text. romgen does all the text parsing
+        on the host — the linker's .noi (symbols), .map (areas), and sdcc
+        --debug .cdb (line/function records) — and promotes everything to
+        binary tables: a sorted global line table, function extents, symbols,
+        memory areas, and the source files themselves embedded for display.
         Sidecars are auto-discovered next to in.ihx (same stem); --map/--noi/
-        --cdb override the path (and then must exist), --embed adds arbitrary
-        extra sections. Format spec: docs/s1c88/minx-format.md.
+        --cdb override the path (and then must exist). Source files are found
+        next to in.ihx / the cwd / each --srcdir. Format spec:
+        docs/s1c88/minx-format.md; reference reader: tools/minxdump.c.
 
    Address mapping (both formats): sdcc88 lays banked code at linker address
    (bank<<16)|logic (logic = the 0x8000-0xFFFF window for banks >=1, or the
@@ -40,9 +45,10 @@
 #include <string.h>
 #include <stdint.h>
 
-#define CART_BASE 0x2100u
-#define MAX_FAR   64
-#define MAX_EMBED 32
+#define CART_BASE  0x2100u
+#define MAX_FAR    64
+#define MAX_EMBED  32
+#define MAX_SRCDIR 16
 
 static struct { uint32_t lo, hi; } far_ranges[MAX_FAR];
 static int n_far = 0;
@@ -93,54 +99,58 @@ static int phys_of (uint32_t a, uint32_t *out)
   return (*out >= CART_BASE) ? 0 : 1;
 }
 
-/* ---------------- MINX container (see docs/s1c88/minx-format.md) ---------------- */
+/* ---------------- MINX container (see docs/s1c88/minx-format.md) ----------------
 
-#define MINX_VERSION  1
-#define MINX_HDRSIZE  32
-#define MINX_ENTSIZE  32
+   16-byte header, then a flat sequence of chunks. Chunk = 4-byte ASCII id +
+   u32 payload size + payload, padded to 4 (pad not counted in size, but part
+   of the enclosing container/file). Container chunks (SRCS, FILE) hold a
+   sequence of child chunks. Everything little-endian. */
 
-enum minx_sec_type
-{
-  SEC_ROM    = 1,   /* flat ROM image (== the .min payload), addr = 0x2100 */
-  SEC_SYMTAB = 2,   /* binary symbol records (16 bytes each)               */
-  SEC_STRTAB = 3,   /* NUL-terminated strings; offset 0 = ""               */
-  SEC_NOTE   = 4,   /* key=value metadata text                             */
-  SEC_MAP    = 5,   /* linker .map, verbatim                               */
-  SEC_NOI    = 6,   /* linker NoICE .noi, verbatim                         */
-  SEC_CDB    = 7,   /* SDCC --debug .cdb, verbatim                         */
-  SEC_USER   = 0x100 /* --embed sections: 0x100, 0x101, ... in CLI order   */
-};
+#define MINX_VERSION 1
+#define MINX_HDRSIZE 16
 
 #define SYM_ROM   0x1   /* phys field valid (symbol maps into cart ROM) */
 #define SYM_LOCAL 0x2   /* scoped symbol (a NoICE DEFS record)          */
 
-struct minxsym { uint32_t name, value, phys, flags; };
+#define AREA_ABS  0x1   /* absolute area */
+#define AREA_OVR  0x2   /* overlay area  */
 
-/* growable byte buffer */
+#define NO_FILE   0xFFFFFFFFu
+
+static void wle16 (unsigned char *p, uint32_t v) { p[0] = v & 0xFF; p[1] = (v >> 8) & 0xFF; }
+static void wle32 (unsigned char *p, uint32_t v) { wle16 (p, v & 0xFFFF); wle16 (p + 2, v >> 16); }
+
+/* growable byte buffer; allocation failure is fatal (one-shot CLI tool) */
 typedef struct { unsigned char *p; size_t len, cap; } buf;
 
-static int buf_put (buf *b, const void *src, size_t n)
+static void buf_put (buf *b, const void *src, size_t n)
 {
   if (b->len + n > b->cap)
     {
       size_t ncap = b->cap ? b->cap : 256;
       while (ncap < b->len + n) ncap += ncap / 2 + 16;
       unsigned char *np = realloc (b->p, ncap);
-      if (!np) return -1;
+      if (!np) { fprintf (stderr, "romgen: out of memory\n"); exit (2); }
       b->p = np; b->cap = ncap;
     }
   memcpy (b->p + b->len, src, n);
   b->len += n;
-  return 0;
+}
+
+static void buf_u32 (buf *b, uint32_t v)
+{
+  unsigned char t[4];
+  wle32 (t, v);
+  buf_put (b, t, 4);
 }
 
 /* add a string to the string table; offset 0 is always "" */
 static uint32_t strtab_add (buf *st, const char *s)
 {
   uint32_t off;
-  if (st->len == 0 && buf_put (st, "", 1) < 0) return 0;
+  if (st->len == 0) buf_put (st, "", 1);
   off = (uint32_t) st->len;
-  if (buf_put (st, s, strlen (s) + 1) < 0) return 0;
+  buf_put (st, s, strlen (s) + 1);
   return off;
 }
 
@@ -157,7 +167,36 @@ static uint32_t crc32_buf (const unsigned char *p, size_t n)
   return ~c;
 }
 
-/* whole file -> malloc'd buffer (binary); NULL if unreadable */
+/* ---- chunk writer: open/close nest, blobs are one-shot ---- */
+
+static void ck_pad (buf *b)
+{
+  static const unsigned char z[3] = { 0, 0, 0 };
+  size_t r = b->len & 3;
+  if (r) buf_put (b, z, 4 - r);
+}
+
+static size_t ck_open (buf *b, const char *id)
+{
+  buf_put (b, id, 4);
+  buf_u32 (b, 0);              /* size, patched by ck_close */
+  return b->len - 4;
+}
+
+static void ck_close (buf *b, size_t szpos)
+{
+  wle32 (b->p + szpos, (uint32_t) (b->len - (szpos + 4)));
+  ck_pad (b);
+}
+
+static void ck_blob (buf *b, const char *id, const void *data, size_t n)
+{
+  size_t p = ck_open (b, id);
+  buf_put (b, data, n);
+  ck_close (b, p);
+}
+
+/* whole file -> malloc'd buffer (binary, NUL-padded); NULL if unreadable */
 static unsigned char *read_file (const char *path, size_t *out_size)
 {
   FILE *f = fopen (path, "rb");
@@ -166,11 +205,12 @@ static unsigned char *read_file (const char *path, size_t *out_size)
   if (!f) return NULL;
   if (fseek (f, 0, SEEK_END) != 0 || (n = ftell (f)) < 0 || fseek (f, 0, SEEK_SET) != 0)
     { fclose (f); return NULL; }
-  p = malloc (n ? (size_t) n : 1);
+  p = malloc ((size_t) n + 1);
   if (!p) { fclose (f); return NULL; }
   if (n && fread (p, 1, (size_t) n, f) != (size_t) n)
     { fclose (f); free (p); return NULL; }
   fclose (f);
+  p[n] = '\0';
   *out_size = (size_t) n;
   return p;
 }
@@ -187,10 +227,29 @@ static char *sidecar_path (const char *inpath, const char *ext)
   return p;
 }
 
-/* parse NoICE DEF/DEFS records into symbol records (names go to the strtab).
+static char *xstrdup (const char *s)
+{
+  char *p = malloc (strlen (s) + 1);
+  if (!p) { fprintf (stderr, "romgen: out of memory\n"); exit (2); }
+  strcpy (p, s);
+  return p;
+}
+
+static void *grow (void *p, uint32_t count, uint32_t *cap, size_t elem)
+{
+  if (count < *cap) return p;
+  *cap = *cap ? *cap * 2 : 64;
+  p = realloc (p, (size_t) *cap * elem);
+  if (!p) { fprintf (stderr, "romgen: out of memory\n"); exit (2); }
+  return p;
+}
+
+/* ---- symbols: NoICE .noi DEF/DEFS records ----
    Lines look like "DEF _main 0x2196" (PagedAddress may prefix "bank:", which
-   sdldz80 never does for this port — handled anyway). Other record types
-   (FILE/FUNC/ENDF/LINE/...) stay available verbatim in the NOI section. */
+   sdldz80 never does for this port — handled anyway). */
+
+struct minxsym { uint32_t name, value, phys, flags; };
+
 static struct minxsym *parse_noi (const char *text, size_t textlen, buf *st, uint32_t *out_count)
 {
   struct minxsym *syms = NULL;
@@ -221,7 +280,6 @@ static struct minxsym *parse_noi (const char *text, size_t textlen, buf *st, uin
       if (vlen == 0 || vlen >= sizeof valtok) continue;
       memcpy (valtok, sp + 1, vlen);
       valtok[vlen] = '\0';
-      /* strip trailing CR/space */
       while (vlen && (valtok[vlen-1] == '\r' || valtok[vlen-1] == ' ')) valtok[--vlen] = '\0';
 
       char *vp = valtok, *colon = strchr (valtok, ':');
@@ -239,13 +297,7 @@ static struct minxsym *parse_noi (const char *text, size_t textlen, buf *st, uin
       else
         phys = 0xFFFFFFFFu;
 
-      if (count == cap)
-        {
-          uint32_t ncap = cap ? cap * 2 : 64;
-          struct minxsym *ns = realloc (syms, ncap * sizeof *ns);
-          if (!ns) { free (syms); *out_count = 0; return NULL; }
-          syms = ns; cap = ncap;
-        }
+      syms = grow (syms, count, &cap, sizeof *syms);
       syms[count].name  = strtab_add (st, name);
       syms[count].value = value;
       syms[count].phys  = phys;
@@ -263,72 +315,173 @@ static int sym_cmp (const void *a, const void *b)
   return x->name < y->name ? -1 : x->name > y->name ? 1 : 0;
 }
 
-struct section
+/* ---- debug records: sdcc --debug .cdb ----
+   We promote the linker-resolved records to binary tables:
+     L:C$<file>$<line>$<level>$<block>:<HEXADDR>   -> line table entry
+     F:G$<name>$...                                -> <name> is a function
+     L:G$<name>$...:<HEXADDR>                      -> function entry address
+     L:XG$<name>$...:<HEXADDR>                     -> function exit label (the
+                                                      final return instruction)
+   Everything else (S:/T: type and variable records) is debugger fidelity we
+   haven't promoted yet — reserved for a future TYPE/VAR chunk pair. */
+
+struct linerec  { uint32_t phys, file, line, rsv; };
+struct funcinfo { char *name; uint32_t entry, end; int have_entry, have_end; };
+
+struct cdbinfo
 {
-  uint32_t type, name, addr;
-  const unsigned char *data;
-  size_t size;
-  uint32_t fileoff;
+  struct linerec  *lines; uint32_t n_lines,  cap_lines;
+  struct funcinfo *funcs; uint32_t n_funcs,  cap_funcs;
+  char           **files; uint32_t n_files,  cap_files;
 };
 
-static void wle16 (unsigned char *p, uint32_t v) { p[0] = v & 0xFF; p[1] = (v >> 8) & 0xFF; }
-static void wle32 (unsigned char *p, uint32_t v) { wle16 (p, v & 0xFFFF); wle16 (p + 2, v >> 16); }
-
-static int write_minx (const char *outpath, struct section *secs, int nsec, int strtab_index)
+static uint32_t file_id (struct cdbinfo *ci, const char *name)
 {
-  unsigned char hdr[MINX_HDRSIZE], ent[MINX_ENTSIZE];
-  static const unsigned char pad[4] = { 0, 0, 0, 0 };
-  uint32_t off = MINX_HDRSIZE + (uint32_t) nsec * MINX_ENTSIZE;
-  int i;
+  uint32_t i;
+  for (i = 0; i < ci->n_files; i++)
+    if (strcmp (ci->files[i], name) == 0)
+      return i;
+  ci->files = grow (ci->files, ci->n_files, &ci->cap_files, sizeof *ci->files);
+  ci->files[ci->n_files] = xstrdup (name);
+  return ci->n_files++;
+}
 
-  for (i = 0; i < nsec; i++)
+static struct funcinfo *find_func (struct cdbinfo *ci, const char *name, int add)
+{
+  uint32_t i;
+  for (i = 0; i < ci->n_funcs; i++)
+    if (strcmp (ci->funcs[i].name, name) == 0)
+      return &ci->funcs[i];
+  if (!add) return NULL;
+  ci->funcs = grow (ci->funcs, ci->n_funcs, &ci->cap_funcs, sizeof *ci->funcs);
+  memset (&ci->funcs[ci->n_funcs], 0, sizeof ci->funcs[0]);
+  ci->funcs[ci->n_funcs].name = xstrdup (name);
+  return &ci->funcs[ci->n_funcs++];
+}
+
+static void parse_cdb (const char *text, size_t textlen, struct cdbinfo *ci)
+{
+  const char *p = text, *end = text + textlen;
+
+  while (p < end)
     {
-      off = (off + 3u) & ~3u;
-      secs[i].fileoff = off;
-      off += (uint32_t) secs[i].size;
+      const char *eol = memchr (p, '\n', (size_t) (end - p));
+      size_t linelen = eol ? (size_t) (eol - p) : (size_t) (end - p);
+      char ln[512];
+      if (linelen >= sizeof ln) { p = eol ? eol + 1 : end; continue; }
+      memcpy (ln, p, linelen);
+      ln[linelen] = '\0';
+      while (linelen && (ln[linelen-1] == '\r' || ln[linelen-1] == ' ')) ln[--linelen] = '\0';
+      p = eol ? eol + 1 : end;
+
+      if (strncmp (ln, "F:G$", 4) == 0)
+        {
+          char *dollar = strchr (ln + 4, '$');
+          if (!dollar) continue;
+          *dollar = '\0';
+          find_func (ci, ln + 4, 1);
+        }
+      else if (strncmp (ln, "L:C$", 4) == 0)
+        {
+          /* L:C$hello.c$26$0_0$12:21E4 */
+          char *file = ln + 4;
+          char *d1 = strchr (file, '$');
+          if (!d1) continue;
+          char *colon = strrchr (d1 + 1, ':');
+          if (!colon) continue;
+          *d1 = '\0';
+          uint32_t lno  = (uint32_t) strtoul (d1 + 1, NULL, 10);
+          uint32_t addr = (uint32_t) strtoul (colon + 1, NULL, 16);
+          uint32_t phys;
+          if (lno == 0 || phys_of (addr, &phys) != 0)
+            continue;
+          ci->lines = grow (ci->lines, ci->n_lines, &ci->cap_lines, sizeof *ci->lines);
+          ci->lines[ci->n_lines].phys = phys;
+          ci->lines[ci->n_lines].file = file_id (ci, file);
+          ci->lines[ci->n_lines].line = lno;
+          ci->lines[ci->n_lines].rsv  = 0;
+          ci->n_lines++;
+        }
+      else if (strncmp (ln, "L:G$", 4) == 0 || strncmp (ln, "L:XG$", 5) == 0)
+        {
+          int is_end = (ln[2] == 'X');
+          char *name = ln + (is_end ? 5 : 4);
+          char *dollar = strchr (name, '$');
+          char *colon = strrchr (name, ':');
+          if (!dollar || !colon || colon < dollar) continue;
+          *dollar = '\0';
+          uint32_t addr = (uint32_t) strtoul (colon + 1, NULL, 16);
+          uint32_t phys;
+          struct funcinfo *fn = find_func (ci, name, 0);
+          if (!fn || phys_of (addr, &phys) != 0)
+            continue;
+          if (is_end) { fn->end = phys;   fn->have_end = 1; }
+          else        { fn->entry = phys; fn->have_entry = 1; }
+        }
     }
+}
 
-  FILE *o = fopen (outpath, "wb");
-  if (!o) { perror (outpath); return -1; }
-
-  memset (hdr, 0, sizeof hdr);
-  memcpy (hdr, "MINX", 4);
-  wle16 (hdr + 4,  MINX_VERSION);
-  wle16 (hdr + 6,  MINX_HDRSIZE);
-  wle32 (hdr + 8,  (uint32_t) nsec);
-  wle32 (hdr + 12, MINX_HDRSIZE);
-  wle32 (hdr + 16, MINX_ENTSIZE);
-  wle32 (hdr + 20, (uint32_t) strtab_index);
-  wle32 (hdr + 24, off);                       /* total file size */
-  wle32 (hdr + 28, 0);                         /* flags */
-  if (fwrite (hdr, 1, sizeof hdr, o) != sizeof hdr) goto werr;
-
-  for (i = 0; i < nsec; i++)
-    {
-      memset (ent, 0, sizeof ent);
-      wle32 (ent + 0,  secs[i].type);
-      wle32 (ent + 4,  secs[i].name);
-      wle32 (ent + 8,  secs[i].fileoff);
-      wle32 (ent + 12, (uint32_t) secs[i].size);
-      wle32 (ent + 16, secs[i].addr);
-      wle32 (ent + 20, crc32_buf (secs[i].data, secs[i].size));
-      if (fwrite (ent, 1, sizeof ent, o) != sizeof ent) goto werr;
-    }
-
-  off = MINX_HDRSIZE + (uint32_t) nsec * MINX_ENTSIZE;
-  for (i = 0; i < nsec; i++)
-    {
-      uint32_t aligned = (off + 3u) & ~3u;
-      if (aligned != off && fwrite (pad, 1, aligned - off, o) != aligned - off) goto werr;
-      if (secs[i].size && fwrite (secs[i].data, 1, secs[i].size, o) != secs[i].size) goto werr;
-      off = aligned + (uint32_t) secs[i].size;
-    }
-  if (fclose (o) != 0) { perror (outpath); return -1; }
+static int line_cmp (const void *a, const void *b)
+{
+  const struct linerec *x = a, *y = b;
+  if (x->phys != y->phys) return x->phys < y->phys ? -1 : 1;
+  if (x->line != y->line) return x->line < y->line ? -1 : 1;
+  if (x->file != y->file) return x->file < y->file ? -1 : 1;
   return 0;
-werr:
-  perror (outpath);
-  fclose (o);
-  return -1;
+}
+
+static int func_cmp (const void *a, const void *b)
+{
+  const struct funcinfo *x = a, *y = b;
+  if (x->entry != y->entry) return x->entry < y->entry ? -1 : 1;
+  return strcmp (x->name, y->name);
+}
+
+/* ---- areas: the linker .map area table ----
+   Rows look like "_CODE  0021D0  000B12 =  2834. bytes (REL,CON)"; the table
+   header and the ".  .ABS." pseudo-area don't survive the sscanf. Best-effort:
+   a malformed map yields fewer areas, never a bad record. */
+
+struct arearec { uint32_t name, base, size, flags; };
+
+static struct arearec *parse_map (const char *text, size_t textlen, buf *st, uint32_t *out_count)
+{
+  struct arearec *areas = NULL;
+  uint32_t count = 0, cap = 0;
+  const char *p = text, *end = text + textlen;
+
+  while (p < end)
+    {
+      const char *eol = memchr (p, '\n', (size_t) (end - p));
+      size_t linelen = eol ? (size_t) (eol - p) : (size_t) (end - p);
+      char ln[512];
+      if (linelen >= sizeof ln) { p = eol ? eol + 1 : end; continue; }
+      memcpy (ln, p, linelen);
+      ln[linelen] = '\0';
+      p = eol ? eol + 1 : end;
+
+      if (!strstr (ln, ". bytes ("))
+        continue;
+      char name[128];
+      uint32_t base, size;
+      if (sscanf (ln, "%127s %x %x", name, &base, &size) != 3)
+        continue;
+      uint32_t flags = 0, i;
+      if (strstr (ln, "ABS")) flags |= AREA_ABS;
+      if (strstr (ln, "OVR")) flags |= AREA_OVR;
+      for (i = 0; i < count; i++)        /* page reprints: keep first */
+        if (strcmp ((const char *) st->p + areas[i].name, name) == 0)
+          break;
+      if (i < count) continue;
+      areas = grow (areas, count, &cap, sizeof *areas);
+      areas[count].name  = strtab_add (st, name);
+      areas[count].base  = base;
+      areas[count].size  = size;
+      areas[count].flags = flags;
+      count++;
+    }
+  *out_count = count;
+  return areas;
 }
 
 /* ------------------------------------------------------------------------- */
@@ -338,15 +491,17 @@ static void usage (void)
   fprintf (stderr,
     "usage: romgen in.ihx out.min  [--far=start-end]...\n"
     "       romgen in.ihx out.minx [--minx] [--far=start-end]...\n"
-    "              [--map=file] [--noi=file] [--cdb=file] [--embed=name=file]...\n");
+    "              [--map=file] [--noi=file] [--cdb=file]\n"
+    "              [--srcdir=dir]... [--no-src] [--embed=name=file]...\n");
 }
 
 int main (int argc, char **argv)
 {
   const char *inpath = NULL, *outpath = NULL;
   const char *map_arg = NULL, *noi_arg = NULL, *cdb_arg = NULL;
+  const char *srcdirs[MAX_SRCDIR];
   struct { const char *name, *path; } embeds[MAX_EMBED];
-  int n_embed = 0, opt_minx = 0;
+  int n_embed = 0, n_srcdir = 0, opt_minx = 0, opt_nosrc = 0;
   int i;
 
   for (i = 1; i < argc; i++)
@@ -363,9 +518,15 @@ int main (int argc, char **argv)
           n_far++;
         }
       else if (strcmp (argv[i], "--minx") == 0)            opt_minx = 1;
+      else if (strcmp (argv[i], "--no-src") == 0)          opt_nosrc = 1;
       else if (strncmp (argv[i], "--map=", 6) == 0)        map_arg = argv[i] + 6;
       else if (strncmp (argv[i], "--noi=", 6) == 0)        noi_arg = argv[i] + 6;
       else if (strncmp (argv[i], "--cdb=", 6) == 0)        cdb_arg = argv[i] + 6;
+      else if (strncmp (argv[i], "--srcdir=", 9) == 0)
+        {
+          if (n_srcdir >= MAX_SRCDIR) { fprintf (stderr, "romgen: too many --srcdir\n"); return 2; }
+          srcdirs[n_srcdir++] = argv[i] + 9;
+        }
       else if (strncmp (argv[i], "--embed=", 8) == 0)
         {
           char *eq = strchr (argv[i] + 8, '=');
@@ -485,14 +646,17 @@ int main (int argc, char **argv)
     }
 
   /* ---- MINX container ---- */
-  struct section secs[8 + MAX_EMBED];
-  int nsec = 0, strtab_index;
-  buf strtab = { NULL, 0, 0 }, note = { NULL, 0, 0 }, symbin = { NULL, 0, 0 };
+  buf body = { NULL, 0, 0 }, strtab = { NULL, 0, 0 };
   unsigned char *mapdat = NULL, *noidat = NULL, *cdbdat = NULL;
   size_t mapsz = 0, noisz = 0, cdbsz = 0;
   struct minxsym *syms = NULL;
-  uint32_t n_syms = 0;
+  struct arearec *areas = NULL;
+  struct cdbinfo ci;
+  uint32_t n_syms = 0, n_areas = 0, n_embedded_src = 0, n_funcs_emitted = 0;
+  size_t p;
   char tmp[256];
+
+  memset (&ci, 0, sizeof ci);
 
   /* sidecars: explicit paths must exist; auto-discovered ones are optional */
   struct { const char *arg, *ext, *what; unsigned char **dat; size_t *sz; } side[] = {
@@ -510,107 +674,219 @@ int main (int argc, char **argv)
         }
       else
         {
-          char *p = sidecar_path (inpath, side[i].ext);
-          if (p) { *side[i].dat = read_file (p, side[i].sz); free (p); }
+          char *sp = sidecar_path (inpath, side[i].ext);
+          if (sp) { *side[i].dat = read_file (sp, side[i].sz); free (sp); }
         }
     }
-
-  secs[nsec].type = SEC_ROM;
-  secs[nsec].name = strtab_add (&strtab, "rom");
-  secs[nsec].addr = CART_BASE;
-  secs[nsec].data = img;
-  secs[nsec].size = size;
-  nsec++;
 
   if (noidat)
-    {
-      syms = parse_noi ((const char *) noidat, noisz, &strtab, &n_syms);
-      if (syms && n_syms)
-        {
-          qsort (syms, n_syms, sizeof *syms, sym_cmp);
-          for (i = 0; i < (int) n_syms; i++)
-            {
-              unsigned char rec[16];
-              wle32 (rec + 0,  syms[i].name);
-              wle32 (rec + 4,  syms[i].value);
-              wle32 (rec + 8,  syms[i].phys);
-              wle32 (rec + 12, syms[i].flags);
-              if (buf_put (&symbin, rec, sizeof rec) < 0)
-                { fprintf (stderr, "romgen: out of memory\n"); free (img); return 2; }
-            }
-          secs[nsec].type = SEC_SYMTAB;
-          secs[nsec].name = strtab_add (&strtab, "symtab");
-          secs[nsec].addr = 0;
-          secs[nsec].data = symbin.p;
-          secs[nsec].size = symbin.len;
-          nsec++;
-        }
-    }
-
+    syms = parse_noi ((const char *) noidat, noisz, &strtab, &n_syms);
   if (mapdat)
-    {
-      secs[nsec].type = SEC_MAP; secs[nsec].name = strtab_add (&strtab, "map");
-      secs[nsec].addr = 0; secs[nsec].data = mapdat; secs[nsec].size = mapsz; nsec++;
-    }
-  if (noidat)
-    {
-      secs[nsec].type = SEC_NOI; secs[nsec].name = strtab_add (&strtab, "noi");
-      secs[nsec].addr = 0; secs[nsec].data = noidat; secs[nsec].size = noisz; nsec++;
-    }
+    areas = parse_map ((const char *) mapdat, mapsz, &strtab, &n_areas);
   if (cdbdat)
+    parse_cdb ((const char *) cdbdat, cdbsz, &ci);
+
+  if (ci.n_lines)
     {
-      secs[nsec].type = SEC_CDB; secs[nsec].name = strtab_add (&strtab, "cdb");
-      secs[nsec].addr = 0; secs[nsec].data = cdbdat; secs[nsec].size = cdbsz; nsec++;
+      qsort (ci.lines, ci.n_lines, sizeof *ci.lines, line_cmp);
+      uint32_t w = 1;                 /* drop exact duplicates */
+      for (i = 1; i < (int) ci.n_lines; i++)
+        if (line_cmp (&ci.lines[i], &ci.lines[w-1]) != 0)
+          ci.lines[w++] = ci.lines[i];
+      ci.n_lines = w;
     }
+  if (ci.n_funcs)
+    qsort (ci.funcs, ci.n_funcs, sizeof *ci.funcs, func_cmp);
+
+  /* ROM */
+  p = ck_open (&body, "ROM ");
+  buf_u32 (&body, CART_BASE);
+  buf_put (&body, img, size);
+  ck_close (&body, p);
+
+  /* AREA */
+  if (n_areas)
+    {
+      buf rec = { NULL, 0, 0 };
+      for (i = 0; i < (int) n_areas; i++)
+        {
+          buf_u32 (&rec, areas[i].name);  buf_u32 (&rec, areas[i].base);
+          buf_u32 (&rec, areas[i].size);  buf_u32 (&rec, areas[i].flags);
+        }
+      ck_blob (&body, "AREA", rec.p, rec.len);
+      free (rec.p);
+    }
+
+  /* SYM */
+  if (n_syms)
+    {
+      buf rec = { NULL, 0, 0 };
+      qsort (syms, n_syms, sizeof *syms, sym_cmp);
+      for (i = 0; i < (int) n_syms; i++)
+        {
+          buf_u32 (&rec, syms[i].name);  buf_u32 (&rec, syms[i].value);
+          buf_u32 (&rec, syms[i].phys);  buf_u32 (&rec, syms[i].flags);
+        }
+      ck_blob (&body, "SYM ", rec.p, rec.len);
+      free (rec.p);
+    }
+
+  /* LINE — the global line table, sorted by physical address */
+  if (ci.n_lines)
+    {
+      buf rec = { NULL, 0, 0 };
+      for (i = 0; i < (int) ci.n_lines; i++)
+        {
+          buf_u32 (&rec, ci.lines[i].phys);  buf_u32 (&rec, ci.lines[i].file);
+          buf_u32 (&rec, ci.lines[i].line);  buf_u32 (&rec, 0);
+        }
+      ck_blob (&body, "LINE", rec.p, rec.len);
+      free (rec.p);
+    }
+
+  /* FUNC — entry/exit extents; file = file of the first line record inside */
+  if (ci.n_funcs)
+    {
+      buf rec = { NULL, 0, 0 };
+      for (i = 0; i < (int) ci.n_funcs; i++)
+        {
+          struct funcinfo *fn = &ci.funcs[i];
+          if (!fn->have_entry) continue;
+          uint32_t file = NO_FILE, j;
+          uint32_t fend = fn->have_end ? fn->end : fn->entry;
+          for (j = 0; j < ci.n_lines; j++)
+            if (ci.lines[j].phys >= fn->entry && ci.lines[j].phys <= fend)
+              { file = ci.lines[j].file; break; }
+          buf_u32 (&rec, strtab_add (&strtab, fn->name));
+          buf_u32 (&rec, fn->entry);
+          buf_u32 (&rec, fend);
+          buf_u32 (&rec, file);
+          n_funcs_emitted++;
+        }
+      if (n_funcs_emitted)
+        ck_blob (&body, "FUNC", rec.p, rec.len);
+      free (rec.p);
+    }
+
+  /* SRCS — one FILE container per source file: NAME + (unless --no-src) TEXT.
+     File ids in LINE/FUNC are ordinals into this sequence. */
+  if (ci.n_files)
+    {
+      size_t srcs = ck_open (&body, "SRCS");
+      const char *indir_end = strrchr (inpath, '/');
+      for (i = 0; i < (int) ci.n_files; i++)
+        {
+          size_t fc = ck_open (&body, "FILE");
+          ck_blob (&body, "NAME", ci.files[i], strlen (ci.files[i]));
+          if (!opt_nosrc)
+            {
+              unsigned char *text = NULL;
+              size_t textsz = 0;
+              int d;
+              text = read_file (ci.files[i], &textsz);
+              if (!text && indir_end)
+                {
+                  snprintf (tmp, sizeof tmp, "%.*s/%s", (int) (indir_end - inpath), inpath, ci.files[i]);
+                  text = read_file (tmp, &textsz);
+                }
+              for (d = 0; !text && d < n_srcdir; d++)
+                {
+                  snprintf (tmp, sizeof tmp, "%s/%s", srcdirs[d], ci.files[i]);
+                  text = read_file (tmp, &textsz);
+                }
+              if (text)
+                {
+                  ck_blob (&body, "TEXT", text, textsz);
+                  free (text);
+                  n_embedded_src++;
+                }
+              else
+                fprintf (stderr, "romgen: warning: source '%s' not found (try --srcdir=); name embedded without text\n",
+                         ci.files[i]);
+            }
+          ck_close (&body, fc);
+        }
+      ck_close (&body, srcs);
+    }
+
+  /* USR  — --embed payloads: u32 name (strtab) + raw bytes */
   for (i = 0; i < n_embed; i++)
     {
       size_t esz;
       unsigned char *edat = read_file (embeds[i].path, &esz);
       if (!edat)
         { fprintf (stderr, "romgen: cannot read --embed file '%s'\n", embeds[i].path); free (img); return 2; }
-      secs[nsec].type = SEC_USER + (uint32_t) i;
-      secs[nsec].name = strtab_add (&strtab, embeds[i].name);
-      secs[nsec].addr = 0; secs[nsec].data = edat; secs[nsec].size = esz; nsec++;
+      p = ck_open (&body, "USR ");
+      buf_u32 (&body, strtab_add (&strtab, embeds[i].name));
+      buf_put (&body, edat, esz);
+      ck_close (&body, p);
+      free (edat);
     }
 
-  /* NOTE: build metadata text (no timestamps — output is deterministic) */
+  /* NOTE — (key,val) string pairs; deterministic (no timestamps) */
   {
-    int n = snprintf (tmp, sizeof tmp,
-                      "format=minx%d\ngenerator=romgen (sdcc88)\nsource=%s\n"
-                      "cart-base=0x%04x\nrom-bytes=%zu\nbanks=%d\nsymbols=%u\n",
-                      MINX_VERSION, inpath, CART_BASE, size, n_banks, n_syms);
-    if (n < 0 || buf_put (&note, tmp, (size_t) n) < 0)
-      { fprintf (stderr, "romgen: out of memory\n"); free (img); return 2; }
+    buf rec = { NULL, 0, 0 };
+    struct { const char *k; const char *v; } kv[8];
+    int nkv = 0;
+    char vsrc[64], vrom[32], vbank[16], vsym[16], vline[16], vfunc[16];
+    snprintf (vrom,  sizeof vrom,  "%zu", size);
+    snprintf (vbank, sizeof vbank, "%d", n_banks);
+    snprintf (vsym,  sizeof vsym,  "%u", n_syms);
+    snprintf (vline, sizeof vline, "%u", ci.n_lines);
+    snprintf (vfunc, sizeof vfunc, "%u", n_funcs_emitted);
+    snprintf (vsrc,  sizeof vsrc,  "0x%04x", CART_BASE);
+    kv[nkv].k = "generator"; kv[nkv++].v = "romgen (sdcc88)";
+    kv[nkv].k = "source";    kv[nkv++].v = inpath;
+    kv[nkv].k = "cart-base"; kv[nkv++].v = vsrc;
+    kv[nkv].k = "rom-bytes"; kv[nkv++].v = vrom;
+    kv[nkv].k = "banks";     kv[nkv++].v = vbank;
+    kv[nkv].k = "symbols";   kv[nkv++].v = vsym;
+    kv[nkv].k = "lines";     kv[nkv++].v = vline;
+    kv[nkv].k = "functions"; kv[nkv++].v = vfunc;
+    for (i = 0; i < nkv; i++)
+      {
+        buf_u32 (&rec, strtab_add (&strtab, kv[i].k));
+        buf_u32 (&rec, strtab_add (&strtab, kv[i].v));
+      }
     for (i = 0; i < n_far; i++)
       {
-        n = snprintf (tmp, sizeof tmp, "far=0x%x-0x%x\n", far_ranges[i].lo, far_ranges[i].hi);
-        if (n < 0 || buf_put (&note, tmp, (size_t) n) < 0)
-          { fprintf (stderr, "romgen: out of memory\n"); free (img); return 2; }
+        snprintf (tmp, sizeof tmp, "0x%x-0x%x", far_ranges[i].lo, far_ranges[i].hi);
+        buf_u32 (&rec, strtab_add (&strtab, "far"));
+        buf_u32 (&rec, strtab_add (&strtab, tmp));
       }
+    ck_blob (&body, "NOTE", rec.p, rec.len);
+    free (rec.p);
   }
-  secs[nsec].type = SEC_NOTE;
-  secs[nsec].name = strtab_add (&strtab, "note");
-  secs[nsec].addr = 0;
-  secs[nsec].data = note.p;
-  secs[nsec].size = note.len;
-  nsec++;
 
-  /* string table last: every section name is interned by now */
-  strtab_index = nsec;
-  secs[nsec].type = SEC_STRTAB;
-  secs[nsec].name = strtab_add (&strtab, "strtab");
-  secs[nsec].addr = 0;
-  secs[nsec].data = strtab.p;
-  secs[nsec].size = strtab.len;
-  nsec++;
+  /* STR — last: every name is interned by now */
+  if (strtab.len == 0) buf_put (&strtab, "", 1);
+  ck_blob (&body, "STR ", strtab.p, strtab.len);
 
-  if (write_minx (outpath, secs, nsec, strtab_index) != 0)
-    { free (img); return 2; }
+  /* header + body */
+  {
+    unsigned char hdr[MINX_HDRSIZE];
+    FILE *o = fopen (outpath, "wb");
+    if (!o) { perror (outpath); free (img); return 2; }
+    memcpy (hdr, "MINX", 4);
+    wle16 (hdr + 4, MINX_VERSION);
+    wle16 (hdr + 6, 0);
+    wle32 (hdr + 8, (uint32_t) (MINX_HDRSIZE + body.len));
+    wle32 (hdr + 12, crc32_buf (body.p, body.len));
+    if (fwrite (hdr, 1, sizeof hdr, o) != sizeof hdr
+        || (body.len && fwrite (body.p, 1, body.len, o) != body.len)
+        || fclose (o) != 0)
+      { perror (outpath); free (img); return 2; }
+  }
 
-  printf ("wrote %s (%d sections: %zu ROM bytes, %d banks touched, %u symbols)\n",
-          outpath, nsec, size, n_banks, n_syms);
+  printf ("wrote %s (minx: %zu ROM bytes, %d banks, %u symbols, %u lines, %u functions, %u/%u sources embedded)\n",
+          outpath, size, n_banks, n_syms, ci.n_lines, n_funcs_emitted, n_embedded_src, ci.n_files);
+
   free (img);
   free (mapdat); free (noidat); free (cdbdat);
-  free (syms); free (symbin.p); free (note.p); free (strtab.p);
+  free (syms); free (areas);
+  for (i = 0; i < (int) ci.n_files; i++) free (ci.files[i]);
+  for (i = 0; i < (int) ci.n_funcs; i++) free (ci.funcs[i].name);
+  free (ci.files); free (ci.funcs); free (ci.lines);
+  free (body.p); free (strtab.p);
   return 0;
 }
