@@ -25,15 +25,17 @@ subset, and `volatile`.
 
 ## Open work
 
-### #12 — code size (yardstick `scripts/size-check.sh`, baseline 8352 B)
+**None — the numbered backlog is complete.** The last item, #12 (code size, yardstick
+`scripts/size-check.sh`, baseline 8352 B), is closed:
 
-- **[S] #12-flag-reuse / #12-far-idiom peepholes.** Both were investigated and found **inert on the current
-  corpus** (the idioms don't occur), so they give no measurable, validatable win today. Revisit only if a
-  future corpus case exercises them.
-- **[S] #12 residual cleanup.** Prune dead z80-mnemonic tokens (`rlca`/`scf`/`daa`/…) from multi-token
-  `same()` lists in `peeph.def`. Byte-identical — hygiene, **no size win**.
-
-That is the entire forward backlog. Everything else is done (git history) or out of scope (below).
+- **#12 residual cleanup — DONE.** Pruned the dead z80 mnemonic + register tokens (`rlca`/`rrca`/`rra`/`rla`/
+  `scf`/`daa`/`ccf` and the dropped registers `bc`/`de`/`c`/`d`/`e` + `(bc)`/`(de)`) from every
+  `same()`/`notSame()`/`unusedReg()` list in `peeph.def` — 80 dead tokens, none of which the s1c88 ISA even
+  assembles. Corpus byte-identical (a token that never matches changes no peephole). Live ops `cpl`/`sra`/
+  `swap`/`nop` and the s1c88 pairs/regs were kept.
+- **#12-flag-reuse / #12-far-idiom peepholes — parked (no win).** Both were investigated and are **inert on
+  the current corpus** (the idioms don't occur), so they give no measurable, validatable size win. Revisit
+  only if a future corpus case exercises them — like `setjmp`/`malloc` below, parked by evidence, not effort.
 
 ---
 

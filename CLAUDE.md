@@ -36,10 +36,10 @@ and builds the compiler.
 >
 > Linker cross-module relaxation (#14c) is **done and default-on** — every link reclaims same-bank
 > cross-module `ld nb` bytes (opt out `SDLD_NO_RELAX=1`; `size-check.sh`'s `#14c relax` section). The
-> numbered backlog is essentially closed — #14e (stale-symtab), #16 (`UNIMPLEMENTED`-boundary lift), #20
-> (z80-artifact scrub) all done, and #11 differential mining concluded (the suite is comprehensive). The
-> remaining **forward backlog in [`TODO.md`](TODO.md)** (repo root) is just the low-value #12 code-size
-> peepholes (inert on the current corpus). Design/ABI: **`docs/s1c88/abi-decision.md`**; end-user guide:
+> numbered backlog is **complete** — #14e (stale-symtab), #16 (`UNIMPLEMENTED`-boundary lift), #20
+> (z80-artifact scrub) and #12 (code size: dead-token cleanup done; the two size peepholes are inert on the
+> corpus, parked) all closed, and #11 differential mining concluded (the suite is comprehensive). The
+> **[`TODO.md`](TODO.md)** forward backlog is empty. Design/ABI: **`docs/s1c88/abi-decision.md`**; end-user guide:
 > **`docs/s1c88/building-roms.md`**; the toolchain: `docs/s1c88/{sdas88-retarget,banked-branch}.md`.
 
 ## The codegen design (read `docs/s1c88/abi-decision.md`)
