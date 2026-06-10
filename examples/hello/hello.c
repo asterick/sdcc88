@@ -4,17 +4,16 @@
  *     make run        -> build + run on the bundled emulator
  *
  * It greets the world and prints a number computed with the support library
- * (the decimal conversion uses the runtime divide/modulo from s1c88.lib).
+ * (the %u conversion uses the runtime divide/modulo from s1c88.lib).
  *
- * Output channel: real Pokémon Mini hardware has no text console — you draw to
- * the LCD through the PRC (see the PRC registers, OAM and TILEMAP in <pm.h>). The development
- * emulator instead exposes a debug console at the top of RAM: storing a byte at
- * 0x1FF8 prints it on the host.  This example uses that so `make run` shows
- * something; swap in PRC drawing for a real cartridge.
+ * Output channel: printf() goes through the library's default putchar(), which
+ * stores each byte at the minimon debug console (DEBUG_OUT, RAM 0x1FF8) so
+ * `make run` shows the text.  Real Pokémon Mini hardware has no text console —
+ * define your own putchar() (drawing to the LCD via the PRC; see the PRC
+ * registers, OAM and TILEMAP in <pm.h>) to override the default for a cartridge.
  */
 #include <pm.h>
-
-#define CONSOLE  (*(volatile unsigned char *)0x1FF8)   /* emulator debug console */
+#include <stdio.h>
 
 /* Key-input interrupt handlers (cart vector slots 15..22, see <pm.h> VEC_KEY*).
  *
@@ -35,25 +34,6 @@ void key_c    (void) __interrupt(VEC_KEYC)     { IRQ_ACT3 = IRQ3_KEYC;     }
 void key_b    (void) __interrupt(VEC_KEYB)     { IRQ_ACT3 = IRQ3_KEYB;     }
 void key_a    (void) __interrupt(VEC_KEYA)     { IRQ_ACT3 = IRQ3_KEYA;     }
 
-static void cputs(const char *s)
-{
-    while (*s)
-        CONSOLE = (unsigned char) *s++;
-}
-
-static void cputu(unsigned int v)          /* print v in decimal */
-{
-    char buf[5];
-    unsigned char i = 0;
-    if (v == 0) { CONSOLE = '0'; return; }
-    while (v) {                            /* %/ are the s1c88.lib divide/modulo */
-        buf[i++] = (char) ('0' + v % 10u);
-        v /= 10u;
-    }
-    while (i)
-        CONSOLE = (unsigned char) buf[--i];
-}
-
 int main(void)
 {
     unsigned int n = 1000;
@@ -72,10 +52,8 @@ int main(void)
         and sc, #0x3f
     __endasm;
 
-    cputs("Hello, Pokemon Mini!\n");
-    cputs("1000 / 7 = ");
-    cputu(n / 7u);                          /* 142 */
-    CONSOLE = '\n';
+    printf("Hello, Pokemon Mini!\n");
+    printf("%u / 7 = %u\n", n, n / 7u);     /* 1000 / 7 = 142 */
 
     return 0;                               /* the crt0 halts; exit code 0 = ok */
 }

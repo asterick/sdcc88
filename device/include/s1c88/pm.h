@@ -17,6 +17,15 @@
 #define _SFR8(off)        (*(volatile unsigned char *)(REG_BASE + (off)))
 #define _SFR16(off)       (*(volatile unsigned int  *)(REG_BASE + (off)))
 
+/* ---- Debug console ----------------------------------------------------- */
+/* Storing a byte here prints one character on the minimon emulator's debug
+   console; it is the default target of putchar() (and therefore printf).  This
+   is a RAM mailbox just above the BIOS stack (0x1FF0), NOT an MMIO register, so
+   it is addressed directly rather than through _SFR8.  Real hardware has no text
+   console — define your own putchar() (e.g. drawing to the LCD via the PRC) to
+   override the library default; the linker then never pulls the default in. */
+#define DEBUG_OUT         (*(volatile unsigned char *)0x1FF8)
+
 /* ---- System / power ---------------------------------------------------- */
 #define SYS_CTRL1         _SFR8(0x00)
 #define SYS_CTRL2         _SFR8(0x01)

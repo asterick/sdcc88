@@ -32,7 +32,14 @@ INCDIR="${SDCC}/share/sdcc/include/s1c88"
 [ -x "$SDCCBIN" ] || { echo "!! sdcc not built — run ./build.sh" >&2; exit 2; }
 mkdir -p "$LIBDIR" "$INCDIR"
 
-# --- device headers: install where the driver's -isystem .../include/s1c88 looks ---
+# --- device headers: install where the driver's -isystem .../include/{,s1c88} looks ---
+# Standard SDCC headers (stdio.h/stdlib.h/string.h/ctype.h + the asm/ feature
+# trees they include) go in the top-level include dir so user code can #include
+# them; build.sh's header fix has already patched stdarg.h/sdcc-lib.h in DINC.
+echo ">> installing standard headers -> ${SDCC}/share/sdcc/include/"
+cp "${DINC}/"*.h "${SDCC}/share/sdcc/include/"
+cp -r "${DINC}/asm" "${SDCC}/share/sdcc/include/"
+# s1c88-specific headers (pm.h) in the target subdir.
 echo ">> installing device headers -> ${INCDIR}/"
 cp "${REPO}/device/include/s1c88/"*.h "$INCDIR/"
 
@@ -54,19 +61,26 @@ LIB_LIBC="$LIB_LIBC _strspn _strcspn _strpbrk _strtok memccpy"
 LIB_STDLIB="atoi atol __itoa __ltoa abs labs rand qsort bsearch"
 # ctype.h: character classification + case mapping
 LIB_CTYPE="isalnum isalpha isblank iscntrl isdigit isgraph islower isprint ispunct isspace isupper isxdigit tolower toupper"
+# stdio.h: the formatter core (_print_format, from printf_large) + sprintf/vsprintf
+# (buffer, no putchar) + printf/vprintf (need putchar) + a default putchar (repo-owned,
+# writes to the DEBUG_OUT mailbox; a user putchar overrides it).  Built with
+# USE_FLOATS=0 so a %d/%s/%x printf doesn't drag in the float support routines.
+# (printf("literal\n") with no args is optimized to puts(), so puts is needed too.)
+LIB_STDIO="printf_large sprintf vprintf putchar puts"
 
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 echo ">> building s1c88.lib members (compiled through the s1c88 port)"
 members=""
-for r in $LIB_INT $LIB_LONG $LIB_WIDEMUL $LIB_LIBC $LIB_STDLIB $LIB_CTYPE; do
+for r in $LIB_INT $LIB_LONG $LIB_WIDEMUL $LIB_LIBC $LIB_STDLIB $LIB_CTYPE $LIB_STDIO; do
   # Prefer a repo-owned source (e.g. _strlen.c, which upstream SDCC 4.5.0 lacks)
   # over the fetched SDCC device/lib copy.
   src="${REPO}/device/lib/s1c88/${r}.c"
   [ -f "$src" ] || src="${DLIB}/${r}.c"
   [ -f "$src" ] || { echo "   skip ${r} (no ${r}.c)"; continue; }
   # -D__SDCC_s1c88 so the (host-cpp'd) SDCC headers take the z80-like branch, not
-  # the mcs51 __data default — see the header fix in build.sh.
-  if ! cc -E -P -x c -I "$DINC" -D__SDCC_s1c88 -D_SDCC_NO_ASM_LIB_FUNCS "$src" > "${TMP}/${r}.i" 2>"${TMP}/e" \
+  # the mcs51 __data default — see the header fix in build.sh.  USE_FLOATS=0 keeps
+  # printf_large's _print_format free of the float support routines.
+  if ! cc -E -P -x c -I "$DINC" -D__SDCC_s1c88 -DUSE_FLOATS=0 -D_SDCC_NO_ASM_LIB_FUNCS "$src" > "${TMP}/${r}.i" 2>"${TMP}/e" \
      || ! "$SDCCBIN" -ms1c88 --c1mode -o "${TMP}/${r}.asm" < "${TMP}/${r}.i" 2>"${TMP}/e" \
      || ! "$SDAS" -o "${LIBDIR}/${r}.rel" "${TMP}/${r}.asm" 2>"${TMP}/e"; then
     echo "!! support routine ${r} FAILED:"; sed 's/^/    /' "${TMP}/e" | head -8; exit 1
