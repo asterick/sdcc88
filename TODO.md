@@ -49,15 +49,18 @@ fair game. Workflow: add the case, run the three gates, fix what surfaces, add a
 
 ---
 
-## #14e [M] — stale symbol tables under #14c relaxation (debug-info bug; code is correct)
+## ✅ #14e — stale symbol tables under #14c relaxation — FIXED (debug-info only)
 
-#14c reflows the emitted ROM down by `rlxDelta()` but never updates the linker's symbol/area model, so
-`.map`/`.sym`/`.noi`/`.lst` report **pre-relax** addresses (off by the cumulative reclaim past a dropped
-`ld nb`). The generated **code is correct** (vector `bjump` disps resolve to where handlers are actually
-emitted) — only the debug metadata lies, which reads as "jumps to strange locations" when disps are
-cross-referenced against the map. Fix: delta-adjust symbol addresses at symbol-table emit
-(`lkmain.c`/`lksym`/`lknoice`). The `0x2102` trampoline-dispatch path now has a real fixture
-(`examples/hello`'s `__interrupt(VEC_KEYA)` handler). Write-up: `docs/s1c88/banked-branch.md` §10.
+#14c reflowed the emitted ROM down by `rlxDelta()` but left the linker's `s_addr`/`a_addr` model pre-relax,
+so the **`.map`** printed stale, too-high addresses for any symbol past a dropped `ld nb` (reads as "jumps
+to strange locations" when disps are cross-referenced against the map). The generated code was always
+correct. Fix (`s1c88_banked_branch.patch`): added `s1c88RelaxedAddr()` next to `rlxDelta()` in `lkrloc3.c`
+and applied it to the `.map` area-base + symbol DISPLAY in `lklist.c` — never to the load-bearing `symval()`
+(the relocation math needs the model address). **Scope correction vs the original note:** only the `.map`
+was actually stale — `.noi` already tracks relaxation (it reads relocated values), and `.sym`/`.lst` carry
+module-relative offsets (no final addresses). Verified: relaxed `_key_a` now reads `0x21E4` and the byte
+there is its real ISR prologue; corpus byte-identical (link output unchanged). Regression
+`scripts/relax-symtab-smoke.sh`.
 
 ---
 
