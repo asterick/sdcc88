@@ -21,6 +21,15 @@ SDCC, drops in our port, registers it, and builds the whole SDK.
 The port started as a clone of SDCC's **z80** backend (the z80 register model fits the S1C88 far better than
 the earlier stm8 base) and is fully re-pointed to the S1C88 register set, ABI, and instruction encodings.
 
+## Get it
+
+**Prebuilt SDK (Linux x86-64):** grab `sdcc88-sdk-<version>-linux-x64.tar.gz` from the
+[Releases page](https://github.com/asterick/sdcc88/releases) (tagged releases; CI also attaches the same
+tarball to every green run as the `sdcc88-sdk-linux-x64` artifact). It's relocatable — unpack anywhere and
+`bin/sdcc -ms1c88` works with no environment setup. Built by `scripts/package-sdk.sh`, which proves the
+staged tree self-contained (compile + link + romgen + emulator run from a temp dir under `env -i`) before
+tarring.
+
 ## Build
 
 ```bash

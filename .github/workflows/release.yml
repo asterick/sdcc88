@@ -1,0 +1,52 @@
+name: release
+
+# Prebuilt-SDK releases. Pushing a tag `v*` builds the SDK from that tag, runs
+# the full gating test suite, packages the relocatable tarball
+# (scripts/package-sdk.sh — which also re-verifies the staged tree from a temp
+# dir before tarring), and attaches it to a GitHub Release. Nothing is
+# published unless the same suite that gates main is green on the tag.
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write   # create the release + upload the tarball
+
+jobs:
+  release:
+    name: build, test & release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Same cache as ci.yml so a release reuses the configured SDCC tree.
+      - name: Cache SDCC build tree
+        uses: actions/cache@v4
+        with:
+          path: build
+          key: sdcc-build-${{ hashFiles('build.sh', 'third_party/sdcc/*.patch') }}
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential flex bison m4 gawk libboost-dev zlib1g-dev python3 curl
+
+      - name: Build the SDK
+        run: ./build.sh
+
+      - name: Run the unified test suite (TAP)
+        run: ./scripts/run-tests.sh
+
+      - name: Package the SDK
+        run: SDK_VERSION=${{ github.ref_name }} ./scripts/package-sdk.sh
+
+      - name: Create the GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ github.ref_name }}" \
+            build/dist/sdcc88-sdk-*-linux-x64.tar.gz \
+            --verify-tag --generate-notes \
+            --title "sdcc88 SDK ${{ github.ref_name }}"

@@ -49,3 +49,18 @@ jobs:
 
       - name: Run the unified test suite (TAP)
         run: ./scripts/run-tests.sh
+
+      # Package the relocatable SDK tarball (bin/ + libexec/ + share/sdcc/ +
+      # docs + the hello starter) and keep it as a downloadable artifact, so a
+      # green run doubles as a prebuilt-SDK build. The script re-verifies the
+      # staged tree from a temp dir under a minimal env before tarring.
+      - name: Package the SDK
+        run: ./scripts/package-sdk.sh
+
+      - name: Upload SDK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sdcc88-sdk-linux-x64
+          path: build/dist/sdcc88-sdk-*-linux-x64.tar.gz
+          if-no-files-found: error
+          retention-days: 30

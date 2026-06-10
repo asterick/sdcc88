@@ -4,9 +4,27 @@ This is the end-user guide: how to turn C source into a flashable Pokémon Mini 
 ROM with the sdcc88 toolchain. For the compiler internals see
 [`abi-decision.md`](abi-decision.md); for current status see the root [`README.md`](../../README.md).
 
-## 1. Build the SDK
+## 1. Get the SDK
 
-One command builds the whole toolchain from a clean checkout:
+**Prebuilt (Linux x86-64):** every release on the GitHub [Releases
+page](https://github.com/asterick/sdcc88/releases) ships a relocatable
+`sdcc88-sdk-<version>-linux-x64.tar.gz` (CI also attaches one to every green run
+as the `sdcc88-sdk-linux-x64` artifact). Unpack it anywhere — no environment
+setup needed; the driver finds its tools, headers, and runtime relative to its
+own location:
+
+```bash
+tar xzf sdcc88-sdk-v1.0-linux-x64.tar.gz
+sdcc88-sdk/bin/sdcc -ms1c88 game.c -o game.ihx
+sdcc88-sdk/bin/romgen game.ihx game.min
+```
+
+The package carries `bin/` (`sdcc sdcpp sdas88 sdldz80 romgen`), the runtime +
+headers under `share/sdcc/`, this guide under `docs/`, and the `examples/hello`
+starter project. Binaries are dynamically linked against glibc/libstdc++.
+
+**Or build from source** — one command builds the whole toolchain from a clean
+checkout:
 
 ```bash
 ./build.sh
