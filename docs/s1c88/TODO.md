@@ -139,25 +139,33 @@ which our C impls don't honor). `build-runtime.sh` prefers repo libc sources and
   `atoi`/`atol`, `abs`/`labs`, full `ctype` (`isalnum`…`isxdigit`, `tolower`/`toupper`),
   `strspn`/`strcspn`/`strpbrk`/`strtok`, `memccpy`, `__itoa`/`__ltoa`/`__uitoa`/`__ultoa`,
   `rand`/`srand` (rand not diffable; itoa/ltoa build+run, not diffed — non-standard).
-- **⚠ qsort / bsearch — BLOCKED by the ICE below.** They compile into the lib but
-  *calling* them (the function-pointer comparator) trips `gen.c:6149`. Left OUT of the
-  build so users get a clean link error, not a compiler crash. Re-add once the ICE lifts.
-- **[M] #17-printf — Tier 2, BLOCKED.** `printf_tiny`/`printf_large` build, but `sprintf`/
-  `vprintf` (and `printf` via the `pfn_outputchar` callback) hit the same `gen.c:6149`
-  ICE. Also needs a `putchar()` contract decision (the PM has no console — likely
-  emit-to-LCD or the emulator mailbox). Best done after the ICE fix; `sprintf`-to-buffer
-  is the most useful piece for real games.
+- **✅ qsort / bsearch — DONE** (now in the lib; the callback ICE below is fixed).
+  Validated on the emulator (sort + search through a `__reentrant` comparator) and via
+  the `17_fnptr_arg` regression.
+- **[M] #17-printf — Tier 2, partly unblocked.** `sprintf`/`vprintf`/`printf_*` all
+  COMPILE now (the callback ICE is fixed). What remains is the lib integration: a
+  `putchar()` contract decision (the PM has no console — likely emit-to-LCD or the
+  emulator mailbox) and picking a printf variant. `sprintf`-to-buffer is the most useful
+  piece for real games and needs no putchar; it's the natural next add.
 - **[M] #17-setjmp — Tier 2, needs hand asm.** Upstream `_setjmp.c` is mcs51-only
   (`#include <8051.h>`); an s1c88 `setjmp`/`longjmp` must be written as port asm (save/
   restore SP, return PC, callee-saved IX/IY).
 - **[L] #17-malloc — deferred by request.** Needs a heap area + `_sdcc_heap` wired into
   crt0/linker; a real design choice on a 4 KB-RAM device.
 
-**★ #17-callback-ICE — the linchpin.** A call through a **function-pointer callback**
-(qsort/bsearch comparator, printf's `pfn_outputchar`) aborts codegen with
-`FATAL gen.c:6149 "Unbalanced stack"`. One backend fix unblocks qsort, bsearch, printf,
-and sprintf at once — the highest-leverage item here. Likely the same family as the #16
-boundary cases (a stack-imbalance guard); start by minimizing the qsort call site.
+**✅ #17-callback-ICE — FIXED.** Diagnosis: passing a function NAME/address as an
+argument (not the callback call itself) aborted codegen with `FATAL "Unbalanced stack"`.
+A function's address is a 2-byte immediate (its PC); a function POINTER is a 3-byte
+banked value (PC + bank).  `genIpush` pushed only the 2 PC bytes for a function
+immediate, while the caller cleaned up 3 → `_G.stack.pushed` ended at −1.  (A fptr
+*variable* already pushed 3 bytes; only the immediate dropped its bank byte.)  Fix
+(`gen.c` `genIpush`): emit the full 3-byte banked fptr (PC + zero bank, matching the
+`f = c` store).  Fast path when a pair + byte register are free; under full register
+pressure, reserve the 3-byte slot and fill it through HL saved/restored via the stack
+(single-byte SP-relative stores are illegal, so the bank is written by an overlapping
+word store).  Unblocked qsort, bsearch, printf, sprintf, vprintf, and any higher-order
+call. Corpus byte-identical (no existing code passes a function immediate as an arg);
+regression `tests/emu/cases/17_fnptr_arg.c` (fast + reserve-fill paths).
 
 ---
 
