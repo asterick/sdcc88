@@ -4,7 +4,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 > **▶ Resuming / "pick up where you left off"?** This file is the entry point. TL;DR: `./scripts/dev.sh`
 > confirms the build is green; `scripts/corpus-check.sh` + `scripts/emu-test.sh` + `scripts/diff-test.sh`
-> are the gates (or `scripts/run-tests.sh` for all at once). **Always rebuild via the overlay
+> are the gates (or `scripts/run-tests.sh` for all at once; `scripts/opt-test.sh` re-runs the execution
+> suites under the user-facing option sets — size/speed/alloc25/nomid). **Always rebuild via the overlay
 > (`dev.sh`/`corpus-check.sh`), never raw `make -C build/.../src`** (it compiles a stale copy). The numbered backlog is
 > **complete** — any new work is tracked via PRs. Work via self-contained PRs (meaningful names);
 > **`main` is protected** — direct push blocked, the `ci` **build & test** check must be green to merge

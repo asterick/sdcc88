@@ -80,7 +80,14 @@ make -C examples/hello run        # builds a real ROM and runs it on the bundled
 
 `./scripts/run-tests.sh` builds once and runs every suite (TAP): byte-identical codegen (`corpus-check`),
 host-vs-emulator differential (`diff-test`), on-emulator execution (`emu-test`), plus the toolchain smokes.
-`main` is protected — a PR can't merge unless this `ci` check is green.
+`./scripts/opt-test.sh` re-runs the execution suites under the user-facing option sets
+(`--opt-code-size`, `--opt-code-speed`, `--max-allocs-per-node`, `--nolospre --noinduction`) — also a CI
+job. `main` is protected — a PR can't merge unless this `ci` check is green.
+
+Two options are deliberately rejected/unsupported: `--fomit-frame-pointer` (the allocator already omits
+the frame automatically where profitable; *forcing* it reaches miscompiling stack-addressing paths, so the
+port errors out) and `--no-peep` (the peephole doubles as the instruction legalizer on this port — without
+it the asm contains z80-isms like `add hl,sp` that sdas88 rightly rejects).
 
 ## Layout
 

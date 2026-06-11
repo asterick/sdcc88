@@ -420,6 +420,20 @@ _finaliseOptions (void)
   /* S1C88: IX/IY are index-only (never byte-allocated), so num_regs stays at
      A,B,L,H regardless of the --reserve-iy option. */
 
+  /* FORCED frame-pointer omission is not supported on the s1c88 port: the
+     allocator's own heuristic (ralloc2.cc omit_frame_ptr) already drops the
+     frame where it is profitable AND correct, but forcing omission onto
+     param-heavy functions the heuristic rejects reaches exstk codegen paths
+     that miscompile (found by the option-matrix gate, scripts/opt-test.sh).
+     Fail loudly rather than emit wrong code. */
+  if (options.omitFramePtr)
+    {
+      fprintf (stderr,
+               "error: --fomit-frame-pointer is not supported by the s1c88 port "
+               "(the allocator already omits the frame pointer automatically where profitable)\n");
+      exit (EXIT_FAILURE);
+    }
+
   _setValues ();
 }
 

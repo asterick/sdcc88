@@ -3609,12 +3609,24 @@ cheapMove (asmop *to, int to_offset, asmop *from, int from_offset, bool a_dead)
     }
   else
     {
+      /* aopPut legalizes immediate-to-memory stores through A on the S1C88
+         (`ld d(ix),#imm` / `ld (hhll),#imm` do not exist — only `ld (hl),#nn`),
+         silently clobbering a live A. Save it around the store. (Found by the
+         option-matrix gate: --opt-code-speed's u32<<24 zero-fill ran `xor a,a;
+         ld d(ix),a` while A carried a surviving byte of the OR operand.) */
+      bool stages_through_a = (from->type == AOP_LIT || from->type == AOP_IMMD) &&
+        (to->type == AOP_STK || to->type == AOP_EXSTK || to->type == AOP_IY ||
+         to->type == AOP_DIR || to->type == AOP_PAIRPTR);
+      if (!a_dead && stages_through_a)
+        _push (PAIR_AF);
       if (!regalloc_dry_run)
         aopPut (to, aopGet (from, from_offset, false), to_offset);
       if (to->type == AOP_REG)
         spillPairReg (to->aopu.aop_reg[to_offset]->name);
 
       ld_cost (to, 0, from_offset < from->size ? from : ASMOP_ZERO, from_offset, true);
+      if (!a_dead && stages_through_a)
+        _pop (PAIR_AF);
     }
 }
 
@@ -10888,6 +10900,35 @@ emitRsh2 (asmop * aop, int size, int is_signed, const iCode *ic)
     }
 }
 
+/* Pick a loop-counter register for the size-optimized literal-shift loops.
+   The shift body (emit3_shift) stages any L/H/memory byte of the value
+   through A, so A can NEVER carry the count — `ld a,<byte>; srl a; ld
+   <byte>,a` overwrites it mid-loop and the loop never terminates (found by
+   the option-matrix gate: --opt-code-size on bitops' revbits8; the peephole
+   even deletes the then-dead `ld a,#count`). Candidates: B (native djr),
+   else H or L (8-bit dec sets Z on the S1C88) when the value neither
+   occupies them nor routes through HL. Returns -1 = no safe counter; the
+   caller must emit the unrolled form. */
+static int
+shiftLoopCounterReg (asmop *aop, const iCode *ic)
+{
+  /* emit3_shift prefers B as staging scratch whenever A is occupied by a
+     value byte or merely live — so a B counter is only safe when no byte
+     needs staging at all, or A is free-and-dead (staging then uses A). */
+  bool needs_staging = aop->type != AOP_REG || aop->regs[L_IDX] >= 0 || aop->regs[H_IDX] >= 0;
+  bool b_unsafe = needs_staging && !(aop->regs[A_IDX] < 0 && isRegDead (A_IDX, ic));
+  if (isRegDead (B_IDX, ic) && aop->regs[B_IDX] < 0 && !b_unsafe)
+    return B_IDX;
+  if (!requiresHL (aop))
+    {
+      if (isRegDead (H_IDX, ic) && aop->regs[H_IDX] < 0)
+        return H_IDX;
+      if (isRegDead (L_IDX, ic) && aop->regs[L_IDX] < 0)
+        return L_IDX;
+    }
+  return -1;
+}
+
 /*-----------------------------------------------------------------*/
 /* shiftR2Left2Result - shift right two bytes from left to result  */
 /*-----------------------------------------------------------------*/
@@ -10987,16 +11028,22 @@ shiftR2Left2Result (const iCode *ic, operand *left, int offl, operand *result, i
     }
   else
     {
-      bool use_b = (isRegDead (B_IDX, ic)
-                    && !(result->aop->type == AOP_REG
-                         && (result->aop->aopu.aop_reg[0]->rIdx == B_IDX || result->aop->aopu.aop_reg[1]->rIdx == B_IDX)));
+      int countreg = shiftLoopCounterReg (result->aop, ic);
+
+      if (countreg < 0)
+        {
+          /* no safe counter register — unroll (the only correct form) */
+          while (shCount--)
+            emitRsh2 (result->aop, size, is_signed, ic);
+          return;
+        }
 
       tlbl = regalloc_dry_run ? 0 : newiTempLabel (NULL);
       
       if (requiresHL (result->aop))
         spillPair (PAIR_HL);
 
-      emit2 ("ld %s, !immedbyte", use_b ? "b" : "a", (unsigned)shCount);
+      emit2 ("ld %s, !immedbyte", countreg == B_IDX ? "b" : countreg == H_IDX ? "h" : "l", (unsigned)shCount);
       cost2 (2, 7);
 
       regalloc_dry_run_state_scale *= (unsigned)shCount;
@@ -11006,7 +11053,7 @@ shiftR2Left2Result (const iCode *ic, operand *left, int offl, operand *result, i
 
       emitRsh2 (result->aop, size, is_signed, ic);
 
-      if (use_b)
+      if (countreg == B_IDX)
         {
           if (!regalloc_dry_run)
             emit2 ("djr nz, !tlabel", labelKey2num (tlbl->key));
@@ -11014,7 +11061,7 @@ shiftR2Left2Result (const iCode *ic, operand *left, int offl, operand *result, i
         }
       else
         {
-          emit3 (A_DEC, ASMOP_A, 0);
+          emit3 (A_DEC, countreg == H_IDX ? ASMOP_H : ASMOP_L, 0);
           if (!regalloc_dry_run)
             emit2 ("jp NZ, !tlabel", labelKey2num (tlbl->key));
           cost2 (2, 12); // Assume jump taken, and optimized to jr.
@@ -11101,9 +11148,8 @@ shiftL2Left2Result (operand *left, operand *result, int shCount, const iCode *ic
       int size = 2;
       int offset = 0;
       
-      bool use_b = (isRegDead (B_IDX, ic)
-        && (shiftaop->type != AOP_REG || shiftaop->aopu.aop_reg[0]->rIdx != B_IDX && shiftaop->aopu.aop_reg[1]->rIdx != B_IDX));
-                         
+      int countreg = shiftLoopCounterReg (shiftaop, ic);
+
       symbol *tlbl = regalloc_dry_run ? 0 : newiTempLabel (0);
 
       if (shiftaop->type == AOP_REG)
@@ -11117,17 +11163,22 @@ shiftL2Left2Result (operand *left, operand *result, int shCount, const iCode *ic
                   emit3_shift (offset ? A_RL : A_SLA, shiftaop, offset, ic);
             }
         }
+      else if (shCount > 1 && countreg < 0)
+        {
+          /* no safe counter register (the body stages bytes through A — see
+             shiftLoopCounterReg) — unroll, the only correct form */
+          while (shCount--)
+            for (offset = 0; offset < size; offset++)
+              emit3_shift (offset ? A_RL : A_SLA, shiftaop, offset, ic);
+        }
       else
         {
-          if (!use_b && !isRegDead (A_IDX, ic))
-            _push (PAIR_AF);
-
           /* Left is already in result - so now do the shift */
           if (shCount > 1)
             {
               if (!regalloc_dry_run)
                 {
-                  emit2 ("ld %s, !immedbyte", use_b ? "b" : "a", (unsigned)shCount);
+                  emit2 ("ld %s, !immedbyte", countreg == B_IDX ? "b" : countreg == H_IDX ? "h" : "l", (unsigned)shCount);
                   emitLabel (tlbl);
                 }
               cost2 (2, 7);
@@ -11144,7 +11195,7 @@ shiftL2Left2Result (operand *left, operand *result, int shCount, const iCode *ic
             }
           if (shCount > 1)
             {
-              if (use_b)
+              if (countreg == B_IDX)
                 {
                   if (!regalloc_dry_run)
                     emit2 ("djr nz, !tlabel", labelKey2num (tlbl->key));
@@ -11152,14 +11203,12 @@ shiftL2Left2Result (operand *left, operand *result, int shCount, const iCode *ic
                 }
               else
                 {
-                  emit3 (A_DEC, ASMOP_A, 0);
+                  emit3 (A_DEC, countreg == H_IDX ? ASMOP_H : ASMOP_L, 0);
                   if (!regalloc_dry_run)
                     emit2 ("jp NZ, !tlabel", labelKey2num (tlbl->key));
                   cost2 (2, 12); // Assume jump taken, and optimized to jr.
                 }
             }
-          if (!use_b && !isRegDead (A_IDX, ic))
-            _pop (PAIR_AF);
         }
     }
 
@@ -11654,19 +11703,27 @@ genLeftShift (const iCode *ic)
   bool a_unsafe_counter = result->aop->type != AOP_REG ||
     result->aop->regs[L_IDX] >= 0 || result->aop->regs[H_IDX] >= 0 ||
     left->aop->regs[L_IDX] >= 0 || left->aop->regs[H_IDX] >= 0;
+  /* The same body's emit3_shift staging picks B (not A) whenever A is occupied
+     by a value byte or not dead — so a B counter is just as clobberable then
+     (found by the option-matrix gate: sext's u16<<var under
+     --max-allocs-per-node 25 staged the high byte through the B counter). */
+  bool b_unsafe_counter = a_unsafe_counter &&
+    !(result->aop->regs[A_IDX] < 0 && left->aop->regs[A_IDX] < 0 && isRegDead (A_IDX, ic)) &&
+    (!shift_by_lit || shiftcount % 8);   /* whole-byte literal shifts run no loop — the counter is never read */
 
   if (right->aop->type == AOP_REG && !bitVectBitValue (ic->rSurv, right->aop->aopu.aop_reg[0]->rIdx) && right->aop->aopu.aop_reg[0]->rIdx != IYL_IDX && (sameRegs (left->aop, result->aop) || left->aop->type != AOP_REG) &&
     !(a_unsafe_counter && right->aop->aopu.aop_reg[0]->rIdx == A_IDX) &&
+    !(b_unsafe_counter && right->aop->aopu.aop_reg[0]->rIdx == B_IDX) &&
     (result->aop->type != AOP_REG ||
     result->aop->aopu.aop_reg[0]->rIdx != right->aop->aopu.aop_reg[0]->rIdx &&
     !aopInReg (result->aop, 0, right->aop->aopu.aop_reg[0]->rIdx) && !aopInReg (result->aop, 1, right->aop->aopu.aop_reg[0]->rIdx) && !aopInReg (result->aop, 2, right->aop->aopu.aop_reg[0]->rIdx) && !aopInReg (result->aop, 3, right->aop->aopu.aop_reg[0]->rIdx)))
     countreg = right->aop->aopu.aop_reg[0]->rIdx;
-  else if (isRegDead (B_IDX, ic) && (sameRegs (left->aop, result->aop) || left->aop->type != AOP_REG || shift_by_lit) &&
+  else if (isRegDead (B_IDX, ic) && !b_unsafe_counter && (sameRegs (left->aop, result->aop) || left->aop->type != AOP_REG || shift_by_lit) &&
     !aopInReg (result->aop, 0, B_IDX) && !aopInReg (result->aop, 1, B_IDX) && !aopInReg (result->aop, 2, B_IDX) && !aopInReg (result->aop, 3, B_IDX))
     countreg = B_IDX;
   else if (isRegDead (A_IDX, ic) && !a_unsafe_counter && result->aop->regs[A_IDX] < 0 && left->aop->regs[A_IDX] < 0)
     countreg = A_IDX;
-  else if (isRegDead (B_IDX, ic) && result->aop->regs[B_IDX] < 0 && left->aop->regs[B_IDX] < 0)
+  else if (isRegDead (B_IDX, ic) && !b_unsafe_counter && result->aop->regs[B_IDX] < 0 && left->aop->regs[B_IDX] < 0)
     countreg = B_IDX;
   /* S1C88: when all four byte GPRs (A/B/L/H) hold the value, count, or result —
      e.g. int<<int with value=BA, count=HL, result reusing HL — there is no free
@@ -12122,9 +12179,21 @@ genRightShift (const iCode * ic)
      `djr nz`), then H/L; the count's own dead register is reused when suitable.
      (B/H/L are always safe: the body's scratch is A — or B only when the value
      is BA, in which case B is rejected here by the disjoint-from-value test.) */
+  /* B is NOT always safe (the claim above predates this): when A is
+     occupied by a value byte or not dead, emit3_shift stages L/H/memory
+     bytes through B instead — reject B as the counter then, including the
+     count-reuse fast path (found by the option-matrix gate; same class as
+     genLeftShift's b_unsafe_counter). */
+  bool rsh_needs_staging = result->aop->type != AOP_REG ||
+    result->aop->regs[L_IDX] >= 0 || result->aop->regs[H_IDX] >= 0 ||
+    left->aop->regs[L_IDX] >= 0 || left->aop->regs[H_IDX] >= 0;
+  bool rsh_b_unsafe = rsh_needs_staging &&
+    !(result->aop->regs[A_IDX] < 0 && left->aop->regs[A_IDX] < 0 && isRegDead (A_IDX, ic)) &&
+    (!shift_by_lit || shiftcount % 8);   /* whole-byte literal shifts run no loop */
   countreg = -1;
   if (right->aop->type == AOP_REG && !bitVectBitValue (ic->rSurv, right->aop->aopu.aop_reg[0]->rIdx) &&
       right->aop->aopu.aop_reg[0]->rIdx != IYL_IDX && right->aop->aopu.aop_reg[0]->rIdx != A_IDX &&
+      !(rsh_b_unsafe && right->aop->aopu.aop_reg[0]->rIdx == B_IDX) &&
       (sameRegs (left->aop, result->aop) || left->aop->type != AOP_REG) &&
       left->aop->regs[right->aop->aopu.aop_reg[0]->rIdx] < 0 &&
       result->aop->regs[right->aop->aopu.aop_reg[0]->rIdx] < 0)
@@ -12133,8 +12202,12 @@ genRightShift (const iCode * ic)
     {
       const int cand[3] = { B_IDX, H_IDX, L_IDX };
       for (int ci = 0; ci < 3 && countreg < 0; ci++)
-        if (isRegDead (cand[ci], ic) && left->aop->regs[cand[ci]] < 0 && result->aop->regs[cand[ci]] < 0)
-          countreg = cand[ci];
+        {
+          if (cand[ci] == B_IDX && rsh_b_unsafe)
+            continue;
+          if (isRegDead (cand[ci], ic) && left->aop->regs[cand[ci]] < 0 && result->aop->regs[cand[ci]] < 0)
+            countreg = cand[ci];
+        }
     }
   if (countreg < 0)
     {

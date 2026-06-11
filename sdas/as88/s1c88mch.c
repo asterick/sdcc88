@@ -488,6 +488,26 @@ struct mne *mp;
 			outab(0xF4);		/* jp hl */
 		else if (t1 == S_INDM)
 			{ outab(0xFD); outrb(&e1, 0); }	/* jp (kk) — 8-bit vector */
+		else if (t1 == S_USER) {
+			/*
+			 * Unconditional `jp e` — accept as an alias for jrl e.
+			 * The codegen emits `jp label` as its long-jump pseudo-op
+			 * and the peephole normally shrinks (jrs) or keeps (jrl)
+			 * it; under --no-peep the raw form must still assemble
+			 * (found by the option-matrix gate, scripts/opt-test.sh).
+			 * Encoding identical to unconditional S_JRL.
+			 */
+			outab(0xF3);
+			if (mchpcr(&e1)) {
+				/* qqrr relative to (first disp byte + 1) — see S_JRL. */
+				v1 = (int) (e1.e_addr - dot.s_addr - 1);
+				outab(v1 & 0xFF);
+				outab((v1 >> 8) & 0xFF);
+			} else {
+				e1.e_addr += 1;	/* S1C88-vs-z80 PCR base bias (see S_JRS) */
+				outrw(&e1, R_PCR);
+			}
+		}
 		else
 			xerr('a', "jp takes hl, a (kk) vector, or cc, label.");
 		break;

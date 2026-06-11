@@ -48,8 +48,11 @@ echo ">> assembling crt0 -> ${LIBDIR}/crt0.rel"
   || { echo "!! crt0 assemble FAILED" >&2; exit 1; }
 
 # --- support library members ---
-# Compiler-emitted helpers (mandatory: link fails without them):
+# Compiler-emitted helpers (mandatory: link fails without them). The char-width
+# div/mod/mul variants are emitted under --opt-code-size (the int-widening call
+# is bigger) — found by the option-matrix gate (scripts/opt-test.sh).
 LIB_INT="_divsint _divuint _modsint _moduint _mulint"
+LIB_INT="$LIB_INT _divschar _divuchar _modschar _moduchar _mulschar _muluchar"
 LIB_LONG="_divslong _divulong _modslong _modulong _mullong"
 # int*int->long widening multiplies (has_mulint2long, main.c) — repo-owned sources:
 LIB_WIDEMUL="_muluint2ulong _mulsint2slong"
