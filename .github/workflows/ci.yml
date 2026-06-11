@@ -126,7 +126,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            build-essential gcc-multilib g++-multilib \
+            build-essential gcc-multilib g++-multilib lib32z1-dev \
             flex bison m4 gawk libboost-dev zlib1g-dev python3 curl
 
       - name: Build the SDK

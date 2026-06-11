@@ -52,7 +52,7 @@ jobs:
       - name: Install 32-bit multilib + select -m32
         if: matrix.m32
         run: |
-          sudo apt-get install -y --no-install-recommends gcc-multilib g++-multilib
+          sudo apt-get install -y --no-install-recommends gcc-multilib g++-multilib lib32z1-dev
           {
             echo "CC=gcc -m32"
             echo "CXX=g++ -m32"
