@@ -59,13 +59,17 @@ fi
 #    argv[0] (cc1 flat next to cpp is NOT found; same layout package-sdk.sh ships).
 if [ -n "$HOST_WINDOWS" ] && [ ! -x "${SDCC}/bin/sdcpp.exe" ]; then
   echo ">> windows: bin/sdcpp wrapper -> real cpp.exe + libexec cc1"
-  TRIPLE="$(sed -n 's/^target_noncanonical:=//p' "${SDCC}/support/cpp/gcc/Makefile")"
-  CPPVER="$(cat "${SDCC}/support/cpp/gcc/BASE-VER")"
-  [ -n "$TRIPLE" ] && [ -n "$CPPVER" ] || { echo "!! can't derive sdcpp libexec dir" >&2; exit 1; }
-  mkdir -p "${SDCC}/libexec/sdcc/${TRIPLE}/${CPPVER}"
-  cp "${SDCC}/support/cpp/gcc/cc1.exe" "${SDCC}/libexec/sdcc/${TRIPLE}/${CPPVER}/cc1.exe"
   rm -f "${SDCC}/bin/sdcpp"
   cp "${SDCC}/support/cpp/gcc/cpp.exe" "${SDCC}/bin/sdcpp.exe"
+  # The driver itself reports the (relocated) dir it will search for cc1 —
+  # the first "programs" entry of -print-search-dirs. Deriving it from the
+  # Makefile's target_noncanonical broke on CLANGARM64, where that alias
+  # differs from the embedded DEFAULT_TARGET_MACHINE. ';'-separated on
+  # Windows (paths carry "D:").
+  progdir="$("${SDCC}/bin/sdcpp.exe" -print-search-dirs | sed -n 's/^programs: =//p' | cut -d';' -f1)"
+  [ -n "$progdir" ] || { echo "!! sdcpp -print-search-dirs gave no programs dir" >&2; exit 1; }
+  mkdir -p "$progdir"
+  cp "${SDCC}/support/cpp/gcc/cc1.exe" "${progdir}/cc1.exe"
 fi
 
 echo

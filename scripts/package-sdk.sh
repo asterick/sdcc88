@@ -79,11 +79,12 @@ cp "${SDCC}/bin/sdldz80${EXE}"          "${STAGE}/bin/sdldz80${EXE}"
 cp "${SDCC}/bin/romgen${EXE}"           "${STAGE}/bin/romgen${EXE}"
 cp "${SDCC}/bin/minxdump${EXE}"         "${STAGE}/bin/minxdump${EXE}"
 
-# sdcpp's cc1 backend, at the libexecsubdir shape the driver relocates to
-TRIPLE="$(sed -n 's/^target_noncanonical:=//p' "${SDCC}/support/cpp/gcc/Makefile")"
-CPPVER="$(cat "${SDCC}/support/cpp/gcc/BASE-VER")"
-[ -n "$TRIPLE" ] && [ -n "$CPPVER" ] || { echo "!! can't derive sdcpp libexec dir" >&2; exit 1; }
-LIBEXEC="${STAGE}/libexec/sdcc/${TRIPLE}/${CPPVER}"
+# sdcpp's cc1 backend, at the libexecsubdir the driver relocates to — ask the
+# staged driver itself (first "programs" entry of -print-search-dirs, computed
+# against its own location; PATH_SEPARATOR is ';' on Windows, ':' elsewhere).
+PSEP=':'; [ "$HOST_OS" = windows ] && PSEP=';'
+LIBEXEC="$("${STAGE}/bin/sdcpp${EXE}" -print-search-dirs | sed -n 's/^programs: =//p' | cut -d"$PSEP" -f1)"
+[ -n "$LIBEXEC" ] || { echo "!! can't derive sdcpp libexec dir" >&2; exit 1; }
 mkdir -p "$LIBEXEC"
 cp "${SDCC}/support/cpp/gcc/cc1${EXE}" "${LIBEXEC}/cc1${EXE}"
 
