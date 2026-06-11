@@ -50,9 +50,10 @@ cd "$tmp"
 "${SDCC}/bin/minxdump" --rom=game.x.min game.minx > dump || { echo "FAIL: minxdump validation"; cat dump; exit 1; }
 
 fail=0
+FAILED=""
 ck() { # ck <label> <command...>
   local label="$1"; shift
-  if "$@" >/dev/null 2>&1; then echo "  ok  $label"; else echo "  FAIL $label"; fail=1; fi
+  if "$@" >/dev/null 2>&1; then echo "  ok  $label"; else echo "  FAIL $label"; FAILED="${FAILED}[$label] "; fail=1; fi
 }
 ck "ROM reconstructed identical to flat .min"      cmp -s game.x.min game.min
 ck "ROM is sparse SEG runs"                        grep -qE "^  SEG 0x0021" dump
@@ -76,5 +77,6 @@ ck "container self-reports valid"                  grep -qx "ok" dump
 # the embedded TEXT is the verbatim source (the canary string is inside the payload)
 ck "embedded source is verbatim"                   grep -q "SOURCE_EMBED_CANARY" game.minx
 
-[ "$fail" -eq 0 ] && echo "== MINX debug container GREEN ==" || { echo "== MINX debug container BROKEN =="; sed -n '1,40p' dump; }
+# failed labels go LAST: run-tests' TAP diag keeps only the tail of this output
+[ "$fail" -eq 0 ] && echo "== MINX debug container GREEN ==" || { sed -n '1,40p' dump; echo "== MINX debug container BROKEN =="; echo "-- failed: ${FAILED}"; }
 exit "$fail"
