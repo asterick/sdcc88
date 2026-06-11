@@ -75,8 +75,8 @@ preprocesses + links for real.
 
 `scripts/package-sdk.sh` stages that SDK as a **relocatable tarball** (`build/dist/`; bin/ + the sdcpp
 `libexec/.../cc1` backend + share/sdcc + docs + the hello starter) and proves it self-contained from a
-temp dir under `env -i` before tarring. CI uploads it per platform (`sdcc88-sdk-linux-x64`,
-`sdcc88-sdk-darwin-arm64` artifacts) on every green run; pushing a `v*` tag publishes all platforms as
+temp dir under `env -i` before tarring. CI uploads it per platform (`sdcc88-sdk-<os>-<arch>`
+artifacts — linux x64/arm64/x86(-m32), darwin arm64/x64) on every green run; pushing a `v*` tag publishes all platforms as
 one GitHub Release (`.github/workflows/release.yml`, gated on the same test suite per platform). The
 shell scripts + Makefiles stay portable to macOS (BSD userland: no `sha256sum`/`stat -c`/bare `sed -i`;
 awk `strtonum` needs explicit `gawk`).

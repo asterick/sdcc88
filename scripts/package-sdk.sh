@@ -56,6 +56,9 @@ case "$(uname -m)" in
   arm64|aarch64) HOST_ARCH=arm64 ;;
   *)             HOST_ARCH="$(uname -m)" ;;
 esac
+# SDK_ARCH overrides the detection when the binaries don't match the kernel —
+# e.g. a 32-bit (-m32) build on an x86_64 runner: SDK_ARCH=x86.
+HOST_ARCH="${SDK_ARCH:-$HOST_ARCH}"
 PLATFORM="${HOST_OS}-${HOST_ARCH}"
 DIST="${REPO}/build/dist"
 STAGE="${DIST}/sdcc88-sdk"
