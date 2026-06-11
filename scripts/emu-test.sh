@@ -76,6 +76,8 @@ LIBDIR="${SDCC}/share/sdcc/lib/s1c88"
 # (self-hosting: the runtime exercises the codegen too). Linked into every case;
 # sdld links whole objects, but bank-0 ROM is ample for these.
 RT_SRCS="_divuint _divsint _moduint _modsint _mulint"
+# char-width variants: emitted under --opt-code-size (the option-matrix gate)
+RT_SRCS="$RT_SRCS _divschar _divuchar _modschar _moduchar _mulschar _muluchar"
 RT_RELS=""
 for r in $RT_SRCS; do
   if ! cc -std=gnu17 -E -P -x c -I "${SDCC}/device/include" -D_SDCC_NO_ASM_LIB_FUNCS \
@@ -97,7 +99,7 @@ for src in "${EMU}"/cases/*.c; do
   if ! cc -std=gnu17 -E -P -x c -I "$EMU" "$src" > "${OUT}/${b}.i" 2>"${OUT}/err"; then
     report_fail "$b" "CPP-FAIL" "${OUT}/err"; continue
   fi
-  if ! "$SDCCBIN" -ms1c88 --c1mode -o "${OUT}/${b}.asm" < "${OUT}/${b}.i" 2>"${OUT}/err" \
+  if ! "$SDCCBIN" -ms1c88 ${SDCC_OPTS:-} --c1mode -o "${OUT}/${b}.asm" < "${OUT}/${b}.i" 2>"${OUT}/err" \
      || grep -qiE 'Internal Error|backtrace|FATAL' "${OUT}/err"; then
     head -10 "${OUT}/err" > "${OUT}/diag"; report_fail "$b" "COMPILE-FAIL" "${OUT}/diag"; continue
   fi

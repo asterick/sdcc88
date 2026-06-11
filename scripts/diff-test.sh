@@ -70,6 +70,8 @@ LIBDIR="${SDCC}/share/sdcc/lib/s1c88"
 [ -f "${LIBDIR}/s1c88.lib" ] || "${REPO}/scripts/build-runtime.sh" >&2 || { echo "!! runtime build FAILED" >&2; exit 1; }
 "$SDAS" -o "${OUT}/crt0.rel" "${REPO}/device/lib/s1c88/crt0.s" || { echo "!! crt0 assemble FAILED"; exit 1; }
 RT_INT="_mulint _mullong _divuint _divsint _moduint _modsint _divulong _divslong _modulong _modslong"
+# char-width variants: emitted under --opt-code-size (the option-matrix gate)
+RT_INT="$RT_INT _divschar _divuchar _modschar _moduchar _mulschar _muluchar"
 RT_LL="_mullonglong _divulonglong _divslonglong _modulonglong _modslonglong \
        _slulonglong _slslonglong _srulonglong _srslonglong"
 RT_FLOAT="_fsadd _fssub _fsmul _fsdiv _fseq _fslt _fscmp \
@@ -110,7 +112,7 @@ for src in "${DIFF}"/cases/*.c; do
   if ! cc -std=gnu17 -E -P -I "$DIFF" "${OUT}/wrap.c" > "${OUT}/${b}.i" 2>"${OUT}/err"; then
     report_fail "$b" "CPP-FAIL" "${OUT}/err"; continue
   fi
-  if ! "$SDCCBIN" -ms1c88 --c1mode -o "${OUT}/${b}.asm" < "${OUT}/${b}.i" 2>"${OUT}/err" \
+  if ! "$SDCCBIN" -ms1c88 ${SDCC_OPTS:-} --c1mode -o "${OUT}/${b}.asm" < "${OUT}/${b}.i" 2>"${OUT}/err" \
      || grep -qiE 'Internal Error|backtrace|FATAL' "${OUT}/err"; then
     head -10 "${OUT}/err" > "${OUT}/diag"; report_fail "$b" "COMPILE-FAIL" "${OUT}/diag"; continue
   fi
