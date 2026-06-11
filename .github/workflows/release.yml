@@ -33,11 +33,11 @@ jobs:
             platform: darwin-x64
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       # Same cache scheme as ci.yml so a release reuses the configured tree.
       - name: Cache SDCC build tree
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: build
           key: sdcc-build-${{ runner.os }}-${{ runner.arch }}-${{ matrix.m32 && 'm32-' || '' }}${{ hashFiles('build.sh', 'third_party/sdcc/*.patch') }}
@@ -83,7 +83,7 @@ jobs:
         run: SDK_VERSION=${{ github.ref_name }} ./scripts/package-sdk.sh
 
       - name: Upload SDK artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: sdcc88-sdk-${{ matrix.platform }}
           path: build/dist/sdcc88-sdk-*-${{ matrix.platform }}.tar.gz
@@ -121,10 +121,10 @@ jobs:
         shell: pwsh
         run: git config --global core.autocrlf input
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Cache SDCC build tree
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: build
           key: sdcc-build-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('build.sh', 'third_party/sdcc/*.patch') }}
@@ -165,7 +165,7 @@ jobs:
         run: SDK_VERSION=${{ github.ref_name }} ./scripts/package-sdk.sh
 
       - name: Upload SDK artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: sdcc88-sdk-windows-${{ matrix.winarch }}
           path: build/dist/sdcc88-sdk-*-windows-${{ matrix.winarch }}.zip
@@ -178,10 +178,10 @@ jobs:
     permissions:
       contents: write   # create the release + upload the tarballs
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Download all SDK tarballs
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           pattern: sdcc88-sdk-*
           path: dist

@@ -155,7 +155,10 @@ Start at `docs/s1c88/README.md`; the backend decisions are in `docs/s1c88/abi-de
   `<github-username>/<meaningful-name>`** — prefixed with the username of the person opening the PR (e.g.
   `asterick/branch-relaxation`). **`main` is protected:** direct pushes are blocked (work via a branch +
   PR), and a PR cannot merge unless the `ci` check (the **build & test** job: `build.sh` +
-  `scripts/run-tests.sh`) is **green**. Code reviews are not required. Keep each PR green on its own —
+  `scripts/run-tests.sh`) is **green**. Code reviews are not required, but **merging a PR requires the
+  repo owner's explicit go-ahead — a green CI run alone is NOT permission to merge** (effective after the
+  optimization-matrix PR that follows the CI-maintenance PR; agents: open the PR, report it ready, and
+  stop). Keep each PR green on its own —
   validate with `./scripts/run-tests.sh` (or `./scripts/validate-s1c88.sh` for a focused codegen slice)
   before opening it; clearly label any intentionally-red WIP.
 - **Keep the docs current as part of each PR — they must never lag behind a merged branch.** Whenever a
