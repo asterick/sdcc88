@@ -93,8 +93,12 @@ for src in "${DIFF}"/cases/*.c; do
   case "$b" in *"$FILTER"*) ;; *) continue ;; esac
   [ -z "$TAP" ] && printf "  %-14s " "$b"
 
-  # one TU = the case + a main() that calls diff_run()
-  printf '#include "%s"\nint main(void){diff_run();return 0;}\n' "$src" > "${OUT}/wrap.c"
+  # one TU = the case + a main() that calls diff_run(). The path is written INTO
+  # the file, where MSYS2's command-line path conversion can't reach it — the
+  # native mingw gcc can't open /d/... paths, so hand it a Windows-style one.
+  inc="$src"
+  command -v cygpath >/dev/null 2>&1 && inc="$(cygpath -m "$src")"
+  printf '#include "%s"\nint main(void){diff_run();return 0;}\n' "$inc" > "${OUT}/wrap.c"
 
   # --- reference: host build + run -> golden ---
   if ! cc -O2 -w -DDIFF_HOST -I "$DIFF" "${OUT}/wrap.c" -o "${OUT}/host" 2>"${OUT}/err"; then
