@@ -57,10 +57,15 @@ fi
 #    script — replace the configure-generated bin/sdcpp wrapper with the real cpp.exe
 #    and stage its cc1 backend at the libexecsubdir shape the driver relocates against
 #    argv[0] (cc1 flat next to cpp is NOT found; same layout package-sdk.sh ships).
-if [ -n "$HOST_WINDOWS" ] && [ ! -x "${SDCC}/bin/sdcpp.exe" ]; then
-  echo ">> windows: bin/sdcpp wrapper -> real cpp.exe + libexec cc1"
-  rm -f "${SDCC}/bin/sdcpp"
-  cp "${SDCC}/support/cpp/gcc/cpp.exe" "${SDCC}/bin/sdcpp.exe"
+if [ -n "$HOST_WINDOWS" ]; then
+  # Run every time (cheap) so a CACHED build tree gets corrected too — the
+  # guard used to be "bin/sdcpp.exe exists", which left stale cc1 staging in
+  # place on cache hits.
+  if [ ! -x "${SDCC}/bin/sdcpp.exe" ]; then
+    echo ">> windows: bin/sdcpp wrapper -> real cpp.exe"
+    rm -f "${SDCC}/bin/sdcpp"
+    cp "${SDCC}/support/cpp/gcc/cpp.exe" "${SDCC}/bin/sdcpp.exe"
+  fi
   # The driver itself reports the (relocated) dir it will search for cc1 —
   # the first "programs" entry of -print-search-dirs. Deriving it from the
   # Makefile's target_noncanonical broke on CLANGARM64, where that alias
@@ -68,8 +73,11 @@ if [ -n "$HOST_WINDOWS" ] && [ ! -x "${SDCC}/bin/sdcpp.exe" ]; then
   # Windows (paths carry "D:").
   progdir="$("${SDCC}/bin/sdcpp.exe" -print-search-dirs | sed -n 's/^programs: =//p' | cut -d';' -f1)"
   [ -n "$progdir" ] || { echo "!! sdcpp -print-search-dirs gave no programs dir" >&2; exit 1; }
-  mkdir -p "$progdir"
-  cp "${SDCC}/support/cpp/gcc/cc1.exe" "${progdir}/cc1.exe"
+  if [ ! -x "${progdir}/cc1.exe" ]; then
+    echo ">> windows: staging cc1 -> ${progdir}"
+    mkdir -p "$progdir"
+    cp "${SDCC}/support/cpp/gcc/cc1.exe" "${progdir}/cc1.exe"
+  fi
 fi
 
 echo
