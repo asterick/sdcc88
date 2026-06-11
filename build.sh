@@ -30,6 +30,11 @@ BUILD="${REPO}/build"
 SDCC="${BUILD}/sdcc-${SDCC_VER}"
 TARBALL="${BUILD}/sdcc-src-${SDCC_VER}.tar.bz2"
 
+# Windows host (MSYS2/MinGW)? A few configure knobs + the sdcpp wrapper handling differ
+# (see the MSYS2 mingw-w64-sdcc PKGBUILD, which this follows).
+HOST_WINDOWS=
+case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*) HOST_WINDOWS=1 ;; esac
+
 [ "${1:-}" = "--fresh" ] && { echo ">> --fresh: removing ${SDCC}"; rm -rf "${SDCC}"; }
 mkdir -p "${BUILD}"
 
@@ -75,6 +80,19 @@ fi
 grep -q 'TARGET_ID_S1C88' "${SDCC}/src/port.h" \
   || { echo "ERROR: port registration patch did not apply (src/port.h missing TARGET_ID_S1C88)" >&2; exit 1; }
 
+# 4a. Windows-host portability fixes, vendored from MSYS2's mingw-w64-sdcc package (sdcc 4.5.0).
+#     Both are upstream-correct and inert off-Windows (a missing <string.h> include; the
+#     mingw host-config header GCC's cpp needs, fully __MINGW32__-guarded), so they are applied
+#     unconditionally to keep the tree identical on every platform. Idempotent via markers.
+if ! grep -q '#include <string.h>' "${SDCC}/src/SDCCattr.c"; then
+  echo ">> applying winport_sdccattr_string_h.patch"
+  ( cd "${SDCC}" && patch -p1 --forward < "${REPO}/third_party/sdcc/winport_sdccattr_string_h.patch" )
+fi
+if [ ! -f "${SDCC}/support/cpp/gcc/config/i386/xm-mingw32.h" ]; then
+  echo ">> applying winport_xm_mingw32.patch"
+  ( cd "${SDCC}" && patch -p1 --forward < "${REPO}/third_party/sdcc/winport_xm_mingw32.patch" )
+fi
+
 # 4b. Teach the two SDCC device headers whose z80-family branch is BOTH needed and
 #     correct for s1c88. <stdarg.h> gates va_list on `defined(__SDCC_z80) || ...`;
 #     s1c88 isn't listed, so it falls to the mcs51 default (the __data qualifier)
@@ -102,9 +120,21 @@ done
 cd "${SDCC}"
 if [ ! -f config.status ]; then
   echo ">> configure"
-  ./configure \
-    --disable-device-lib --disable-ucsim --disable-sdcdb --disable-sdbinutils \
-    --disable-non-free --disable-packihx
+  if [ -n "$HOST_WINDOWS" ]; then
+    # MSYS2/MinGW (per the mingw-w64-sdcc PKGBUILD): C23-default gcc breaks sdcc's
+    # `typedef ... bool` (force gnu17); the config header wants the native dir
+    # separator; werror trips on mingw-only warnings. -static so the shipped
+    # binaries don't depend on the MinGW runtime DLLs (libstdc++/libgcc/winpthread).
+    ./configure \
+      --disable-device-lib --disable-ucsim --disable-sdcdb --disable-sdbinutils \
+      --disable-non-free --disable-packihx \
+      --disable-werror sdccconf_h_dir_separator='\\' \
+      CFLAGS='-g -O2 -std=gnu17' LDFLAGS='-static'
+  else
+    ./configure \
+      --disable-device-lib --disable-ucsim --disable-sdcdb --disable-sdbinutils \
+      --disable-non-free --disable-packihx
+  fi
 fi
 
 # 6. Inject s1c88 into the configured build (configure doesn't know our port): add it to the port

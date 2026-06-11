@@ -122,3 +122,78 @@ jobs:
           path: build/dist/sdcc88-sdk-*-darwin-arm64.tar.gz
           if-no-files-found: error
           retention-days: 30
+
+  # Same build + full test suite + package on Windows (x64, native MSYS2/MinGW64 —
+  # the configuration the MSYS2 mingw-w64-sdcc package proves out; build.sh carries
+  # its configure knobs + sdcpp wrapper workaround). NOT the required check; this
+  # keeps the windows SDK honest and uploads its zip.
+  test-windows:
+    name: build & test (windows-x64)
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: msys2 {0}
+    env:
+      MAKEFLAGS: -j4
+    steps:
+      # Git-for-Windows defaults core.autocrlf=true, which would CRLF-ify every
+      # bash script and LF baseline at checkout — force LF.
+      - name: Force LF checkout
+        shell: pwsh
+        run: git config --global core.autocrlf input
+
+      - uses: actions/checkout@v4
+
+      - name: Cache SDCC build tree
+        uses: actions/cache@v4
+        with:
+          path: build
+          key: sdcc-build-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('build.sh', 'third_party/sdcc/*.patch') }}
+
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          install: >-
+            mingw-w64-x86_64-gcc
+            mingw-w64-x86_64-boost
+            flex
+            bison
+            m4
+            gawk
+            make
+            patch
+            diffutils
+            python
+            curl
+            zip
+            git
+
+      # the scripts preprocess with the host `cc`; MSYS2 names it gcc
+      - name: Provide cc
+        run: command -v cc >/dev/null 2>&1 || cp /mingw64/bin/gcc.exe /mingw64/bin/cc.exe
+
+      - name: Build the SDK (overlay + configure + compiler + sdcpp + toolchain + runtime)
+        run: ./build.sh
+
+      - name: Run the unified test suite (TAP)
+        run: DIFF_SAVE_DIR="$PWD/build/diff-products" ./scripts/run-tests.sh
+
+      - name: Upload diff-test pipeline products
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: diff-products-windows-x64
+          path: build/diff-products/
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Package the SDK
+        run: ./scripts/package-sdk.sh
+
+      - name: Upload SDK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sdcc88-sdk-windows-x64
+          path: build/dist/sdcc88-sdk-*-windows-x64.zip
+          if-no-files-found: error
+          retention-days: 30

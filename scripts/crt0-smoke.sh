@@ -32,7 +32,7 @@ int z;                      /* zero-init global  -> must read 0 (BIOS/runner cle
 int seven(void){ return 7; }
 int main(void){ return g + seven() + z; }   /* expect 42 (z==0) */
 EOF
-cc -E -P -x c "${OUT}/t.c" > "${OUT}/t.i"
+cc -std=gnu17 -E -P -x c "${OUT}/t.c" > "${OUT}/t.i"
 "$SDCCBIN" -ms1c88 --c1mode -o "${OUT}/t.asm" < "${OUT}/t.i" || { echo "!! compile FAILED"; exit 1; }
 "$SDAS" -o "${OUT}/t.rel" "${OUT}/t.asm" || { echo "!! assemble FAILED"; exit 1; }
 

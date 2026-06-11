@@ -128,7 +128,7 @@ for src in "${PROGS[@]}"; do
   [ -f "$src" ] || { echo "  (skip missing $src)"; continue; }
   lbl="$(basename "$src" .c)"
   LABELS+=("$lbl")
-  cc -E -P -I"$INCDIR" -x c "$src" > "${OUT}/${lbl}.pp.c" 2>/dev/null \
+  cc -std=gnu17 -E -P -I"$INCDIR" -x c "$src" > "${OUT}/${lbl}.pp.c" 2>/dev/null \
     || { echo "  $lbl: preprocess ERR"; continue; }
   "${SDCCBIN}" -ms1c88 --opt-code-size --c1mode -o "${OUT}/${lbl}.asm" < "${OUT}/${lbl}.pp.c" 2>/dev/null \
     || { echo "  $lbl: compile ERR"; continue; }
