@@ -43,7 +43,8 @@ int main(void)
 EOF
 
 cd "$tmp"
-"$SDCCBIN" -ms1c88 --debug game.c -o game.ihx >/dev/null 2>&1 || { echo "FAIL: compile+link"; exit 1; }
+"$SDCCBIN" -ms1c88 --debug game.c -o game.ihx >compile.log 2>&1 \
+  || { echo "FAIL: compile+link"; tail -6 compile.log; exit 1; }
 "${SDCC}/bin/romgen" game.ihx game.min  >/dev/null || { echo "FAIL: romgen .min"; exit 1; }
 "${SDCC}/bin/romgen" game.ihx game.minx >/dev/null || { echo "FAIL: romgen .minx"; exit 1; }
 

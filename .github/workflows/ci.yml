@@ -65,6 +65,87 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
+  # linux-arm64: identical recipe on the arm64 hosted runner.
+  test-linux-arm64:
+    name: build & test (linux-arm64)
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache SDCC build tree
+        uses: actions/cache@v4
+        with:
+          path: build
+          key: sdcc-build-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('build.sh', 'third_party/sdcc/*.patch') }}
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential flex bison m4 gawk libboost-dev zlib1g-dev python3 curl
+
+      - name: Build the SDK
+        run: ./build.sh
+
+      - name: Run the unified test suite (TAP)
+        run: ./scripts/run-tests.sh
+
+      - name: Package the SDK
+        run: ./scripts/package-sdk.sh
+
+      - name: Upload SDK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sdcc88-sdk-linux-arm64
+          path: build/dist/sdcc88-sdk-*-linux-arm64.tar.gz
+          if-no-files-found: error
+          retention-days: 30
+
+  # linux-x86 (32-bit): no 32-bit hosted runners exist, so build with -m32
+  # multilib on the x64 runner (CC/CXX="... -m32" — configure and every
+  # component script honor them) and run the full suite natively via the
+  # kernel's ia32 emulation. SDK_ARCH overrides package-sdk's uname-based
+  # arch detection.
+  test-linux-x86:
+    name: build & test (linux-x86)
+    runs-on: ubuntu-latest
+    env:
+      CC: gcc -m32
+      CXX: g++ -m32
+      SDK_ARCH: x86
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache SDCC build tree
+        uses: actions/cache@v4
+        with:
+          path: build
+          key: sdcc-build-${{ runner.os }}-${{ runner.arch }}-m32-${{ hashFiles('build.sh', 'third_party/sdcc/*.patch') }}
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential gcc-multilib g++-multilib lib32z1-dev \
+            flex bison m4 gawk libboost-dev zlib1g-dev python3 curl
+
+      - name: Build the SDK
+        run: ./build.sh
+
+      - name: Run the unified test suite (TAP)
+        run: ./scripts/run-tests.sh
+
+      - name: Package the SDK
+        run: ./scripts/package-sdk.sh
+
+      - name: Upload SDK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sdcc88-sdk-linux-x86
+          path: build/dist/sdcc88-sdk-*-linux-x86.tar.gz
+          if-no-files-found: error
+          retention-days: 30
+
   # Same build + full test suite + package on macOS (arm64 — Apple Silicon).
   # NOT the required check ("build & test" above gates main); this keeps the
   # darwin SDK honest and uploads its tarball. Apple's stock bison (2.3),
@@ -123,18 +204,78 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
+  # darwin-x64: same macOS recipe on the Intel runner (brew --prefix resolves
+  # /usr/local there, so the PATH/flags wiring is identical).
+  test-macos-x64:
+    name: build & test (darwin-x64)
+    runs-on: macos-15-intel
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache SDCC build tree
+        uses: actions/cache@v4
+        with:
+          path: build
+          key: sdcc-build-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('build.sh', 'third_party/sdcc/*.patch') }}
+
+      - name: Install build dependencies (Homebrew)
+        run: brew install boost bison flex gawk make bash
+
+      - name: Put the Homebrew toolchain first on PATH
+        run: |
+          echo "$(brew --prefix bison)/bin" >> "$GITHUB_PATH"
+          echo "$(brew --prefix flex)/bin"  >> "$GITHUB_PATH"
+          echo "$(brew --prefix make)/libexec/gnubin" >> "$GITHUB_PATH"
+          echo "CPPFLAGS=-I$(brew --prefix)/include" >> "$GITHUB_ENV"
+          echo "LDFLAGS=-L$(brew --prefix)/lib" >> "$GITHUB_ENV"
+
+      - name: Build the SDK
+        run: ./build.sh
+
+      - name: Run the unified test suite (TAP)
+        run: ./scripts/run-tests.sh
+
+      - name: Package the SDK
+        run: ./scripts/package-sdk.sh
+
+      - name: Upload SDK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sdcc88-sdk-darwin-x64
+          path: build/dist/sdcc88-sdk-*-darwin-x64.tar.gz
+          if-no-files-found: error
+          retention-days: 30
+
   # Same build + full test suite + package on Windows (x64, native MSYS2/MinGW64 —
   # the configuration the MSYS2 mingw-w64-sdcc package proves out; build.sh carries
   # its configure knobs + sdcpp wrapper workaround). NOT the required check; this
   # keeps the windows SDK honest and uploads its zip.
   test-windows:
-    name: build & test (windows-x64)
-    runs-on: windows-latest
+    name: build & test (windows-${{ matrix.winarch }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            winarch: x64
+            msystem: MINGW64
+            prefix: mingw-w64-x86_64
+          # arm64: the CLANGARM64 environment (no gcc — clang is the system
+          # compiler there, hence the -cc meta package + CXX=c++).
+          - os: windows-11-arm
+            winarch: arm64
+            msystem: CLANGARM64
+            prefix: mingw-w64-clang-aarch64
     defaults:
       run:
         shell: msys2 {0}
     env:
       MAKEFLAGS: -j4
+      CXX: c++
+      # the msys runtime is x64-emulated on arm64 Windows, so uname -m lies —
+      # name the artifact from the matrix, not the kernel
+      SDK_ARCH: ${{ matrix.winarch }}
     steps:
       # Git-for-Windows defaults core.autocrlf=true, which would CRLF-ify every
       # bash script and LF baseline at checkout — force LF.
@@ -152,10 +293,10 @@ jobs:
 
       - uses: msys2/setup-msys2@v2
         with:
-          msystem: MINGW64
+          msystem: ${{ matrix.msystem }}
           install: >-
-            mingw-w64-x86_64-gcc
-            mingw-w64-x86_64-boost
+            ${{ matrix.prefix }}-cc
+            ${{ matrix.prefix }}-boost
             flex
             bison
             m4
@@ -168,9 +309,14 @@ jobs:
             zip
             git
 
-      # the scripts preprocess with the host `cc`; MSYS2 names it gcc
+      # the scripts preprocess with the host `cc`; ensure the alias exists
       - name: Provide cc
-        run: command -v cc >/dev/null 2>&1 || cp /mingw64/bin/gcc.exe /mingw64/bin/cc.exe
+        run: |
+          command -v cc >/dev/null 2>&1 && exit 0
+          for c in gcc clang; do
+            [ -x "${MINGW_PREFIX}/bin/${c}.exe" ] && { cp "${MINGW_PREFIX}/bin/${c}.exe" "${MINGW_PREFIX}/bin/cc.exe"; exit 0; }
+          done
+          echo "no compiler found" >&2; exit 1
 
       - name: Build the SDK (overlay + configure + compiler + sdcpp + toolchain + runtime)
         run: ./build.sh
@@ -182,7 +328,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: diff-products-windows-x64
+          name: diff-products-windows-${{ matrix.winarch }}
           path: build/diff-products/
           if-no-files-found: ignore
           retention-days: 7
@@ -193,7 +339,7 @@ jobs:
       - name: Upload SDK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: sdcc88-sdk-windows-x64
-          path: build/dist/sdcc88-sdk-*-windows-x64.zip
+          name: sdcc88-sdk-windows-${{ matrix.winarch }}
+          path: build/dist/sdcc88-sdk-*-windows-${{ matrix.winarch }}.zip
           if-no-files-found: error
           retention-days: 30

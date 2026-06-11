@@ -23,7 +23,7 @@ the earlier stm8 base) and is fully re-pointed to the S1C88 register set, ABI, a
 
 ## Get it
 
-**Prebuilt SDK (Linux x86-64, macOS arm64):** grab `sdcc88-sdk-<version>-<platform>.tar.gz` from the
+**Prebuilt SDK (Linux x64/arm64/x86, macOS arm64/x64, Windows x64/arm64):** grab `sdcc88-sdk-<version>-<platform>.tar.gz` from the
 [Releases page](https://github.com/asterick/sdcc88/releases) (tagged releases; CI also attaches the same
 tarballs to every green run as the `sdcc88-sdk-<platform>` artifacts). It's relocatable — unpack anywhere
 and `bin/sdcc -ms1c88` works with no environment setup. Built by `scripts/package-sdk.sh`, which proves
