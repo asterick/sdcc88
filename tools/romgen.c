@@ -1012,6 +1012,9 @@ static int io_cmp (const void *a, const void *b)
 static char *default_io_path (const char *argv0)
 {
   const char *slash = strrchr (argv0, '/');
+  /* Windows argv[0] uses backslashes; take whichever separator is last */
+  const char *bslash = strrchr (argv0, '\\');
+  if (bslash && (!slash || bslash > slash)) slash = bslash;
   const char *tail = "/../share/sdcc/include/s1c88/pm.h";
   size_t dl = slash ? (size_t) (slash - argv0) : 1;
   char *p = malloc (dl + strlen (tail) + 1);

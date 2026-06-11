@@ -47,8 +47,9 @@ SDCC="${REPO}/build/sdcc-4.5.0"
 
 VERSION="${SDK_VERSION:-$(git -C "$REPO" describe --tags --always --dirty 2>/dev/null || echo unknown)}"
 case "$(uname -s)" in
-  Darwin) HOST_OS=darwin ;;
-  Linux)  HOST_OS=linux ;;
+  Darwin)              HOST_OS=darwin ;;
+  Linux)               HOST_OS=linux ;;
+  MINGW*|MSYS*|CYGWIN*) HOST_OS=windows ;;
   *)      HOST_OS="$(uname -s | tr '[:upper:]' '[:lower:]')" ;;
 esac
 case "$(uname -m)" in
@@ -62,18 +63,21 @@ HOST_ARCH="${SDK_ARCH:-$HOST_ARCH}"
 PLATFORM="${HOST_OS}-${HOST_ARCH}"
 DIST="${REPO}/build/dist"
 STAGE="${DIST}/sdcc88-sdk"
-TARBALL="${DIST}/sdcc88-sdk-${VERSION}-${PLATFORM}.tar.gz"
+# Windows binaries carry .exe, and the archive is a .zip (native to the platform).
+EXE=""; ARCHIVE_EXT=tar.gz
+if [ "$HOST_OS" = windows ]; then EXE=".exe"; ARCHIVE_EXT=zip; fi
+TARBALL="${DIST}/sdcc88-sdk-${VERSION}-${PLATFORM}.${ARCHIVE_EXT}"
 
 echo ">> staging ${STAGE}"
 rm -rf "$STAGE"
 mkdir -p "${STAGE}/bin" "${STAGE}/docs" "${STAGE}/examples/hello"
 
-cp "${SDCC}/src/sdcc"             "${STAGE}/bin/sdcc"
-cp "${SDCC}/support/cpp/gcc/cpp"  "${STAGE}/bin/sdcpp"
-cp "${SDCC}/bin/sdas88"           "${STAGE}/bin/sdas88"
-cp "${SDCC}/bin/sdldz80"          "${STAGE}/bin/sdldz80"
-cp "${SDCC}/bin/romgen"           "${STAGE}/bin/romgen"
-cp "${SDCC}/bin/minxdump"         "${STAGE}/bin/minxdump"
+cp "${SDCC}/src/sdcc${EXE}"             "${STAGE}/bin/sdcc${EXE}"
+cp "${SDCC}/support/cpp/gcc/cpp${EXE}"  "${STAGE}/bin/sdcpp${EXE}"
+cp "${SDCC}/bin/sdas88${EXE}"           "${STAGE}/bin/sdas88${EXE}"
+cp "${SDCC}/bin/sdldz80${EXE}"          "${STAGE}/bin/sdldz80${EXE}"
+cp "${SDCC}/bin/romgen${EXE}"           "${STAGE}/bin/romgen${EXE}"
+cp "${SDCC}/bin/minxdump${EXE}"         "${STAGE}/bin/minxdump${EXE}"
 
 # sdcpp's cc1 backend, at the libexecsubdir shape the driver relocates to
 TRIPLE="$(sed -n 's/^target_noncanonical:=//p' "${SDCC}/support/cpp/gcc/Makefile")"
@@ -81,9 +85,9 @@ CPPVER="$(cat "${SDCC}/support/cpp/gcc/BASE-VER")"
 [ -n "$TRIPLE" ] && [ -n "$CPPVER" ] || { echo "!! can't derive sdcpp libexec dir" >&2; exit 1; }
 LIBEXEC="${STAGE}/libexec/sdcc/${TRIPLE}/${CPPVER}"
 mkdir -p "$LIBEXEC"
-cp "${SDCC}/support/cpp/gcc/cc1" "${LIBEXEC}/cc1"
+cp "${SDCC}/support/cpp/gcc/cc1${EXE}" "${LIBEXEC}/cc1${EXE}"
 
-strip "${STAGE}/bin/"* "${LIBEXEC}/cc1" 2>/dev/null \
+strip "${STAGE}/bin/"* "${LIBEXEC}/cc1${EXE}" 2>/dev/null \
   || echo "   (strip unavailable — shipping unstripped)"
 # macOS: stripping invalidates the linker's ad-hoc code signature; arm64 refuses
 # to exec unsigned binaries, so re-sign ad-hoc (the relocation smoke below would
@@ -124,6 +128,12 @@ EOF
 
 # --- prove the staged tree is relocatable before shipping it ---
 echo ">> relocation smoke (temp-dir copy, minimal env)"
+# Windows: sdcc spawns sdcpp via _popen() = cmd.exe, which needs COMSPEC +
+# SystemRoot even under a minimal environment.
+WINENV=()
+if [ "$HOST_OS" = windows ]; then
+  WINENV=("COMSPEC=${COMSPEC:-}" "SYSTEMROOT=${SYSTEMROOT:-${SystemRoot:-}}")
+fi
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 cp -r "$STAGE" "${TMP}/sdk"
 cat > "${TMP}/prog.c" <<'EOF'
@@ -136,15 +146,15 @@ int main(void){
   return (a / b) - 100 - (int)strlen(buf);   /* 142 - 100 - 1 == 41 */
 }
 EOF
-env -i PATH=/usr/bin:/bin HOME="$TMP" \
-  "${TMP}/sdk/bin/sdcc" -ms1c88 "${TMP}/prog.c" -o "${TMP}/prog.ihx" \
+env -i PATH=/usr/bin:/bin HOME="$TMP" ${WINENV[@]+"${WINENV[@]}"} \
+  "${TMP}/sdk/bin/sdcc${EXE}" -ms1c88 "${TMP}/prog.c" -o "${TMP}/prog.ihx" \
   || { echo "!! relocated sdcc FAILED — package is not self-contained" >&2; exit 1; }
-env -i PATH=/usr/bin:/bin \
-  "${TMP}/sdk/bin/romgen" "${TMP}/prog.ihx" "${TMP}/prog.min" >/dev/null \
+env -i PATH=/usr/bin:/bin ${WINENV[@]+"${WINENV[@]}"} \
+  "${TMP}/sdk/bin/romgen${EXE}" "${TMP}/prog.ihx" "${TMP}/prog.min" >/dev/null \
   || { echo "!! relocated romgen FAILED" >&2; exit 1; }
 [ -s "${TMP}/prog.min" ] || { echo "!! empty .min from relocated toolchain" >&2; exit 1; }
 # the shipped starter project must build out of the box from inside the package
-env -i PATH=/usr/bin:/bin HOME="$TMP" \
+env -i PATH=/usr/bin:/bin HOME="$TMP" ${WINENV[@]+"${WINENV[@]}"} \
   make -s -C "${TMP}/sdk/examples/hello" hello.min \
   || { echo "!! packaged examples/hello FAILED to build" >&2; exit 1; }
 RUNNER="${REPO}/build/emu/runner"
@@ -156,8 +166,12 @@ else
   echo "   (emulator runner not built — compile/link/romgen verified, execution skipped)"
 fi
 
-echo ">> tarring ${TARBALL}"
-rm -f "${DIST}"/sdcc88-sdk-*-"${PLATFORM}".tar.gz
-tar -czf "$TARBALL" -C "$DIST" sdcc88-sdk
+echo ">> archiving ${TARBALL}"
+rm -f "${DIST}"/sdcc88-sdk-*-"${PLATFORM}.${ARCHIVE_EXT}"
+if [ "$ARCHIVE_EXT" = zip ]; then
+  ( cd "$DIST" && zip -qr "$TARBALL" sdcc88-sdk )
+else
+  tar -czf "$TARBALL" -C "$DIST" sdcc88-sdk
+fi
 ls -lh "$TARBALL" | awk '{print "   " $5 "  " $9}'
 echo ">> package-sdk OK"

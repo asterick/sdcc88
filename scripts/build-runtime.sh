@@ -80,7 +80,7 @@ for r in $LIB_INT $LIB_LONG $LIB_WIDEMUL $LIB_LIBC $LIB_STDLIB $LIB_CTYPE $LIB_S
   # -D__SDCC_s1c88 so the (host-cpp'd) SDCC headers take the z80-like branch, not
   # the mcs51 __data default — see the header fix in build.sh.  USE_FLOATS=0 keeps
   # printf_large's _print_format free of the float support routines.
-  if ! cc -E -P -x c -I "$DINC" -D__SDCC_s1c88 -DUSE_FLOATS=0 -D_SDCC_NO_ASM_LIB_FUNCS "$src" > "${TMP}/${r}.i" 2>"${TMP}/e" \
+  if ! cc -std=gnu17 -E -P -x c -I "$DINC" -D__SDCC_s1c88 -DUSE_FLOATS=0 -D_SDCC_NO_ASM_LIB_FUNCS "$src" > "${TMP}/${r}.i" 2>"${TMP}/e" \
      || ! "$SDCCBIN" -ms1c88 --c1mode -o "${TMP}/${r}.asm" < "${TMP}/${r}.i" 2>"${TMP}/e" \
      || ! "$SDAS" -o "${LIBDIR}/${r}.rel" "${TMP}/${r}.asm" 2>"${TMP}/e"; then
     echo "!! support routine ${r} FAILED:"; sed 's/^/    /' "${TMP}/e" | head -8; exit 1

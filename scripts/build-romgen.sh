@@ -15,7 +15,10 @@ SDCC="${REPO}/build/sdcc-4.5.0"
 
 mkdir -p "${SDCC}/bin"
 CC="${CC:-cc}"
+# Windows: -static so the shipped tools don't depend on the MinGW runtime DLLs
+LDEXTRA=""
+case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*) LDEXTRA="-static" ;; esac
 # $CC unquoted: it may carry flags ("gcc -m32"), the autoconf convention
-$CC -O2 -Wall -o "${SDCC}/bin/romgen"   "${REPO}/tools/romgen.c"
-$CC -O2 -Wall -o "${SDCC}/bin/minxdump" "${REPO}/tools/minxdump.c"
+$CC -O2 -Wall ${LDEXTRA} -o "${SDCC}/bin/romgen"   "${REPO}/tools/romgen.c"
+$CC -O2 -Wall ${LDEXTRA} -o "${SDCC}/bin/minxdump" "${REPO}/tools/minxdump.c"
 echo ">> built ${SDCC}/bin/romgen + minxdump"

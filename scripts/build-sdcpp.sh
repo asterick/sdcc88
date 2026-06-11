@@ -21,6 +21,9 @@ SDCC="${REPO}/build/sdcc-4.5.0"
 
 [ -f "${SDCC}/config.status" ] || { echo "!! tree not configured — run ./build.sh first" >&2; exit 1; }
 
+HOST_WINDOWS=
+case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*) HOST_WINDOWS=1 ;; esac
+
 LIBIBERTY="${SDCC}/support/sdbinutils/libiberty"
 CPP="${SDCC}/support/cpp/gcc/cpp"
 
@@ -28,7 +31,14 @@ CPP="${SDCC}/support/cpp/gcc/cpp"
 #    so configure + build it directly (cpp/gcc's Makefile hard-references ../../sdbinutils/libiberty).
 if [ ! -f "${LIBIBERTY}/libiberty.a" ]; then
   echo ">> building libiberty"
-  [ -f "${LIBIBERTY}/Makefile" ] || ( cd "${LIBIBERTY}" && ./configure )
+  if [ ! -f "${LIBIBERTY}/Makefile" ]; then
+    if [ -n "$HOST_WINDOWS" ]; then
+      # match build.sh's gnu17 (C23-default gcc breaks old C in libiberty too)
+      ( cd "${LIBIBERTY}" && CFLAGS='-g -O2 -std=gnu17' ./configure )
+    else
+      ( cd "${LIBIBERTY}" && ./configure )
+    fi
+  fi
   make -C "${LIBIBERTY}"
 else
   echo ">> libiberty.a present"
@@ -41,6 +51,21 @@ if [ ! -x "${CPP}" ]; then
   make -C "${SDCC}/support/cpp"
 else
   echo ">> sdcpp backend (support/cpp/gcc/cpp) present"
+fi
+
+# 3. Windows only: the driver spawns sdcpp via _popen(), which cannot exec a shell
+#    script — replace the configure-generated bin/sdcpp wrapper with the real cpp.exe
+#    and stage its cc1 backend at the libexecsubdir shape the driver relocates against
+#    argv[0] (cc1 flat next to cpp is NOT found; same layout package-sdk.sh ships).
+if [ -n "$HOST_WINDOWS" ] && [ ! -x "${SDCC}/bin/sdcpp.exe" ]; then
+  echo ">> windows: bin/sdcpp wrapper -> real cpp.exe + libexec cc1"
+  TRIPLE="$(sed -n 's/^target_noncanonical:=//p' "${SDCC}/support/cpp/gcc/Makefile")"
+  CPPVER="$(cat "${SDCC}/support/cpp/gcc/BASE-VER")"
+  [ -n "$TRIPLE" ] && [ -n "$CPPVER" ] || { echo "!! can't derive sdcpp libexec dir" >&2; exit 1; }
+  mkdir -p "${SDCC}/libexec/sdcc/${TRIPLE}/${CPPVER}"
+  cp "${SDCC}/support/cpp/gcc/cc1.exe" "${SDCC}/libexec/sdcc/${TRIPLE}/${CPPVER}/cc1.exe"
+  rm -f "${SDCC}/bin/sdcpp"
+  cp "${SDCC}/support/cpp/gcc/cpp.exe" "${SDCC}/bin/sdcpp.exe"
 fi
 
 echo

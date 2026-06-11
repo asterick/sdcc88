@@ -17,6 +17,10 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
+#ifdef _WIN32
+#include <io.h>
+#include <fcntl.h>
+#endif
 
 #define MINX_HDRSIZE 16
 #define CART_BASE 0x2100u
@@ -175,6 +179,11 @@ int main (int argc, char **argv)
 {
   const char *inpath = NULL, *rompath = NULL;
   int i;
+
+#ifdef _WIN32
+  /* the report is consumed by greps/diffs — keep it LF on every platform */
+  _setmode (_fileno (stdout), _O_BINARY);
+#endif
 
   for (i = 1; i < argc; i++)
     {

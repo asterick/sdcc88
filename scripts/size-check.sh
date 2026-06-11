@@ -42,7 +42,7 @@ fi
 
 # code_bytes <src.c> -> ROM byte count (decimal), or "ERR"
 code_bytes() {
-  cc -E -P -x c "$1" > "${OUT}/pp.c" 2>/dev/null || { echo ERR; return; }
+  cc -std=gnu17 -E -P -x c "$1" > "${OUT}/pp.c" 2>/dev/null || { echo ERR; return; }
   "${SDCCBIN}" -ms1c88 --c1mode -o "${OUT}/a.asm" < "${OUT}/pp.c" 2>/dev/null || { echo ERR; return; }
   "${SDAS}" -o "${OUT}/a.rel" "${OUT}/a.asm" >/dev/null 2>&1 || { echo ERR; return; }
   local tot=0 name h
@@ -74,7 +74,7 @@ _rom() {
 # intrinsics); we synthesise a same-bank `_STUB` defining each so the program
 # links AND the cross-module calls stay relaxable — the calls we want to measure.
 relax_reclaim() {
-  cc -E -P -x c "$1" > "${OUT}/pp.c" 2>/dev/null || { echo ERR; return; }
+  cc -std=gnu17 -E -P -x c "$1" > "${OUT}/pp.c" 2>/dev/null || { echo ERR; return; }
   "${SDCCBIN}" -ms1c88 --c1mode -o "${OUT}/a.asm" < "${OUT}/pp.c" 2>/dev/null || { echo ERR; return; }
   "${SDAS}" -o "${OUT}/a.rel" "${OUT}/a.asm" >/dev/null 2>&1 || { echo ERR; return; }
   local undef

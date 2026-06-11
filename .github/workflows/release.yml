@@ -89,9 +89,71 @@ jobs:
           path: build/dist/sdcc88-sdk-*-${{ matrix.platform }}.tar.gz
           if-no-files-found: error
 
+  # Windows builds natively under MSYS2/MinGW64 — its setup + shell don't fit
+  # the unix matrix above, so it is its own job (mirrors ci.yml's test-windows).
+  build-windows:
+    name: build, test & package (windows-x64)
+    permissions:
+      contents: read
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: msys2 {0}
+    env:
+      MAKEFLAGS: -j4
+    steps:
+      - name: Force LF checkout
+        shell: pwsh
+        run: git config --global core.autocrlf input
+
+      - uses: actions/checkout@v4
+
+      - name: Cache SDCC build tree
+        uses: actions/cache@v4
+        with:
+          path: build
+          key: sdcc-build-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('build.sh', 'third_party/sdcc/*.patch') }}
+
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          install: >-
+            mingw-w64-x86_64-gcc
+            mingw-w64-x86_64-boost
+            flex
+            bison
+            m4
+            gawk
+            make
+            patch
+            diffutils
+            python
+            curl
+            zip
+            git
+
+      - name: Provide cc
+        run: command -v cc >/dev/null 2>&1 || cp /mingw64/bin/gcc.exe /mingw64/bin/cc.exe
+
+      - name: Build the SDK
+        run: ./build.sh
+
+      - name: Run the unified test suite (TAP)
+        run: ./scripts/run-tests.sh
+
+      - name: Package the SDK
+        run: SDK_VERSION=${{ github.ref_name }} ./scripts/package-sdk.sh
+
+      - name: Upload SDK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sdcc88-sdk-windows-x64
+          path: build/dist/sdcc88-sdk-*-windows-x64.zip
+          if-no-files-found: error
+
   release:
     name: publish the GitHub Release
-    needs: build
+    needs: [build, build-windows]
     runs-on: ubuntu-latest
     permissions:
       contents: write   # create the release + upload the tarballs
@@ -110,6 +172,6 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release create "${{ github.ref_name }}" \
-            dist/sdcc88-sdk-*.tar.gz \
+            dist/sdcc88-sdk-*.tar.gz dist/sdcc88-sdk-*.zip \
             --verify-tag --generate-notes \
             --title "sdcc88 SDK ${{ github.ref_name }}"
