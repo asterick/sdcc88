@@ -273,6 +273,9 @@ jobs:
     env:
       MAKEFLAGS: -j4
       CXX: c++
+      # the msys runtime is x64-emulated on arm64 Windows, so uname -m lies —
+      # name the artifact from the matrix, not the kernel
+      SDK_ARCH: ${{ matrix.winarch }}
     steps:
       # Git-for-Windows defaults core.autocrlf=true, which would CRLF-ify every
       # bash script and LF baseline at checkout — force LF.
