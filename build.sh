@@ -125,10 +125,13 @@ if [ ! -f config.status ]; then
     # `typedef ... bool` (force gnu17); the config header wants the native dir
     # separator; werror trips on mingw-only warnings. -static so the shipped
     # binaries don't depend on the MinGW runtime DLLs (libstdc++/libgcc/winpthread).
+    # The ada probe hangs-then-fails under clang (the CLANGARM64 environment) —
+    # answer it up front (harmless under gcc).
     ./configure \
       --disable-device-lib --disable-ucsim --disable-sdcdb --disable-sdbinutils \
       --disable-non-free --disable-packihx \
       --disable-werror sdccconf_h_dir_separator='\\' \
+      acx_cv_cc_gcc_supports_ada=no \
       CFLAGS='-g -O2 -std=gnu17' LDFLAGS='-static'
   else
     ./configure \

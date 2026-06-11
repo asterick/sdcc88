@@ -251,13 +251,28 @@ jobs:
   # its configure knobs + sdcpp wrapper workaround). NOT the required check; this
   # keeps the windows SDK honest and uploads its zip.
   test-windows:
-    name: build & test (windows-x64)
-    runs-on: windows-latest
+    name: build & test (windows-${{ matrix.winarch }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            winarch: x64
+            msystem: MINGW64
+            prefix: mingw-w64-x86_64
+          # arm64: the CLANGARM64 environment (no gcc — clang is the system
+          # compiler there, hence the -cc meta package + CXX=c++).
+          - os: windows-11-arm
+            winarch: arm64
+            msystem: CLANGARM64
+            prefix: mingw-w64-clang-aarch64
     defaults:
       run:
         shell: msys2 {0}
     env:
       MAKEFLAGS: -j4
+      CXX: c++
     steps:
       # Git-for-Windows defaults core.autocrlf=true, which would CRLF-ify every
       # bash script and LF baseline at checkout — force LF.
@@ -275,10 +290,10 @@ jobs:
 
       - uses: msys2/setup-msys2@v2
         with:
-          msystem: MINGW64
+          msystem: ${{ matrix.msystem }}
           install: >-
-            mingw-w64-x86_64-gcc
-            mingw-w64-x86_64-boost
+            ${{ matrix.prefix }}-cc
+            ${{ matrix.prefix }}-boost
             flex
             bison
             m4
@@ -291,9 +306,14 @@ jobs:
             zip
             git
 
-      # the scripts preprocess with the host `cc`; MSYS2 names it gcc
+      # the scripts preprocess with the host `cc`; ensure the alias exists
       - name: Provide cc
-        run: command -v cc >/dev/null 2>&1 || cp /mingw64/bin/gcc.exe /mingw64/bin/cc.exe
+        run: |
+          command -v cc >/dev/null 2>&1 && exit 0
+          for c in gcc clang; do
+            [ -x "${MINGW_PREFIX}/bin/${c}.exe" ] && { cp "${MINGW_PREFIX}/bin/${c}.exe" "${MINGW_PREFIX}/bin/cc.exe"; exit 0; }
+          done
+          echo "no compiler found" >&2; exit 1
 
       - name: Build the SDK (overlay + configure + compiler + sdcpp + toolchain + runtime)
         run: ./build.sh
@@ -305,7 +325,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: diff-products-windows-x64
+          name: diff-products-windows-${{ matrix.winarch }}
           path: build/diff-products/
           if-no-files-found: ignore
           retention-days: 7
@@ -316,7 +336,7 @@ jobs:
       - name: Upload SDK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: sdcc88-sdk-windows-x64
-          path: build/dist/sdcc88-sdk-*-windows-x64.zip
+          name: sdcc88-sdk-windows-${{ matrix.winarch }}
+          path: build/dist/sdcc88-sdk-*-windows-${{ matrix.winarch }}.zip
           if-no-files-found: error
           retention-days: 30

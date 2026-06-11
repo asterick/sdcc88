@@ -92,15 +92,27 @@ jobs:
   # Windows builds natively under MSYS2/MinGW64 — its setup + shell don't fit
   # the unix matrix above, so it is its own job (mirrors ci.yml's test-windows).
   build-windows:
-    name: build, test & package (windows-x64)
+    name: build, test & package (windows-${{ matrix.winarch }})
     permissions:
       contents: read
-    runs-on: windows-latest
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: windows-latest
+            winarch: x64
+            msystem: MINGW64
+            prefix: mingw-w64-x86_64
+          - os: windows-11-arm
+            winarch: arm64
+            msystem: CLANGARM64
+            prefix: mingw-w64-clang-aarch64
     defaults:
       run:
         shell: msys2 {0}
     env:
       MAKEFLAGS: -j4
+      CXX: c++
     steps:
       - name: Force LF checkout
         shell: pwsh
@@ -116,10 +128,10 @@ jobs:
 
       - uses: msys2/setup-msys2@v2
         with:
-          msystem: MINGW64
+          msystem: ${{ matrix.msystem }}
           install: >-
-            mingw-w64-x86_64-gcc
-            mingw-w64-x86_64-boost
+            ${{ matrix.prefix }}-cc
+            ${{ matrix.prefix }}-boost
             flex
             bison
             m4
@@ -133,7 +145,12 @@ jobs:
             git
 
       - name: Provide cc
-        run: command -v cc >/dev/null 2>&1 || cp /mingw64/bin/gcc.exe /mingw64/bin/cc.exe
+        run: |
+          command -v cc >/dev/null 2>&1 && exit 0
+          for c in gcc clang; do
+            [ -x "${MINGW_PREFIX}/bin/${c}.exe" ] && { cp "${MINGW_PREFIX}/bin/${c}.exe" "${MINGW_PREFIX}/bin/cc.exe"; exit 0; }
+          done
+          echo "no compiler found" >&2; exit 1
 
       - name: Build the SDK
         run: ./build.sh
@@ -147,8 +164,8 @@ jobs:
       - name: Upload SDK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: sdcc88-sdk-windows-x64
-          path: build/dist/sdcc88-sdk-*-windows-x64.zip
+          name: sdcc88-sdk-windows-${{ matrix.winarch }}
+          path: build/dist/sdcc88-sdk-*-windows-${{ matrix.winarch }}.zip
           if-no-files-found: error
 
   release:
