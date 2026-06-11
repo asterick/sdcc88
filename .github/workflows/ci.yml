@@ -25,7 +25,7 @@ jobs:
     name: build & test
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       # Cache the SDCC build tree (fetch + configure + base compile). build.sh is
       # incremental: on a cache hit it reuses the configured tree and only the
@@ -33,7 +33,7 @@ jobs:
       # patch, NOT on src/s1c88, so the cache is shared across PRs and the port is
       # always rebuilt fresh from the current sources by build.sh / run-tests.sh.
       - name: Cache SDCC build tree
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: build
           key: sdcc-build-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('build.sh', 'third_party/sdcc/*.patch') }}
@@ -48,7 +48,17 @@ jobs:
         run: ./build.sh
 
       - name: Run the unified test suite (TAP)
-        run: ./scripts/run-tests.sh
+        run: TEST_LOG_DIR="$PWD/build/test-logs" ./scripts/run-tests.sh
+
+      # full per-suite logs (the TAP stream truncates diagnostics) — failure only
+      - name: Upload test logs
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-logs-linux-x64
+          path: build/test-logs/
+          if-no-files-found: ignore
+          retention-days: 7
 
       # Package the relocatable SDK tarball (bin/ + libexec/ + share/sdcc/ +
       # docs + the hello starter) and keep it as a downloadable artifact, so a
@@ -58,7 +68,7 @@ jobs:
         run: ./scripts/package-sdk.sh
 
       - name: Upload SDK artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: sdcc88-sdk-linux-x64
           path: build/dist/sdcc88-sdk-*-linux-x64.tar.gz
@@ -70,10 +80,10 @@ jobs:
     name: build & test (linux-arm64)
     runs-on: ubuntu-24.04-arm
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Cache SDCC build tree
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: build
           key: sdcc-build-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('build.sh', 'third_party/sdcc/*.patch') }}
@@ -88,13 +98,23 @@ jobs:
         run: ./build.sh
 
       - name: Run the unified test suite (TAP)
-        run: ./scripts/run-tests.sh
+        run: TEST_LOG_DIR="$PWD/build/test-logs" ./scripts/run-tests.sh
+
+      # full per-suite logs (the TAP stream truncates diagnostics) — failure only
+      - name: Upload test logs
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-logs-linux-arm64
+          path: build/test-logs/
+          if-no-files-found: ignore
+          retention-days: 7
 
       - name: Package the SDK
         run: ./scripts/package-sdk.sh
 
       - name: Upload SDK artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: sdcc88-sdk-linux-arm64
           path: build/dist/sdcc88-sdk-*-linux-arm64.tar.gz
@@ -114,10 +134,10 @@ jobs:
       CXX: g++ -m32
       SDK_ARCH: x86
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Cache SDCC build tree
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: build
           key: sdcc-build-${{ runner.os }}-${{ runner.arch }}-m32-${{ hashFiles('build.sh', 'third_party/sdcc/*.patch') }}
@@ -133,13 +153,23 @@ jobs:
         run: ./build.sh
 
       - name: Run the unified test suite (TAP)
-        run: ./scripts/run-tests.sh
+        run: TEST_LOG_DIR="$PWD/build/test-logs" ./scripts/run-tests.sh
+
+      # full per-suite logs (the TAP stream truncates diagnostics) — failure only
+      - name: Upload test logs
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-logs-linux-x86
+          path: build/test-logs/
+          if-no-files-found: ignore
+          retention-days: 7
 
       - name: Package the SDK
         run: ./scripts/package-sdk.sh
 
       - name: Upload SDK artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: sdcc88-sdk-linux-x86
           path: build/dist/sdcc88-sdk-*-linux-x86.tar.gz
@@ -156,10 +186,10 @@ jobs:
     name: build & test (macos-arm64)
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Cache SDCC build tree
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: build
           key: sdcc-build-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('build.sh', 'third_party/sdcc/*.patch') }}
@@ -179,14 +209,24 @@ jobs:
         run: ./build.sh
 
       - name: Run the unified test suite (TAP)
-        run: DIFF_SAVE_DIR="$PWD/build/diff-products" ./scripts/run-tests.sh
+        run: TEST_LOG_DIR="$PWD/build/test-logs" DIFF_SAVE_DIR="$PWD/build/diff-products" ./scripts/run-tests.sh
+
+      # full per-suite logs (the TAP stream truncates diagnostics) — failure only
+      - name: Upload test logs
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-logs-darwin-arm64
+          path: build/test-logs/
+          if-no-files-found: ignore
+          retention-days: 7
 
       # The differential suite's guest pipeline products (.asm/.ihx/.min per
       # case), kept even on failure so a host-dependent codegen divergence can
       # be byte-diffed against another platform's products offline.
       - name: Upload diff-test pipeline products
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: diff-products-darwin-arm64
           path: build/diff-products/
@@ -197,7 +237,7 @@ jobs:
         run: ./scripts/package-sdk.sh
 
       - name: Upload SDK artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: sdcc88-sdk-darwin-arm64
           path: build/dist/sdcc88-sdk-*-darwin-arm64.tar.gz
@@ -210,10 +250,10 @@ jobs:
     name: build & test (darwin-x64)
     runs-on: macos-15-intel
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Cache SDCC build tree
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: build
           key: sdcc-build-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('build.sh', 'third_party/sdcc/*.patch') }}
@@ -233,13 +273,23 @@ jobs:
         run: ./build.sh
 
       - name: Run the unified test suite (TAP)
-        run: ./scripts/run-tests.sh
+        run: TEST_LOG_DIR="$PWD/build/test-logs" ./scripts/run-tests.sh
+
+      # full per-suite logs (the TAP stream truncates diagnostics) — failure only
+      - name: Upload test logs
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-logs-darwin-x64
+          path: build/test-logs/
+          if-no-files-found: ignore
+          retention-days: 7
 
       - name: Package the SDK
         run: ./scripts/package-sdk.sh
 
       - name: Upload SDK artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: sdcc88-sdk-darwin-x64
           path: build/dist/sdcc88-sdk-*-darwin-x64.tar.gz
@@ -283,10 +333,10 @@ jobs:
         shell: pwsh
         run: git config --global core.autocrlf input
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Cache SDCC build tree
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: build
           key: sdcc-build-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('build.sh', 'third_party/sdcc/*.patch') }}
@@ -322,11 +372,21 @@ jobs:
         run: ./build.sh
 
       - name: Run the unified test suite (TAP)
-        run: DIFF_SAVE_DIR="$PWD/build/diff-products" ./scripts/run-tests.sh
+        run: TEST_LOG_DIR="$PWD/build/test-logs" DIFF_SAVE_DIR="$PWD/build/diff-products" ./scripts/run-tests.sh
+
+      # full per-suite logs (the TAP stream truncates diagnostics) — failure only
+      - name: Upload test logs
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-logs-windows-${{ matrix.winarch }}
+          path: build/test-logs/
+          if-no-files-found: ignore
+          retention-days: 7
 
       - name: Upload diff-test pipeline products
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: diff-products-windows-${{ matrix.winarch }}
           path: build/diff-products/
@@ -337,7 +397,7 @@ jobs:
         run: ./scripts/package-sdk.sh
 
       - name: Upload SDK artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: sdcc88-sdk-windows-${{ matrix.winarch }}
           path: build/dist/sdcc88-sdk-*-windows-${{ matrix.winarch }}.zip

@@ -48,7 +48,14 @@ fi
 log ">> build emulator runner (once)"
 make -s -C "${REPO}/tests/emu" >&2 || { log "!! runner build FAILED"; exit 1; }
 
-TAPDIR="$(mktemp -d)"; trap 'rm -rf "$TAPDIR"' EXIT
+# TEST_LOG_DIR=<dir>: keep the per-suite TAP bodies + stderr logs there instead
+# of a throwaway temp dir — CI uploads them as a failure artifact so a red run
+# carries its full diagnostics (the TAP stream truncates smoke output to 8 lines).
+if [ -n "${TEST_LOG_DIR:-}" ]; then
+  TAPDIR="$TEST_LOG_DIR"; mkdir -p "$TAPDIR"
+else
+  TAPDIR="$(mktemp -d)"; trap 'rm -rf "$TAPDIR"' EXIT
+fi
 
 # --- run the case-suites in parallel; each writes its TAP body to a file ----------
 log ">> running suites in parallel: corpus, emu, diff, smoke"
