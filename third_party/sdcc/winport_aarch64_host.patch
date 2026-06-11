@@ -1,0 +1,26 @@
+(sdcc88-authored Windows-host fix, in the spirit of the vendored MSYS2 mingw-w64-sdcc
+ patches: support/cpp's gcc-12-era config.host predates aarch64 Windows hosts, so a
+ CLANGARM64 build fell to the generic unix host defaults — most fatally
+ PATH_SEPARATOR ':', which makes the cpp driver mis-split its own drive-lettered
+ program search paths ("c:/...") and fail to spawn cc1. Reuse the i386 mingw host
+ configuration: xm-mingw32.h and the mingw host hooks are win32-generic, not
+ CPU-specific. patch(1) ignores this leading text.)
+
+--- a/support/cpp/gcc/config.host
++++ b/support/cpp/gcc/config.host
+@@ -252,6 +252,15 @@
+     host_extra_gcc_objs="${host_extra_gcc_objs} driver-mingw32.o"
+     host_lto_plugin_soname=liblto_plugin.dll
+     ;;
++  aarch64-*-mingw*)
++    use_long_long_for_widest_fast_int=yes
++    host_xm_file=i386/xm-mingw32.h
++    host_xmake_file="${host_xmake_file} i386/x-mingw32"
++    host_exeext=.exe
++    out_host_hook_obj=host-mingw32.o
++    host_extra_gcc_objs="${host_extra_gcc_objs} driver-mingw32.o"
++    host_lto_plugin_soname=liblto_plugin.dll
++    ;;
+   aarch64*-*-darwin*)
+     out_host_hook_obj="${out_host_hook_obj} host-aarch64-darwin.o"
+     host_xmake_file="${host_xmake_file} aarch64/x-darwin"

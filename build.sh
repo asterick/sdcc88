@@ -92,6 +92,10 @@ if [ ! -f "${SDCC}/support/cpp/gcc/config/i386/xm-mingw32.h" ]; then
   echo ">> applying winport_xm_mingw32.patch"
   ( cd "${SDCC}" && patch -p1 --forward < "${REPO}/third_party/sdcc/winport_xm_mingw32.patch" )
 fi
+if ! grep -qF 'aarch64-*-mingw*' "${SDCC}/support/cpp/gcc/config.host"; then
+  echo ">> applying winport_aarch64_host.patch"
+  ( cd "${SDCC}" && patch -p1 --forward < "${REPO}/third_party/sdcc/winport_aarch64_host.patch" )
+fi
 
 # 4b. Teach the two SDCC device headers whose z80-family branch is BOTH needed and
 #     correct for s1c88. <stdarg.h> gates va_list on `defined(__SDCC_z80) || ...`;
