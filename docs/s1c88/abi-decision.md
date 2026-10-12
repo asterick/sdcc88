@@ -373,7 +373,15 @@ always depended on this (no compiler-side bank restore); codegen however had inh
   `(bank<<16)|logic`, so `&f`'s third byte — the stock `(sym >> 16)` emission, via the #9 XL3
   byte relocs — IS the bank; `printIvalFuncPtr` emits all three bytes (patch-gated alongside
   stm8). Casting a 2-byte data pointer widens with bank 0 (the common bank). End-to-end verified:
-  linking with `_CODE=0x028000` puts `00 80 02` in an fptr initializer.
+  linking with `_CODE=0x028000` puts `00 80 02` in an fptr initializer. **A function symbol used as a
+  VALUE is the same 3-byte immediate** (`aopForSym`: `IS_FUNC` → `AOP_IMMD` of `FUNCPTRSIZE`): `p = f`,
+  `return f`, `f == p` and pushing `f` as an fptr argument all emit byte 2 as `#((_f) >> 16)` — the
+  z80's 2-byte function aop zero-filled it, dispatching every runtime-formed pointer into bank 0
+  (2026-10 review; `tests/emu/cases/21_fnptr_bank.c` links its module at `_BANK1=0x18000`). The high
+  word (bytes 1..2) of any 3-byte symbolic immediate — a function or a `__far` object's address —
+  is loaded as two byte immediates `#>(sym)` / `#((sym) >> 16)` (`fetchImmdSlice`): sdas88 relocates
+  shifted symbols only as bytes, and `fetchLitPair`'s offset is an *address* offset (`#sym + n`),
+  which is what turned a pushed `&far_object` into `[lo, lo+1, hi]` (`22_far_arg.c`).
 - **ISRs were already correct**: the interrupt sequence pushes `CB → PCH → PCL → SC` and RETE pops
   them all (and NB←CB), so the s10 RETE model needed no change.
 

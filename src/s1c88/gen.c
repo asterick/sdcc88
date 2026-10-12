@@ -1600,12 +1600,18 @@ aopForSym (const iCode * ic, symbol * sym, bool requires_a)
       return aop;
     }
 
-  /* special case for a function */
+  /* special case for a function: its address is a 3-byte banked value on the
+     S1C88 (PC + bank), exactly like a function POINTER — byte 2 is the real
+     bank, #((sym) >> 16), via aopGet's IMMD slicing.  With the z80's size 2
+     every runtime formation of a code pointer (`p = f`, `return f`, pushing
+     `f` as an fptr argument) zero-filled the bank byte, so a function the
+     linker placed outside bank 0 was dispatched into bank 0 (static
+     initializers were right: printIvalFuncPtr emits all three bytes). */
   if (IS_FUNC (sym->type))
     {
       sym->aop = aop = newAsmop (AOP_IMMD);
       aop->aopu.aop_immd = traceAlloc (&_G.trace.aops, Safe_strdup (sym->rname));
-      aop->size = 2;
+      aop->size = FUNCPTRSIZE;
       return aop;
     }
 
@@ -2601,12 +2607,66 @@ emit3_shift (enum asminst inst, asmop *aop, int offset, const iCode *ic);
 static void
 emit3_incdec (enum asminst inst, asmop *aop, int offset, const iCode *ic);
 
+/* Load bytes [1, 2] of a 3-byte symbolic immediate — the high word of a
+   __far object's or a function's address: (sym >> 8, sym >> 16) — into a pair.
+   This can NOT go through fetchLitPair: its `offset` is an ADDRESS offset for
+   AOP_IMMD (`ld hl, #sym + n`, genPlusIncr), so a byte offset of 1 produced
+   `#_tbl + 1` — the stack image of a pushed `&far_object` became
+   [lo, lo+1, hi] instead of [lo, hi, page].  sdas88 takes a shifted
+   relocatable symbol only as a BYTE immediate (#>(sym), #((sym) >> 16)), so
+   this is two byte loads; IY (not byte-addressable) is filled through HL. */
+static void
+fetchImmdSlice (PAIR_ID pairId, const asmop *aop, int offset, bool hl_dead)
+{
+  const char *sym = aop->aopu.aop_immd;
+
+  wassertl (aop->type == AOP_IMMD && offset == 1 && aop->size == 3, "fetchImmdSlice: only the high word of a 3-byte immediate");
+
+  if (pairId == PAIR_HL || pairId == PAIR_BA)
+    {
+      emit2 ("ld %s, !msbimmeds", _pairs[pairId].l, sym);
+      cost2 (2, 6);
+      emit2 ("ld %s, !bankimmeds", _pairs[pairId].h, sym);
+      cost2 (2, 6);
+    }
+  else if (pairId == PAIR_IY)
+    {
+      if (!hl_dead)
+        {
+          emit2 ("push hl");
+          cost2 (1, 11);
+        }
+      emit2 ("ld l, !msbimmeds", sym);
+      cost2 (2, 6);
+      emit2 ("ld h, !bankimmeds", sym);
+      cost2 (2, 6);
+      emit2 ("ld iy, hl");
+      cost2 (2, 4);
+      if (!hl_dead)
+        {
+          emit2 ("pop hl");
+          cost2 (1, 10);
+        }
+      else
+        spillPair (PAIR_HL);
+    }
+  else
+    wassertl (0, "fetchImmdSlice: unsupported pair");
+  spillPair (pairId);
+}
+
 /* If ic != 0, we can safely use isPairDead(). */
 /* By now, genMove / genMove_o is as good or better than this for nearly all uses. */
 static void
 fetchPairLong (PAIR_ID pairId, asmop *aop, const iCode *ic, int offset)
 {
   emitDebug (";fetchPairLong");
+
+  if (aop->type == AOP_IMMD && offset)
+    {
+      fetchImmdSlice (pairId, aop, offset, ic ? isPairDead (PAIR_HL, ic) : false);
+      return;
+    }
 
   if (aop->type == AOP_STL && !offset)
     {
@@ -4312,7 +4372,10 @@ genMove_o (asmop *result, int roffset, asmop *source, int soffset, int size, boo
       else if (i + 1 < size && getPairId_o(result, roffset + i) != PAIR_INVALID &&
         (source->type == AOP_LIT && !(aopIsLitVal (source, soffset + i, 2, 0x0000) && zeroed_a) || source->type == AOP_IMMD))
         {
-          fetchLitPair (getPairId_o(result, roffset + i), source, soffset + i, f_dead, false);
+          if (source->type == AOP_IMMD && soffset + i)   /* high word of a 3-byte far / function address */
+            fetchImmdSlice (getPairId_o(result, roffset + i), source, soffset + i, hl_dead);
+          else
+            fetchLitPair (getPairId_o(result, roffset + i), source, soffset + i, f_dead, false);
           i += 2;
           continue;
         }
@@ -5038,81 +5101,6 @@ genIpush (const iCode *ic)
       send_iyh |= (warg->regs[IYH_IDX] >= 0);
     }
 
-  /* A function's address is a 2-byte immediate (its PC), but a function POINTER
-     is a 3-byte banked value (PC + bank). When such an immediate is pushed as an
-     fptr argument it must emit all three bytes — the 16-bit PC plus a zero bank
-     byte (matching the `f = c` store) — otherwise the caller's 3-byte cleanup
-     leaves the stack short by one, tripping genEndFunction's "Unbalanced stack"
-     (the ICE hit when passing a function name/address, e.g. a qsort comparator or
-     a printf output callback). A 3-byte fptr *variable* already pushes correctly;
-     only the 2-byte function immediate dropped its bank byte. */
-  if (!regalloc_dry_run && IC_LEFT (ic)->aop->type == AOP_IMMD && size == 2 &&
-      (IS_FUNCPTR (operandType (IC_LEFT (ic))) || IS_FUNC (operandType (IC_LEFT (ic)))))
-    {
-      const char *rn = IC_LEFT (ic)->aop->aopu.aop_immd;
-
-      /* Pick a free pair for the 16-bit PC and a free byte register (outside that
-         pair) for the bank.  The PC's low byte must end up in the pair's low
-         register so it lands at param byte 0 — true for HL(L), BA(A) and IY(IYL). */
-      PAIR_ID pcp = (isPairDead (PAIR_HL, ic) && !send_h && !send_l) ? PAIR_HL
-                  : (isPairDead (PAIR_BA, ic) && !send_a && !send_b) ? PAIR_BA
-                  : (!IY_RESERVED && isPairDead (PAIR_IY, ic) && !send_iyl && !send_iyh) ? PAIR_IY
-                  : PAIR_INVALID;
-      const char *bankreg = (isRegDead (A_IDX, ic) && !send_a && pcp != PAIR_BA) ? "a"
-                          : (isRegDead (B_IDX, ic) && !send_b && pcp != PAIR_BA) ? "b"
-                          : (isRegDead (L_IDX, ic) && !send_l && pcp != PAIR_HL) ? "l"
-                          : (isRegDead (H_IDX, ic) && !send_h && pcp != PAIR_HL) ? "h"
-                          : 0;
-
-      /* Target the SAME 3-byte stack image a pushed fptr VARIABLE produces, so
-         the callee reads it identically: param byte 0 = PC.lo, 1 = PC.hi, 2 =
-         bank.  The bank is 0 (common bank — matching the `f = c` store). */
-      if (pcp != PAIR_INVALID && bankreg)
-        {
-          /* Fast path: a free pair + a free byte register are available.  `push
-             <pair>` stores the low register at the lower address, so push the
-             bank FIRST (lands at the highest param byte), then the 16-bit PC. */
-          emit2 ("ld %s, #0x00", bankreg);
-          cost2 (2, 6);
-          emit2 ("push %s", bankreg);
-          cost2 (2, 11);
-          emit2 ("ld %s, #%s", _pairs[pcp].name, rn);
-          cost2 (3, 6);
-          emit2 ("push %s", _pairs[pcp].name);
-          cost2 (1, 11);
-          _G.stack.pushed += 3;
-          spillPair (pcp);
-        }
-      else
-        {
-          /* No free register: reserve the 3-byte param slot, then fill it
-             through HL, which is saved BELOW the slot and restored via the stack
-             (only HL is touched).  Single-byte SP-relative stores are illegal, so
-             the bank byte is written by a second, overlapping word store
-             ([PC.hi : 0]).  After the HL save the slot sits at offset 2..4. */
-          emit2 ("add sp, #-3");             /* reserve the 3 param bytes */
-          cost2 (4, 8);
-          emit2 ("push hl");                 /* save live HL below the slot */
-          cost2 (1, 11);
-          emit2 ("ld hl, #%s", rn);          /* L = PC.lo, H = PC.hi */
-          cost2 (3, 6);
-          emit2 ("ld 2 (sp), hl");           /* param 0 = PC.lo, 1 = PC.hi */
-          cost2 (3, 0);
-          emit2 ("ld l, h");                 /* L = PC.hi */
-          cost2 (1, 5);
-          emit2 ("ld h, #0x00");             /* H = 0 (bank) */
-          cost2 (2, 6);
-          emit2 ("ld 3 (sp), hl");           /* param 1 = PC.hi (again), 2 = 0 */
-          cost2 (3, 0);
-          emit2 ("ld hl, 0 (sp)");           /* restore the saved HL */
-          cost2 (3, 0);
-          emit2 ("add sp, #2");              /* drop the HL save (param remains) */
-          cost2 (4, 8);
-          _G.stack.pushed += 3;
-        }
-      goto release;
-    }
-
   if (size == 1 && smallc) /* The SmallC calling convention pushes 8-bit parameters as 16-bit values. */
     {
       if (IC_LEFT (ic)->aop->type == AOP_REG && IC_LEFT (ic)->aop->aopu.aop_reg[0]->rIdx == L_IDX)
@@ -5165,6 +5153,12 @@ genIpush (const iCode *ic)
         bool iyl_free = isRegDead (IYL_IDX, ic) && !send_iyl && (IC_LEFT (ic)->aop->regs[IYL_IDX] < 0 || IC_LEFT (ic)->aop->regs[IYL_IDX] >= size - 1);
         bool hl_free = isPairDead (PAIR_HL, ic) && (h_free || IC_LEFT (ic)->aop->regs[H_IDX] >= size - 2) && (l_free || IC_LEFT (ic)->aop->regs[L_IDX] >= size - 2);
         bool ba_free = isPairDead (PAIR_BA, ic) && (b_free || IC_LEFT (ic)->aop->regs[B_IDX] >= size - 2) && (a_free || IC_LEFT (ic)->aop->regs[A_IDX] >= size - 2);
+        /* IY is "dead" for the allocator but may still CARRY a register argument
+           already sent for this call (send_iyl/send_iyh) — the same guard the
+           hl_free/ba_free terms get through h_free/l_free/a_free/b_free.  Without
+           it the 3-byte function-pointer push in vsprintf staged the high word
+           through IY and wiped the va_list argument (2026-10). */
+        bool iy_free = !IY_RESERVED && isPairDead (PAIR_IY, ic) && !send_iyl && !send_iyh;
 
         if (getPairId_o (IC_LEFT (ic)->aop, size - 2) != PAIR_INVALID || aluPairId (IC_LEFT (ic)->aop, size - 2) == PAIR_BA)
           {
@@ -5185,7 +5179,7 @@ genIpush (const iCode *ic)
         
 #endif
         else if (size >= 2 &&
-          (hl_free || ba_free || !IY_RESERVED && isPairDead (PAIR_IY, ic) ||
+          (hl_free || ba_free || iy_free ||
           aopInReg (IC_LEFT (ic)->aop, size - 1, B_IDX) && a_free || b_free && aopInReg (IC_LEFT (ic)->aop, size - 2, A_IDX) ||
           aopInReg (IC_LEFT (ic)->aop, size - 1, H_IDX) && l_free || h_free && aopInReg (IC_LEFT (ic)->aop, size - 2, L_IDX)))
           {
@@ -5199,7 +5193,7 @@ genIpush (const iCode *ic)
               pair = ASMOP_HL;
             else if (ba_free)
               pair = ASMOP_BA;
-            else if (!IY_RESERVED && isPairDead (PAIR_IY, ic))
+            else if (iy_free)
               pair = ASMOP_IY;
 
             /* one half already in place? finish that pair instead */
@@ -5249,7 +5243,7 @@ genIpush (const iCode *ic)
                   break;
               }
          }
-       else if (size >= 2 && !IY_RESERVED && isPairDead (PAIR_IY, ic) && (IC_LEFT (ic)->aop->type == AOP_LIT || IC_LEFT (ic)->aop->type == AOP_IMMD))
+       else if (size >= 2 && iy_free && (IC_LEFT (ic)->aop->type == AOP_LIT || IC_LEFT (ic)->aop->type == AOP_IMMD))
          {
            genMove_o (ASMOP_IY, 0, IC_LEFT (ic)->aop, size - 2, 2, a_free, hl_free, true, true);
            emit2 ("push iy");

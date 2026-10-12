@@ -115,6 +115,14 @@ for src in "${EMU}"/cases/*.c; do
   if grep -q '__far' "$src"; then
     FAR_LINK="-b _FAR=0x10000"; FAR_ROMGEN="--far=0x10000-0x1ffff"
   fi
+  # bank-1 code lane: a case that opens with `#pragma codeseg BANK1` puts its
+  # whole module in area _BANK1, linked at 0x18000 (bank 1, logical 0x8000; romgen
+  # maps it to physical 0x8000). crt0 reaches main via a linker-resolved bcall.
+  # This is the only configuration where a function pointer's BANK byte matters
+  # (bank 0 is where every other case lives, so a zero bank byte passes there).
+  if grep -q 'codeseg BANK1' "$src"; then
+    FAR_LINK="${FAR_LINK} -b _BANK1=0x18000"
+  fi
 
   # link as a PM cart (crt0 first): the header is a fixed ABS area @ 0x2100, _CODE
   # follows @ 0x21D0, RAM @ 0x1000. s1c88.lib resolves the crt0 header's default IRQ
