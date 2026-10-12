@@ -263,10 +263,10 @@ index 0f00244..6f061f4 100644
          return(0);
  }
 diff --git a/sdas/linksrc/lkrloc3.c b/sdas/linksrc/lkrloc3.c
-index 8c37943..77e6ed0 100644
+index 8c37943..e26631b 100644
 --- a/sdas/linksrc/lkrloc3.c
 +++ b/sdas/linksrc/lkrloc3.c
-@@ -54,6 +54,399 @@
+@@ -54,6 +54,485 @@
   *
   */
  
@@ -546,19 +546,105 @@ index 8c37943..77e6ed0 100644
 +}
 +
 +/*
-+ * delta(addr) = bytes removed strictly before addr WITHIN addr's code bank =
-+ * 3 * (#drops d with bank(d)==bank(addr) and d < addr).  Banked code lives at
-+ * (bank<<16)|logic and each 32 KB bank is a fixed physical region, so a drop in
-+ * one bank must never shift addresses in another — the count is restricted to
-+ * the same bank.  Each drop removes the 3 `ld nb` bytes ending at its abank; an
-+ * instruction or symbol is never inside an `ld nb`, so the count is exact.
-+ * rlxDrop[] is sorted ascending before this is used.
++ * Relocatable-area layout chains, for delta().  A drop removes 3 bytes from
++ * the CODE STREAM, so only what the linker laid out contiguously AFTER the
++ * drop moves: the rest of its area, and the relocatable areas the linker
++ * placed sequentially behind it (lnkarea: a_addr = running location).  An
++ * area with an EXPLICIT base (`-b AREA=addr`, a_bset) is pinned by the user
++ * and starts a new chain, as does any gap in the layout or a 64 KB bank
++ * boundary (each 32 KB bank is a fixed physical region).  Absolute areas
++ * never shift and never participate.
++ *
++ * Before this was chain-aware, delta() was address-only ("every byte above a
++ * drop in the same 64 KB block"), which dragged along explicitly based areas
++ * placed higher in the bank: a `__far` table at `-b _FAR=0x18800` behind two
++ * droppable bcalls in `_CODE_1=0x18000` moved to 0x187FA, so romgen placed it
++ * (and the EP:HL far loads read it) at the wrong physical address, and a
++ * `-b _CODE2=0x2300` landed at 0x22F7.  (2026-10 review.)
++ */
++struct rlxArea {
++        a_uint base, end, chain;        /* [base, end), chain start address */
++};
++static struct rlxArea *rlxAreas;
++static int             rlxAreaN;
++
++static int
++rlxCmpArea(const void *a, const void *b)
++{
++        const struct rlxArea *x = (const struct rlxArea *) a, *y = (const struct rlxArea *) b;
++        return (x->base < y->base) ? -1 : (x->base > y->base) ? 1 : 0;
++}
++
++static void
++rlxBuildChains(void)
++{
++        struct area *ap2;
++        int n = 0, i;
++
++        for (ap2 = areap; ap2; ap2 = ap2->a_ap)
++                n++;
++        free(rlxAreas);
++        rlxAreas = (struct rlxArea *) calloc(n ? n : 1, sizeof(struct rlxArea));
++        rlxAreaN = 0;
++        if (rlxAreas == NULL)
++                return;
++        for (ap2 = areap; ap2; ap2 = ap2->a_ap) {
++                if ((ap2->a_flag & A3_ABS) || ap2->a_size == 0)
++                        continue;
++                rlxAreas[rlxAreaN].base  = ap2->a_addr;
++                rlxAreas[rlxAreaN].end   = ap2->a_addr + ap2->a_size;
++                rlxAreas[rlxAreaN].chain = ap2->a_bset ? 1 : 0;   /* explicit base marker, resolved below */
++                rlxAreaN++;
++        }
++        if (rlxAreaN > 1)
++                qsort(rlxAreas, rlxAreaN, sizeof(struct rlxArea), rlxCmpArea);
++        for (i = 0; i < rlxAreaN; i++) {
++                int explicit_base = (int) rlxAreas[i].chain;
++                if (i == 0 || explicit_base
++                    || rlxAreas[i].base != rlxAreas[i-1].end
++                    || (rlxAreas[i].base & ~(a_uint) 0xFFFF) != (rlxAreas[i-1].base & ~(a_uint) 0xFFFF))
++                        rlxAreas[i].chain = rlxAreas[i].base;
++                else
++                        rlxAreas[i].chain = rlxAreas[i-1].chain;
++        }
++}
++
++/* The chain start of the relocatable area holding addr, or addr itself (=>
++ * delta 0) when addr lies in no relocatable area: RAM, the vector table,
++ * MMIO, `.equ` constants and area lengths never move.  An address equal to an
++ * area's end (a label after its last byte) belongs to that area. */
++static a_uint
++rlxChainStart(a_uint addr)
++{
++        int i;
++        for (i = 0; i < rlxAreaN; i++)
++                if (rlxAreas[i].base <= addr && addr <= rlxAreas[i].end)
++                        return rlxAreas[i].chain;
++        return addr;
++}
++
++/*
++ * delta(addr) = bytes removed strictly before addr within addr's layout
++ * chain = 3 * (#drops d with chain(d) == chain(addr) and d < addr).  Each
++ * drop removes the 3 `ld nb` bytes ending at its abank; an instruction or
++ * symbol is never inside an `ld nb`, so the count is exact.  rlxDrop[] is
++ * sorted ascending and the chains are built before this is used
++ * (s1c88RelaxSortPlan).
 + */
 +static a_uint
 +rlxDelta(a_uint addr)
 +{
-+        a_uint bankbase = addr & ~(a_uint) 0xFFFF;      /* (bank<<16) */
-+        return (a_uint) (3 * (rlxLowerBound(addr) - rlxLowerBound(bankbase)));
++        a_uint chain = rlxChainStart(addr);
++        if (chain >= addr)
++                return 0;
++        return (a_uint) (3 * (rlxLowerBound(addr) - rlxLowerBound(chain)));
++}
++
++/* Drops inside [base, end) — the area's own shrink, independent of chains. */
++static a_uint
++rlxDropsIn(a_uint base, a_uint end)
++{
++        return (a_uint) (3 * (rlxLowerBound(end) - rlxLowerBound(base)));
 +}
 +
 +/*
@@ -592,8 +678,7 @@ index 8c37943..77e6ed0 100644
 +
 +        if (!rlxOn14c())
 +                return;
-+        if (rlxDropN > 1)
-+                qsort(rlxDrop, rlxDropN, sizeof(a_uint), rlxCmpAddr);
++        s1c88RelaxSortPlan();
 +
 +        fprintf(stderr, "[relax-plan] stage-(i) conservative drops: %d slots (%d bytes)\n",
 +                rlxDropN, 3 * rlxDropN);
@@ -611,7 +696,7 @@ index 8c37943..77e6ed0 100644
 +                a_uint dn, nbase, nsize;
 +                if (size == 0)
 +                        continue;
-+                dn    = rlxDelta(base + size) - rlxDelta(base);   /* dropped within area */
++                dn    = rlxDropsIn(base, base + size);            /* dropped within area */
 +                nbase = base - rlxDelta(base);
 +                nsize = size - dn;
 +                origrom += size;
@@ -653,6 +738,7 @@ index 8c37943..77e6ed0 100644
 +{
 +        if (rlxDropN > 1)
 +                qsort(rlxDrop, rlxDropN, sizeof(a_uint), rlxCmpAddr);
++        rlxBuildChains();
 +}
 +
 +/* True when the emit pass should delta-adjust addresses (emit on, not the
@@ -666,7 +752,15 @@ index 8c37943..77e6ed0 100644
  /*)Function VOID        reloc3(c)
   *
   *                      int c           process code
-@@ -324,6 +717,19 @@ relr3(void)
+@@ -313,6 +792,7 @@ relr3(void)
+          */
+         rtbase = adb_xb(0, 0);
+         rtofst = a_bytes;
++        rlxReorderPend = 0;     /* a pending reorder never spans T records */
+ 
+         /*
+          * Relocate address
+@@ -324,6 +804,19 @@ relr3(void)
           */
          pcb = 1;
  
@@ -686,7 +780,7 @@ index 8c37943..77e6ed0 100644
          #if 0
          printf("area %d base address: 0x%x size: 0x%x rtbase: 0x%x\n", aindex,
                  a[aindex]->a_addr, a[aindex]->a_size, rtbase);
-@@ -354,6 +760,18 @@ relr3(void)
+@@ -354,6 +847,18 @@ relr3(void)
                                  return;
                          }
                          reli = symval(s[rindex]);
@@ -705,7 +799,7 @@ index 8c37943..77e6ed0 100644
                  }
  /* sdld specific */
                  else if ((IS_R_J11(mode) || IS_R_J19(mode)) && (rindex == 0xFFFF)) {
-@@ -368,6 +786,114 @@ relr3(void)
+@@ -368,6 +873,119 @@ relr3(void)
                                  return;
                          }
                          reli = a[rindex]->a_addr;
@@ -793,13 +887,18 @@ index 8c37943..77e6ed0 100644
 +                         * tail instead.  The branch's disp is owned by the next
 +                         * reloc (the slot's word R_PCR); flag it here and let the
 +                         * R3_PCR handler rewrite the bytes once it has the
-+                         * resolved disp.  Skip if the slot head splits across a
-+                         * T-record (rtp-2 < rtofst) or carries a signed-cc
++                         * resolved disp.  Skip if the slot splits across a
++                         * T-record — head (rtp-2 < rtofst) OR tail (rtp+3 >=
++                         * rtcnt): the R3_PCR then arrives in the NEXT record,
++                         * where rtp is 3..4 and the rewrite would land on the
++                         * record's address bytes while the head was already
++                         * emitted un-NOP'd (2026-10 review) — or carries a signed-cc
 +                         * trampoline hop (CE E0+inv 07 at rtp-5..rtp-3 — its fixed
 +                         * +7 self-resolved skip must not be disturbed). */
 +                        if (rlxVecReorderOn() && absarea
 +                            && (tbank == 0 || tbank == cbank)
 +                            && rtp - 2 >= (int) rtofst
++                            && rtp + 3 < rtcnt          /* branch op + disp16 in THIS record too */
 +                            && !(rtp - 5 >= (int) rtofst
 +                                 && rtval[rtp-5] == 0xCE
 +                                 && (rtval[rtp-4] & 0xF8) == 0xE0
@@ -820,7 +919,7 @@ index 8c37943..77e6ed0 100644
                  }
  
                  /*
-@@ -612,14 +1138,46 @@ relr3(void)
+@@ -612,14 +1230,46 @@ relr3(void)
                  }
  
                  /*
