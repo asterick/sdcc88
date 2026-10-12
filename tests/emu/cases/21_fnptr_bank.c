@@ -30,6 +30,10 @@ thunk pglobal;
 binop ops[2] = { add, sub };
 
 static int apply(binop f, int a, int b) { return f(a, b); }
+/* three 16-bit register args (BA, HL, IY) + the fptr on the stack: the push
+   must not stage through IY while IY carries `c` (vsprintf's va_list shape) */
+static int apply3(binop f, int a, int b, int c) { return f(a, b) + c; }
+static int apply3r(int a, int b, int c, binop f) { return f(a, b) - c; }
 static thunk pick(unsigned char which) { return which ? mark : (thunk)0; }
 
 int main(void)
@@ -50,6 +54,9 @@ int main(void)
 
     CHECK(apply(add, 20, 22) == 42);                  /* `f` pushed as an fptr argument */
     CHECK(apply(sub, 20, 22) == -2);
+    CHECK(apply3(add, 20, 22, 100) == 142);          /* IY carries c across the fptr push */
+    CHECK(apply3(sub, 20, 22, -1000) == -1002);
+    CHECK(apply3r(5, 6, 1, add) == 10);
 
     q = ops[1]; CHECK(q(7, 5) == 2);                  /* array of static-init pointers */
     q = add;    CHECK(q(7, 5) == 12);

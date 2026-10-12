@@ -25,6 +25,8 @@ static unsigned int sum(const unsigned char __far *p, unsigned char n)
 }
 static void wr(unsigned char __far *p, unsigned char i, unsigned char v) { p[i] = v; }
 static unsigned char rd3(unsigned char a, const unsigned char __far *p, unsigned char i) { return p[i] + a; }
+/* BA, HL, IY register args + the far address on the stack (IY must survive) */
+static int rd4(int a, int b, int c, const unsigned char __far *p, unsigned char i) { return p[i] + a + b + c; }
 
 int main(void)
 {
@@ -39,6 +41,7 @@ int main(void)
     CHECK(rdw(wtbl, 3) == -4000);
     CHECK(sum(tbl, 8) == 0x264);
     CHECK(rd3(1, tbl, 2) == 0x12);            /* far address not in the first slot */
+    CHECK(rd4(100, 200, 300, tbl, 2) == 0x11 + 600);
 
     wr(fbuf, 2, 0x77);
     CHECK(fbuf[2] == 0x77);

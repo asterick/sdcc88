@@ -5153,6 +5153,12 @@ genIpush (const iCode *ic)
         bool iyl_free = isRegDead (IYL_IDX, ic) && !send_iyl && (IC_LEFT (ic)->aop->regs[IYL_IDX] < 0 || IC_LEFT (ic)->aop->regs[IYL_IDX] >= size - 1);
         bool hl_free = isPairDead (PAIR_HL, ic) && (h_free || IC_LEFT (ic)->aop->regs[H_IDX] >= size - 2) && (l_free || IC_LEFT (ic)->aop->regs[L_IDX] >= size - 2);
         bool ba_free = isPairDead (PAIR_BA, ic) && (b_free || IC_LEFT (ic)->aop->regs[B_IDX] >= size - 2) && (a_free || IC_LEFT (ic)->aop->regs[A_IDX] >= size - 2);
+        /* IY is "dead" for the allocator but may still CARRY a register argument
+           already sent for this call (send_iyl/send_iyh) — the same guard the
+           hl_free/ba_free terms get through h_free/l_free/a_free/b_free.  Without
+           it the 3-byte function-pointer push in vsprintf staged the high word
+           through IY and wiped the va_list argument (2026-10). */
+        bool iy_free = !IY_RESERVED && isPairDead (PAIR_IY, ic) && !send_iyl && !send_iyh;
 
         if (getPairId_o (IC_LEFT (ic)->aop, size - 2) != PAIR_INVALID || aluPairId (IC_LEFT (ic)->aop, size - 2) == PAIR_BA)
           {
@@ -5173,7 +5179,7 @@ genIpush (const iCode *ic)
         
 #endif
         else if (size >= 2 &&
-          (hl_free || ba_free || !IY_RESERVED && isPairDead (PAIR_IY, ic) ||
+          (hl_free || ba_free || iy_free ||
           aopInReg (IC_LEFT (ic)->aop, size - 1, B_IDX) && a_free || b_free && aopInReg (IC_LEFT (ic)->aop, size - 2, A_IDX) ||
           aopInReg (IC_LEFT (ic)->aop, size - 1, H_IDX) && l_free || h_free && aopInReg (IC_LEFT (ic)->aop, size - 2, L_IDX)))
           {
@@ -5187,7 +5193,7 @@ genIpush (const iCode *ic)
               pair = ASMOP_HL;
             else if (ba_free)
               pair = ASMOP_BA;
-            else if (!IY_RESERVED && isPairDead (PAIR_IY, ic))
+            else if (iy_free)
               pair = ASMOP_IY;
 
             /* one half already in place? finish that pair instead */
@@ -5237,7 +5243,7 @@ genIpush (const iCode *ic)
                   break;
               }
          }
-       else if (size >= 2 && !IY_RESERVED && isPairDead (PAIR_IY, ic) && (IC_LEFT (ic)->aop->type == AOP_LIT || IC_LEFT (ic)->aop->type == AOP_IMMD))
+       else if (size >= 2 && iy_free && (IC_LEFT (ic)->aop->type == AOP_LIT || IC_LEFT (ic)->aop->type == AOP_IMMD))
          {
            genMove_o (ASMOP_IY, 0, IC_LEFT (ic)->aop, size - 2, 2, a_free, hl_free, true, true);
            emit2 ("push iy");
