@@ -37,7 +37,8 @@ $(BUILD):
 # assemble + link the BIOS, then turn the Intel-hex into a C byte array.
 $(BIOS_ROM): bios.s | $(BUILD)
 	$(SDAS) -o $(BUILD)/bios.rel bios.s
-	$(SDLD) -nwxi -b _BIOS=$(BIOS_LOAD) $(BUILD)/bios.ihx $(BUILD)/bios.rel
+	$(SDLD) -nwxi -m -b _BIOS=$(BIOS_LOAD) $(BUILD)/bios.ihx $(BUILD)/bios.rel
+	$(AWK) '$$2=="__shutdown"{printf "static const unsigned BIOS_SHUTDOWN = 0x%s;\n", $$1}' $(BUILD)/bios.map > $@
 	$(AWK) 'BEGIN{lo=-1;hi=0} /^:/{ \
 	      ll=strtonum("0x" substr($$0,2,2)); a=strtonum("0x" substr($$0,4,4)); \
 	      t=substr($$0,8,2); if(t!="00")next; if(lo<0||a<lo)lo=a; \
@@ -45,7 +46,8 @@ $(BIOS_ROM): bios.s | $(BUILD)
 	    END{ printf "static const unsigned BIOS_LOAD = 0x%04X;\n", lo; \
 	         printf "static const unsigned char bios_rom[] = {"; \
 	         for(x=lo;x<hi;x++) printf "0x%s,", (x in b)?b[x]:"00"; \
-	         printf "};\n" }' $(BUILD)/bios.ihx > $@
+	         printf "};\n" }' $(BUILD)/bios.ihx >> $@
+	grep -q BIOS_SHUTDOWN $@ || { echo "!! __shutdown not found in bios.map"; rm -f $@; exit 1; }
 
 # the opcode dispatch table (included as "../table.h" by operations.cc) is
 # GENERATED but checked in, pinned at the vendored version — regenerate with

@@ -56,9 +56,13 @@ LIB_INT="$LIB_INT _divschar _divuchar _modschar _moduchar _mulschar _muluchar"
 LIB_LONG="_divslong _divulong _modslong _modulong _mullong"
 # int*int->long widening multiplies (has_mulint2long, main.c) — repo-owned sources:
 LIB_WIDEMUL="_muluint2ulong _mulsint2slong"
-# libc subset for user code (the codegen inlines mem*/str* as builtins, but user
-# code may call them as real functions):
-LIB_LIBC="_memmove _memcmp _memchr _strcpy _strncpy _strcat _strncat _strcmp _strncmp _strchr _strrchr _strlen _strstr"
+# libc subset for user code.  NOTE: the installed <string.h> maps memcpy/memset/
+# strcpy/... to __builtin_* ONLY for the z80-family targets; for s1c88 it takes
+# the generic branch (`#define memcpy __memcpy`, plain extern memset), so these
+# are REAL calls into the library: __memcpy.c (the implementation), memcpy.c (the
+# `memcpy` wrapper around it) and _memset.c must be members — without them a program using memcpy/memset linked
+# with only a warning and the calls targeted address 0 (2026-10 review).
+LIB_LIBC="__memcpy memcpy _memset _memmove _memcmp _memchr _strcpy _strncpy _strcat _strncat _strcmp _strncmp _strchr _strrchr _strlen _strstr"
 LIB_LIBC="$LIB_LIBC _strspn _strcspn _strpbrk _strtok memccpy"
 # stdlib.h: number conversion, abs, rand, search/sort.
 LIB_STDLIB="atoi atol __itoa __ltoa abs labs rand qsort bsearch"

@@ -15,7 +15,8 @@ SDCC, drops in our port, registers it, and builds the whole SDK.
 > Codegen is fully retargeted from its z80 origin to the real S1C88 ISA (the faithful BA+HL register model,
 > IY index args, `__far` 3-byte banked pointers, native `DIV`/`MLT`, the MAXIMUM-mode 3-byte CB:PC call
 > model). The differential test suite is clean — no known correctness bugs. The bundled libc covers
-> `string.h`, `stdlib.h`, `ctype.h`, and `printf`/`sprintf` (`<stdio.h>`). The numbered backlog is complete;
+> `string.h` (incl. `memcpy`/`memset`/`memmove` as real library calls), `stdlib.h`, `ctype.h`, and
+> `printf`/`sprintf` (`<stdio.h>`; no `%lld`/`%f`). The numbered backlog is complete;
 > the port is in maintenance.
 
 The port started as a clone of SDCC's **z80** backend (the z80 register model fits the S1C88 far better than

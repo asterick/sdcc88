@@ -71,7 +71,19 @@ for mode in "${MODES[@]}"; do
   for suite in emu diff; do
     body="${OUT}/${label}.${suite}"
     SDCC_OPTS="$flags" TAP=1 EMU_NO_BUILD=1 "${REPO}/scripts/${suite}-test.sh" \
-      >"$body" 2>"${body}.log"
+      >"$body" 2>"${body}.log"; rc=$?
+    # A suite that aborted before running its cases (preflight `exit 2`, a runtime
+    # build failure, a missing runner) leaves an EMPTY body — which used to count as
+    # zero failures and print `1..0` with exit 0.  Every case file must produce
+    # exactly one TAP line; anything else is a failure of the matrix itself.
+    expected="$(ls "${REPO}/tests/${suite}/cases/"*.c 2>/dev/null | wc -l | tr -d ' ')"
+    got="$(grep -cE '^(not )?ok - ' "$body" || true)"
+    if [ "$got" -ne "$expected" ] || { [ "$rc" -ne 0 ] && ! grep -q '^not ok - ' "$body"; }; then
+      failed=$((failed+1)); total=$((total+1))
+      ln="not ok - opt-${label}/${suite} # suite produced ${got}/${expected} results, exit ${rc} (see ${suite}.log)"
+      if [ -n "$TAP" ]; then echo "$ln"; else echo "  $ln"; fi
+      tail -5 "${body}.log" | sed 's/^/#   /'
+    fi
     # re-prefix the suite's TAP body under this mode
     while IFS= read -r ln; do
       case "$ln" in

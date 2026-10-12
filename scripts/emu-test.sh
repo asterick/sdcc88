@@ -96,7 +96,11 @@ for src in "${EMU}"/cases/*.c; do
   [ -z "$TAP" ] && printf "  %-14s " "$b"
 
   # host cpp (no sdcpp in this build) -> sdcc -> sdas88
-  if ! cc -std=gnu17 -E -P -x c -I "$EMU" "$src" > "${OUT}/${b}.i" 2>"${OUT}/err"; then
+  # Cases may #include the SDK's own libc headers (<string.h>, <stdlib.h>, <pm.h>):
+  # the installed include dir + the port's target macro, exactly as the library
+  # itself is built (build-runtime.sh), so the headers take the s1c88 branch.
+  if ! cc -std=gnu17 -E -P -x c -I "$EMU" -I "${SDCC}/share/sdcc/include" -I "${SDCC}/share/sdcc/include/s1c88" \
+         -D__SDCC_s1c88 -D__SDCC=4 "$src" > "${OUT}/${b}.i" 2>"${OUT}/err"; then
     report_fail "$b" "CPP-FAIL" "${OUT}/err"; continue
   fi
   if ! "$SDCCBIN" -ms1c88 ${SDCC_OPTS:-} --c1mode -o "${OUT}/${b}.asm" < "${OUT}/${b}.i" 2>"${OUT}/err" \
@@ -130,9 +134,13 @@ for src in "${EMU}"/cases/*.c; do
     report_fail "$b" "ROMGEN-FAIL" "${OUT}/err"; continue
   fi
 
-  # run; guest exit code 0 = pass (124 stray-halt / 125 crash / 126 timeout)
+  # run; guest exit code 0 = pass (124 stray-halt / 125 crash / 126 timeout).
+  # A NEGATIVE case declares the runner exit code it must produce with a
+  # `emu-expect-rc: <n>` marker in its source (e.g. the stray-halt detector
+  # test expects 124); everything else must exit 0.
+  expect_rc="$(sed -nE 's/.*emu-expect-rc: *([0-9]+).*/\1/p' "$src" | head -1)"; expect_rc="${expect_rc:-0}"
   guest_out="$("$RUNNER" "${OUT}/${b}.min" 2>"${OUT}/err")"; rc=$?
-  if [ "$rc" -eq 0 ]; then
+  if [ "$rc" -eq "$expect_rc" ]; then
     report_pass "$b"
   else
     case "$rc" in

@@ -41,6 +41,12 @@ if [ -z "${EMU_NO_BUILD:-}" ]; then
   if ! make -C "${SDCC}/src" > /tmp/sdcc88-build.log 2>&1; then
     log "!! BUILD FAILED:"; grep -iE "error:|Error [0-9]+" /tmp/sdcc88-build.log | head -20 >&2; exit 1
   fi
+  # The suites LINK s1c88.lib — rebuild it with the compiler just built, or a
+  # codegen change that miscompiles the library itself (printf, sprintf, …)
+  # stays invisible behind a stale, previously-built library.
+  log ">> rebuild s1c88.lib with the fresh compiler"
+  "${REPO}/scripts/build-runtime.sh" > /tmp/sdcc88-runtime.log 2>&1 \
+    || { log "!! RUNTIME LIBRARY BUILD FAILED:"; tail -12 /tmp/sdcc88-runtime.log >&2; exit 1; }
 fi
 [ -x "$SDCCBIN" ] || { log "!! no sdcc at ${SDCCBIN}"; exit 2; }
 # Build the emulator runner once, serially, so the parallel suites see it up-to-date
@@ -59,9 +65,11 @@ fi
 
 # --- run the case-suites in parallel; each writes its TAP body to a file ----------
 log ">> running suites in parallel: corpus, emu, diff, smoke"
-TAP=1 EMU_NO_BUILD=1 "${REPO}/scripts/corpus-check.sh" check >"${TAPDIR}/corpus" 2>"${TAPDIR}/corpus.log" &
-TAP=1 EMU_NO_BUILD=1 "${REPO}/scripts/emu-test.sh"        >"${TAPDIR}/emu"    2>"${TAPDIR}/emu.log"    &
-TAP=1 EMU_NO_BUILD=1 "${REPO}/scripts/diff-test.sh"       >"${TAPDIR}/diff"   2>"${TAPDIR}/diff.log"   &
+# each suite's exit status is recorded next to its body: a suite that dies
+# mid-loop (set -u, a killed runner) must not pass on a partial, all-ok body.
+{ TAP=1 EMU_NO_BUILD=1 "${REPO}/scripts/corpus-check.sh" check >"${TAPDIR}/corpus" 2>"${TAPDIR}/corpus.log"; echo $? >"${TAPDIR}/corpus.rc"; } &
+{ TAP=1 EMU_NO_BUILD=1 "${REPO}/scripts/emu-test.sh"        >"${TAPDIR}/emu"    2>"${TAPDIR}/emu.log";    echo $? >"${TAPDIR}/emu.rc"; } &
+{ TAP=1 EMU_NO_BUILD=1 "${REPO}/scripts/diff-test.sh"       >"${TAPDIR}/diff"   2>"${TAPDIR}/diff.log";   echo $? >"${TAPDIR}/diff.rc"; } &
 
 # --- smoke suite: one TAP point per toolchain-invariant script (run in this shell) ---
 {
@@ -80,10 +88,18 @@ wait   # all suites done
 # --- compose one numbered TAP stream in a fixed suite order ----------------------
 echo "TAP version 13"
 total=0; failed=0
-emit_suite() {  # $1 = label, $2 = tap body file
+emit_suite() {  # $1 = label, $2 = tap body file, $3 = expected result count ("" = don't check)
   echo "# Suite: $1"
   [ -s "$2" ] || { echo "# (no output — suite may have errored; see stderr log)"; failed=$((failed+1)); return; }
-  local line
+  local line rc got
+  rc="$(cat "$2.rc" 2>/dev/null || echo 0)"
+  got="$(grep -cE '^(not )?ok - ' "$2" || true)"
+  # the suite must have reported every case, and a non-zero exit must come with
+  # at least one 'not ok' — otherwise the suite itself broke and that is a failure
+  if { [ -n "${3:-}" ] && [ "$got" -ne "$3" ]; } || { [ "$rc" -ne 0 ] && ! grep -q '^not ok - ' "$2"; }; then
+    total=$((total+1)); failed=$((failed+1))
+    echo "not ok ${total} - ${1}/suite # produced ${got}/${3:-?} results, exit ${rc} (see stderr log)"
+  fi
   while IFS= read -r line; do
     case "$line" in
       "ok - "*)     total=$((total+1)); echo "ok ${total} - ${line#ok - }" ;;
@@ -93,9 +109,9 @@ emit_suite() {  # $1 = label, $2 = tap body file
     esac
   done < "$2"
 }
-emit_suite corpus "${TAPDIR}/corpus"
-emit_suite emu    "${TAPDIR}/emu"
-emit_suite diff   "${TAPDIR}/diff"
+emit_suite corpus "${TAPDIR}/corpus" "$(ls "${REPO}"/scripts/corpus/*.c | wc -l | tr -d ' ')"
+emit_suite emu    "${TAPDIR}/emu"    "$(ls "${REPO}"/tests/emu/cases/*.c | wc -l | tr -d ' ')"
+emit_suite diff   "${TAPDIR}/diff"   "$(ls "${REPO}"/tests/diff/cases/*.c | wc -l | tr -d ' ')"
 emit_suite smoke  "${TAPDIR}/smoke"
 
 echo "1..${total}"
