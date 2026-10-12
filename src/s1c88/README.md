@@ -52,3 +52,13 @@ the EP=0 `__far` invariant, native `DIV`, the MAXIMUM-mode call model).
 directory and rebuilds; never run raw `make -C build/.../src` (it compiles a stale copy). After any change,
 run the three codegen gates: `corpus-check.sh` (asm is byte-stable), `emu-test.sh` + `diff-test.sh` (it
 computes the right values) — and add a `tests/{emu,diff}/cases/*.c` whenever you touch new territory.
+
+**The peephole model must track the ISA, not the z80.** `peep.c` models every emitted instruction's
+reads/writes/flag effects (`s1c88MightRead`, `s1c88SurelyWritesFlag`, …) and its byte size
+(`s1c88instructionSize`). Both are consulted by rules in `peeph.def` — a read the model misses lets a rule
+delete a live load (the `sub ba, hl` incident: `x - g` compiled to a bare subtract), and an under-estimated
+size lets `labelInRange` shorten a `jp` to a `jrs` whose displacement overflows. The size table is derived
+from `docs/s1c88/instruction-set.md` §4.3.3 and **checked against sdas88 on every line the compiler emits**
+by `scripts/insn-size-check.sh` (phase 2: `SDCC88_INSN_SIZE_DUMP=1` makes the compiler print
+`insn-size <bytes> <line>` for each emitted line; the script assembles each distinct line and fails on any
+under-estimate). When you add an instruction form to `gen.c`, teach all three predicates about it.

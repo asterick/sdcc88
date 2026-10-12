@@ -128,7 +128,7 @@ for src in "${DIFF}"/cases/*.c; do
   fi
   if ! "$SDLD" -nwxi -b _CODE=0x21D0 -b _DATA=0x1000 ${FAR_LINK} \
         "${OUT}/${b}.ihx" "${OUT}/crt0.rel" "${OUT}/${b}.rel" -k "${OUT}" -l rt -k "$LIBDIR" -l s1c88 > "${OUT}/err" 2>&1 \
-     || grep -q "Undefined Global" "${OUT}/err"; then
+     || grep -qE "Undefined Global|relocation error|Range Exceeded|Overflow" "${OUT}/err"; then
     grep -E "Undefined Global|ASlink" "${OUT}/err" | sort -u > "${OUT}/diag"
     report_fail "$b" "LINK-FAIL" "${OUT}/diag"; continue
   fi

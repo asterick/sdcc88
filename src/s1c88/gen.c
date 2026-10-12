@@ -14882,6 +14882,10 @@ genCritical (const iCode * ic)
     {
       emit2 ("push sc");
       cost2 (1, 11);
+      /* The saved SC byte sits on the stack for the whole block: every
+         SP-relative access inside it (`ld N (sp), hl`, EXSTK setup) must see
+         the extra byte, or it lands one byte low (crit5 in tests/emu 19). */
+      _G.stack.pushed += 1;
       emit2 ("or sc, !immedbyte", 0xc0u);
       cost2 (2, 7);
     }
@@ -14907,6 +14911,7 @@ genEndCritical (const iCode * ic)
     {
       emit2 ("pop sc");
       cost2 (1, 10);
+      _G.stack.pushed -= 1;
     }
 }
 
@@ -16030,6 +16035,14 @@ genS1C88Code (iCode * lic)
      peep hole optimizer */
   if (!options.nopeep)
     peepHole (&genLine.lineHead);
+
+  /* SDCC88_INSN_SIZE_DUMP=1 (scripts/insn-size-check.sh): size EVERY emitted
+     line through the peephole's model so the dump covers the whole output,
+     not only the lines a labelInRange() walk happened to visit. */
+  if (getenv ("SDCC88_INSN_SIZE_DUMP"))
+    for (lineNode *pl = genLine.lineHead; pl; pl = pl->next)
+      if (pl->line && !pl->isComment && !pl->isLabel && !pl->isDebug && pl->line[0] != ';' && pl->line[0] != '.')
+        fprintf (stderr, "insn-size\t%d\t%s\n", s1c88instructionSize (pl), pl->line);
 
   /* This is unfortunate */
   /* now do the actual printing */

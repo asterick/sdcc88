@@ -206,9 +206,39 @@ s1c88MightReadFlagCondition(const char *cond, const char *what)
   return true;
 }
 
+/* Does the instruction name the SC flag register as an operand?  `ld a, sc`,
+   `push sc` and `and/or/xor sc, #nn` READ the whole flag byte; `ld sc, a` and
+   `pop sc` reload it wholesale. */
+static bool
+s1c88NamesSC(const lineNode *pl, bool as_source)
+{
+  const char *comma = strchr(pl->line, ',');
+  if(ISINST(pl->line, "push"))
+    return as_source && argCont(pl->line + 4, "sc");
+  if(ISINST(pl->line, "pop"))
+    return !as_source && argCont(pl->line + 3, "sc");
+  if(ISINST(pl->line, "ld"))
+    {
+      if(!comma)
+        return false;
+      return as_source ? argCont(comma + 1, "sc") : (!strncmp(pl->line + 3, "sc", 2));
+    }
+  if(ISINST(pl->line, "and") || ISINST(pl->line, "or") || ISINST(pl->line, "xor"))
+    {
+      const char *arg = pl->line + (ISINST(pl->line, "or") ? 2 : 3);
+      while(isspace(*arg))
+        arg++;
+      return !strncmp(arg, "sc", 2);
+    }
+  return false;
+}
+
 static bool
 s1c88MightReadFlag(const lineNode *pl, const char *what)
 {
+  if(s1c88NamesSC(pl, true))   // ld a, sc / push sc / and|or|xor sc, #nn read every flag
+    return true;
+
   if(ISINST(pl->line, "ld") ||
      ISINST(pl->line, "or") ||
      ISINST(pl->line, "cp") ||
@@ -412,6 +442,17 @@ s1c88MightRead(const lineNode *pl, const char *what)
             return(true);
           arg += 3;
         }
+      else if(!strncmp(arg, "ba", 2) && arg[2] == ',') // S1C88 16-bit `add/adc/sub/sbc ba, rr`
+        {
+          // argCont stops at the comma, so without this arm `sub ba, hl` was
+          // scanned as "ba" only: HL was deemed unread and the load feeding it
+          // deleted (`x - g` compiled to a bare `sub ba, hl`).
+          if(!strcmp(what, "a") || !strcmp(what, "b"))
+            return(true);
+          arg += 3;
+        }
+      else if(!strncmp(arg, "sc", 2) && arg[2] == ',') // and/or/xor sc, #imm: flags only
+        return(false);
       else if(!strncmp(arg, "sp", 2) && arg[2] == ',') // add sp, rr
         {
           if(!strcmp(what, "sp"))
@@ -629,28 +670,39 @@ s1c88SurelyWritesFlag(const lineNode *pl, const char *what)
      ISINST(pl->line, "rla"))
     return (!!strcmp(what, "zf") && !!strcmp(what, "nf") && !!strcmp(what, "vf"));
 
+  // `ld sc, a` / `pop sc` reload the whole flag byte; `and/or/xor sc, #nn`
+  // rewrite it from its OLD value (a read-modify-write), so they surely write
+  // nothing in the dead-flag sense.
+  if(s1c88NamesSC(pl, false))
+    return !(ISINST(pl->line, "and") || ISINST(pl->line, "or") || ISINST(pl->line, "xor"));
+
+  // ISA (instruction-set.md "Flags by sub-class"): ADD/ADC/SUB/SBC/CP/NEG set
+  // Z C V N; AND/OR/XOR and BIT set only Z N (C V unchanged); the rotates and
+  // shifts set C Z N and leave V.
   if(ISINST(pl->line, "adc") ||
-     ISINST(pl->line, "and") ||
      ISINST(pl->line, "sbc") ||
      ISINST(pl->line, "sub") ||
-     ISINST(pl->line, "xor") ||
-     ISINST(pl->line, "and") ||
-     ISINST(pl->line, "rlc") ||
-     ISINST(pl->line, "rrc") ||
-     ISINST(pl->line, "sla") ||
-     ISINST(pl->line, "sra") ||
-     ISINST(pl->line, "srl") ||
+     ISINST(pl->line, "cp") ||
      ISINST(pl->line, "neg"))
     return true;
 
-  if(ISINST(pl->line, "or") ||
-     ISINST(pl->line, "cp") ||
+  if(ISINST(pl->line, "and") ||
+     ISINST(pl->line, "xor") ||
+     ISINST(pl->line, "or") ||
+     ISINST(pl->line, "bit"))
+    return (!strcmp(what, "zf") || !strcmp(what, "nf"));
+
+  if(ISINST(pl->line, "rlc") ||
+     ISINST(pl->line, "rrc") ||
+     ISINST(pl->line, "sla") ||
+     ISINST(pl->line, "sll") ||
+     ISINST(pl->line, "sra") ||
+     ISINST(pl->line, "srl") ||
      ISINST(pl->line, "rl") ||
      ISINST(pl->line, "rr"))
-    return true;
+    return (!!strcmp(what, "vf"));
 
-  if(ISINST(pl->line, "bit") ||
-     ISINST(pl->line, "cpd") ||
+  if(ISINST(pl->line, "cpd") ||
      ISINST(pl->line, "cpi") ||
      ISINST(pl->line, "ind") ||
      ISINST(pl->line, "ini") ||
@@ -1339,9 +1391,138 @@ bool s1c88canSplitReg (const char *reg, char dst[][16], int nDst)
   return TRUE;
 }
 
-int s1c88instructionSize(lineNode *pl)
+/* Operand classes for s1c88instructionSize.  The classes name the S1C88
+   addressing modes as the codegen prints them: registers, `#imm`, the plain
+   indirects `(hl)`/`(ix)`/`(iy)`, the displaced `d (ix)`/`d (iy)`/`d (sp)`,
+   `(br:ll)`, and any other parenthesised expression = a 16-bit absolute
+   `(hhll)`.  Anything else is OPC_OTHER and sized conservatively (large). */
+enum s1c88_opclass
+{
+  OPC_NONE, OPC_R8, OPC_R16, OPC_SP, OPC_SPEC, OPC_IMM, OPC_IND,
+  OPC_DISP_IXY, OPC_DISP_SP, OPC_BRLL, OPC_ABS, OPC_OTHER
+};
+
+static enum s1c88_opclass
+s1c88_opclass (const char *op)
+{
+  size_t n;
+  const char *paren;
+
+  if (!op)
+    return OPC_NONE;
+  while (isspace ((unsigned char) *op))
+    op++;
+  if (*op == '#')
+    return OPC_IMM;
+  if (*op == '(')
+    {
+      if (!STRNCASECMP (op, "(hl)", 4) || !STRNCASECMP (op, "(ix)", 4) || !STRNCASECMP (op, "(iy)", 4))
+        return OPC_IND;
+      if (!STRNCASECMP (op, "(br:", 4))
+        return OPC_BRLL;
+      return OPC_ABS;
+    }
+  /* `d (ix)` — displacement first, then the register.  Only look inside THIS
+     operand: op1 is handed over with the rest of the line attached. */
+  paren = strchr (op, '(');
+  if (paren && strchr (op, ',') && strchr (op, ',') < paren)
+    paren = NULL;
+  if (paren)
+    {
+      if (!STRNCASECMP (paren, "(ix)", 4) || !STRNCASECMP (paren, "(iy)", 4))
+        return OPC_DISP_IXY;
+      if (!STRNCASECMP (paren, "(sp)", 4))
+        return OPC_DISP_SP;
+      return OPC_OTHER;
+    }
+  n = strcspn (op, ", \t");
+  if (n == 1 && strchr ("abhlABHL", op[0]))
+    return OPC_R8;
+  if (n == 2)
+    {
+      if (!STRNCASECMP (op, "sp", 2))
+        return OPC_SP;
+      if (!STRNCASECMP (op, "ba", 2) || !STRNCASECMP (op, "hl", 2) || !STRNCASECMP (op, "ix", 2) ||
+          !STRNCASECMP (op, "iy", 2) || !STRNCASECMP (op, "pc", 2))
+        return OPC_R16;
+      if (!STRNCASECMP (op, "br", 2) || !STRNCASECMP (op, "sc", 2) || !STRNCASECMP (op, "ep", 2) ||
+          !STRNCASECMP (op, "xp", 2) || !STRNCASECMP (op, "yp", 2) || !STRNCASECMP (op, "nb", 2) ||
+          !STRNCASECMP (op, "ip", 2))
+        return OPC_SPEC;
+    }
+  return OPC_OTHER;
+}
+
+/* Byte size of `ld dst, src` per instruction-set.md §4.3.3 (8-bit and 16-bit
+   transfer tables).  Unknown combinations return 4: an OVER-estimate only
+   costs a missed jrs shortening, an under-estimate silently overflows one. */
+static int
+s1c88_ldSize (const char *op1, const char *op2)
+{
+  enum s1c88_opclass d = s1c88_opclass (op1), s = s1c88_opclass (op2);
+
+  switch (d)
+    {
+    case OPC_R8:                        /* ld a/b/l/h, X */
+      switch (s)
+        {
+        case OPC_R8: case OPC_IND:           return 1;   /* 4x..5x / 45..5F */
+        case OPC_IMM: case OPC_SPEC: case OPC_BRLL: return 2; /* Bx nn / CE Cx / 44 ll */
+        case OPC_DISP_IXY:                   return 3;   /* CE 4x dd */
+        case OPC_ABS:                        return 4;   /* CE Dx ll hh */
+        default:                             return 4;
+        }
+    case OPC_SPEC:                      /* ld br/sc/nb/ep/xp/yp, a|#imm */
+      if (s == OPC_R8)
+        return 2;                                        /* CE Cx */
+      if (s == OPC_IMM)
+        return (!STRNCASECMP (op1, "br", 2) || !STRNCASECMP (op1, "sc", 2)) ? 2 : 3; /* B4 hh / 9F nn / CE Cx pp */
+      return 4;
+    case OPC_IND:                       /* ld (hl)/(ix)/(iy), X */
+      switch (s)
+        {
+        case OPC_R8: case OPC_IND:           return 1;   /* 6x..7x */
+        case OPC_IMM: case OPC_BRLL: case OPC_R16: return 2; /* B5 nn / 6C ll / CF C4.. */
+        case OPC_DISP_IXY:                   return 3;   /* CE 6x dd */
+        default:                             return 4;
+        }
+    case OPC_DISP_IXY:                  /* ld d (ix), r8 : CE 4x dd */
+      return s == OPC_R8 ? 3 : 4;
+    case OPC_DISP_SP:                   /* ld d (sp), rr : CF 7x dd */
+      return s == OPC_R16 ? 3 : 4;
+    case OPC_BRLL:                      /* ld (br:ll), X */
+      switch (s)
+        {
+        case OPC_R8: case OPC_IND:           return 2;   /* 78 ll / 7D ll */
+        case OPC_IMM:                        return 3;   /* DD ll nn */
+        default:                             return 4;
+        }
+    case OPC_ABS:                       /* ld (hhll), X */
+      switch (s)
+        {
+        case OPC_R8:                         return 4;   /* CE D4 ll hh */
+        case OPC_R16:                        return 3;   /* BC ll hh */
+        default:                             return 4;
+        }
+    case OPC_R16:
+    case OPC_SP:                        /* ld ba/hl/ix/iy/sp, X */
+      switch (s)
+        {
+        case OPC_R16: case OPC_SP: case OPC_IND: return 2; /* CF Ex / CF Fx / CF Cx */
+        case OPC_IMM:                        return d == OPC_SP ? 4 : 3; /* CF 6E nn mm / C4 nn mm */
+        case OPC_DISP_SP: case OPC_ABS:      return 3;   /* CF 7x dd / B8 ll hh */
+        default:                             return 4;
+        }
+    default:
+      return 4;
+    }
+}
+
+int
+s1c88instructionSize (lineNode *pl)
 {
   const char *op1start, *op2start;
+  enum s1c88_opclass c1, c2;
 
   /* move to the first operand:
    * leading spaces are already removed, skip the mnemonic */
@@ -1371,174 +1552,102 @@ int s1c88instructionSize(lineNode *pl)
   else
     op2start = NULL;
 
-  /* All ld instructions */
+  c1 = s1c88_opclass (op1start);
+  c2 = s1c88_opclass (op2start);
+
+  /* The sizes below are the S1C88 encodings (docs/s1c88/instruction-set.md
+     §4.3.3).  scripts/insn-size-check.sh assembles every line the compiler
+     emits and compares against this model (SDCC88_INSN_SIZE_DUMP=1, see the
+     dump loop at the end of genS1C88Code).  An UNDER-estimate lets the jp->jrs
+     peephole (labelInRange) emit a short branch whose displacement overflows;
+     an over-estimate only costs a missed shortening. */
+
   if(ISINST(pl->line, "ld"))
-    {
-      /* S1C88 special-register loads (CE second page): ld ep/xp/yp/nb/br,A = 2,
-         ld ep/xp/yp/nb/br,#pp = 3; ld a,ep/xp/yp/nb/br = 2 */
-      if(!STRNCASECMP(op1start, "ep", 2) || !STRNCASECMP(op1start, "xp", 2) || !STRNCASECMP(op1start, "yp", 2) ||
-         !STRNCASECMP(op1start, "nb", 2) || !STRNCASECMP(op1start, "br", 2))
-        return(op2start && op2start[0] == '#' ? 3 : 2);
-      if(op2start && (!STRNCASECMP(op2start, "ep", 2) || !STRNCASECMP(op2start, "xp", 2) || !STRNCASECMP(op2start, "yp", 2) ||
-         !STRNCASECMP(op2start, "nb", 2) || !STRNCASECMP(op2start, "br", 2)))
-        return(2);
+    return (op1start && op2start) ? s1c88_ldSize (op1start, op2start) : 4;
 
-      /* S1C88 SP-relative 16-bit load/store: ld {hl,ba,ix,iy}, dd(sp) and
-         ld dd(sp), {hl,ba} are all 3 bytes (CF 7x dd). Must come BEFORE the
-         ix/iy 4-byte rule below (which is for `ld ix,#imm`), and matters for
-         labelInRange() — under-sizing these as 1 wrongly shortened jp->jrs
-         across calls with stacked args, exceeding the jrs range. (8-bit
-         ld a,dd(sp) does not exist on the S1C88 — never emitted.) */
-      if(argCont(op1start, "(sp)") || (op2start && argCont(op2start, "(sp)")))
-        return(3);
-
-      /* These 4 are the only cases of 4 byte long ld instructions. */
-      if(!STRNCASECMP(op1start, "ix", 2) || !STRNCASECMP(op1start, "iy", 2))
-        return(4);
-      if((argCont(op1start, "(ix)") || argCont(op1start, "(iy)")) && op2start[0] == '#')
-        return(4);
-
-      if (op1start[0] == '(' && STRNCASECMP(op1start, "(bc)", 4) && STRNCASECMP(op1start, "(de)", 4) && STRNCASECMP(op1start, "(hl" , 3) && STRNCASECMP(op2start, "hl", 2) && STRNCASECMP(op2start, "a", 1) || op2start[0] == '(' && STRNCASECMP(op2start, "(bc)", 4) && STRNCASECMP(op1start, "(de)", 4) && STRNCASECMP(op2start, "(hl" , 3) && STRNCASECMP(op1start, "hl", 2) && STRNCASECMP(op1start, "a", 1))
-        return(4);
-
-      /* These 4 are the only remaining cases of 3 byte long ld instructions. */
-      if(argCont(op2start, "(ix)") || argCont(op2start, "(iy)"))
-        return(3);
-      if(argCont(op1start, "(ix)") || argCont(op1start, "(iy)"))
-        return(3);
-      if((op1start[0] == '(' && STRNCASECMP(op1start, "(bc)", 4) && STRNCASECMP(op1start, "(de)", 4) && STRNCASECMP(op1start, "(hl", 3)) ||
-         (op2start[0] == '(' && STRNCASECMP(op2start, "(bc)", 4) && STRNCASECMP(op2start, "(de)", 4) && STRNCASECMP(op2start, "(hl", 3)))
-        return(3);
-      if(op2start[0] == '#' &&
-         (!STRNCASECMP(op1start, "bc", 2) || !STRNCASECMP(op1start, "de", 2) || !STRNCASECMP(op1start, "hl", 2) || !STRNCASECMP(op1start, "sp", 2)))
-        return(3);
-
-      /* These 3 are the only remaining cases of 2 byte long ld instructions. */
-      if(op2start[0] == '#')
-        return(2);
-      if(!STRNCASECMP(op1start, "i", 1) || !STRNCASECMP(op1start, "r", 1) ||
-         !STRNCASECMP(op2start, "i", 1) || !STRNCASECMP(op2start, "r", 1))
-        return(2);
-      if(!STRNCASECMP(op2start, "ix", 2) || !STRNCASECMP(op2start, "iy", 2))
-        return(2);
-
-      /* All other ld instructions */
-      return(1);
-    }
-
-  // load from sp with offset
-  
-  // load from/to 0xffXX addresses
-  
-
-  /* Exchange */
-  if(ISINST(pl->line, "exx"))
+  /* Exchange / swap: ex a,b (CC), ex a,(hl) (CD), ex ba,rr (C8..CB), swap (F6/F7) */
+  if(ISINST(pl->line, "ex") || ISINST(pl->line, "swap"))
     return(1);
-  if(ISINST(pl->line, "ex"))
-    {
-      if(!op2start)
-        {
-          werrorfl(pl->ic->filename, pl->ic->lineno, W_UNRECOGNIZED_ASM, __FUNCTION__, 4, pl->line);
-          return(4);
-        }
-      if(argCont(op1start, "(sp)") && (!STRNCASECMP(op2start, "ix", 2) || !STRNCASECMP(op2start, "iy", 2)))
-        return(2);
-      return(1);
-    }
 
-  /* Push / pop */
-  
+  /* Push / pop: pairs and the special registers are 1 byte (A0..AF); the
+     byte registers a/b/l/h and all/ale are CF-prefixed (2). */
   if(ISINST(pl->line, "push") || ISINST(pl->line, "pop"))
     {
-      if(!STRNCASECMP(op1start, "ix", 2) || !STRNCASECMP(op1start, "iy", 2))
+      if(c1 == OPC_R8 || (op1start && (!STRNCASECMP(op1start, "all", 3) || !STRNCASECMP(op1start, "ale", 3))))
         return(2);
       return(1);
     }
 
-  /* 16 bit add / subtract / and / or */
-  
-  /* S1C88 16-bit ALU (dst in ba/hl/ix/iy/sp):
+  /* and/or/xor sc, #nn (9C/9D/9E nn) — the interrupt-level mask ops */
+  if(c1 == OPC_SPEC && op1start && !STRNCASECMP(op1start, "sc", 2) &&
+     (ISINST(pl->line, "and") || ISINST(pl->line, "or") || ISINST(pl->line, "xor")))
+    return(2);
+
+  /* 16-bit ALU (dst in ba/hl/ix/iy/sp):
        reg, reg                      -> 2 (CF xx)
        add/sub/cp  reg, #imm         -> 3
        adc/sbc     reg, #imm         -> 4 (CF-prefixed)
-       add         sp,  #imm         -> 4 (CF 68 ll hh) */
-  if (op1start && op2start &&
+       add/sub/cp  sp,  #imm         -> 4 (CF 68/6A/6C ll hh) */
+  if ((c1 == OPC_R16 || c1 == OPC_SP) && op2start &&
       (ISINST(pl->line, "add") || ISINST(pl->line, "adc") || ISINST(pl->line, "sub") ||
-       ISINST(pl->line, "sbc") || ISINST(pl->line, "cp")) &&
-      (!STRNCASECMP(op1start, "ba", 2) || !STRNCASECMP(op1start, "hl", 2) ||
-       !STRNCASECMP(op1start, "ix", 2) || !STRNCASECMP(op1start, "iy", 2) ||
-       !STRNCASECMP(op1start, "sp", 2)))
+       ISINST(pl->line, "sbc") || ISINST(pl->line, "cp")))
     {
-      if (op2start[0] != '#')
+      if (c2 != OPC_IMM)
         return (2);
-      if (ISINST(pl->line, "adc") || ISINST(pl->line, "sbc") || !STRNCASECMP(op1start, "sp", 2))
+      if (ISINST(pl->line, "adc") || ISINST(pl->line, "sbc") || c1 == OPC_SP)
         return (4);
       return (3);
     }
 
-  /* signed 8 bit adjustment to stack pointer */
-  
+  /* cp b/l/h, #nn (CE BC..BE nn); cp br, #hh (CE BF hh) */
+  if(ISINST(pl->line, "cp") && c2 == OPC_IMM && op1start && STRNCASECMP(op1start, "a", 1))
+    return(3);
 
-  /* 16 bit adjustment to stack pointer */
-  
-
-  /* 8 bit arithmetic, two operands */
-  if(op2start && op1start[0] == 'a' &&
+  /* 8-bit ALU with the accumulator: op a, X */
+  if(c1 == OPC_R8 && op2start && !STRNCASECMP(op1start, "a", 1) &&
      (ISINST(pl->line, "add") || ISINST(pl->line, "adc") || ISINST(pl->line, "sub") || ISINST(pl->line, "sbc") ||
       ISINST(pl->line, "cp")  || ISINST(pl->line, "and") || ISINST(pl->line, "or")  || ISINST(pl->line, "xor")))
     {
-      if(argCont(op2start, "(ix)") || argCont(op2start, "(iy)"))
-        return(3);
-      if(op2start[0] == '#')
-        return(2);
-      return(1);
+      switch (c2)
+        {
+        case OPC_R8: case OPC_IND:  return(1);   /* 00..3F */
+        case OPC_IMM: case OPC_BRLL: return(2);  /* 02 nn / 04 ll */
+        case OPC_DISP_IXY: case OPC_ABS: return(3); /* CE 0x dd / 05 ll hh */
+        default: return(4);
+        }
     }
-  /* 8 bit arithmetic, shorthand for a */
-  if(!op2start &&
+  /* 8-bit ALU on memory: op (hl), a|#nn|(ix)|(iy) — CE 04.. (2) / CE 05 nn (3) */
+  if(c1 == OPC_IND && op2start &&
      (ISINST(pl->line, "add") || ISINST(pl->line, "adc") || ISINST(pl->line, "sub") || ISINST(pl->line, "sbc") ||
       ISINST(pl->line, "cp")  || ISINST(pl->line, "and") || ISINST(pl->line, "or")  || ISINST(pl->line, "xor")))
-    {
-      if(argCont(op1start, "(ix)") || argCont(op1start, "(iy)"))
-        return(3);
-      if(op1start[0] == '#')
-        return(2);
-      return(1);
-    }
+    return(c2 == OPC_IMM ? 3 : 2);
 
-  if(ISINST(pl->line, "rlca") || ISINST(pl->line, "rla") || ISINST(pl->line, "rrca") || ISINST(pl->line, "rra"))
-    return(1);
-
-  /* Increment / decrement */
+  /* Increment / decrement: registers, pairs, sp and (hl) are 1 byte; (br:ll) 2 */
   if(ISINST(pl->line, "inc") || ISINST(pl->line, "dec"))
     {
-      if(!STRNCASECMP(op1start, "ix", 2) || !STRNCASECMP(op1start, "iy", 2))
+      if(c1 == OPC_R8 || c1 == OPC_R16 || c1 == OPC_SP || c1 == OPC_IND || c1 == OPC_SPEC)
+        return(1);
+      if(c1 == OPC_BRLL)
         return(2);
-      if(argCont(op1start, "(ix)") || argCont(op1start, "(iy)"))
-        return(3);
-      return(1);
+      return(4);
     }
 
+  /* Rotates / shifts: CE 8x/9x (2); the (br:ll) form carries ll (3) */
   if(ISINST(pl->line, "rlc") || ISINST(pl->line, "rl")  || ISINST(pl->line, "rrc") || ISINST(pl->line, "rr") ||
-     ISINST(pl->line, "sla") || ISINST(pl->line, "sra") || ISINST(pl->line, "srl"))
+     ISINST(pl->line, "sla") || ISINST(pl->line, "sll") || ISINST(pl->line, "sra") || ISINST(pl->line, "srl"))
+    return(c1 == OPC_BRLL ? 3 : 2);
+
+  /* Bit test: bit a,b (94) = 1; bit a/b/(hl), #nn (96/97/95 nn) = 2; bit (br:ll),#nn = 3 */
+  if(ISINST(pl->line, "bit"))
     {
-      if(argCont(op1start, "(ix)") || argCont(op1start, "(iy)"))
-        return(4);
-      return(2);
+      if(c1 == OPC_BRLL)
+        return(3);
+      return(c2 == OPC_R8 ? 1 : 2);
     }
 
-  if(ISINST(pl->line, "rld") || ISINST(pl->line, "rrd"))
-    return(2);
-
-  /* Bit */
-  if(ISINST(pl->line, "bit") || ISINST(pl->line, "set") || ISINST(pl->line, "res"))
-    {
-      if(argCont(op2start, "(ix)") || argCont(op2start, "(iy)"))
-        return(4);
-      return(2);
-    }
-
-  if(ISINST(pl->line, "jr") || ISINST(pl->line, "djnz"))
-    return(2);
+  /* cpl / neg: CE A0..A7 (2), (br:ll) form 3 */
+  if(ISINST(pl->line, "cpl") || ISINST(pl->line, "neg"))
+    return(c1 == OPC_BRLL ? 3 : 2);
 
   /* S1C88 PC-relative branches.  jrs/cars are 2 bytes for the basic conditions
      (c/nc/z/nz) and the unconditional form, but 3 bytes for the CE-prefixed
@@ -1561,7 +1670,7 @@ int s1c88instructionSize(lineNode *pl)
   if(ISINST(pl->line, "jp"))
     {
       if(!STRNCASECMP(op1start, "(hl)", 4) || !STRNCASECMP(op1start, "hl", 2))
-        return(1);
+        return(1);	/* jp hl: F4 */
       if(!STRNCASECMP(op1start, "(ix)", 4) || !STRNCASECMP(op1start, "(iy)", 4))
         return(2);
       /* S1C88: a signed/flag-conditional jp is the assembler's fixed
@@ -1574,12 +1683,8 @@ int s1c88instructionSize(lineNode *pl)
       return(3);
     }
 
-  
-
-  if((ISINST(pl->line, "reti") || ISINST(pl->line, "retn")))
-    return(2);
-
-  if(ISINST(pl->line, "ret") || ISINST(pl->line, "reti") || ISINST(pl->line, "rst"))
+  /* ret (F8), rete (F9), rets (FA) */
+  if(ISINST(pl->line, "ret") || ISINST(pl->line, "rete") || ISINST(pl->line, "rets"))
     return(1);
 
   if(ISINST(pl->line, "call"))
@@ -1604,70 +1709,14 @@ int s1c88instructionSize(lineNode *pl)
       return(6);
     }
 
-  /* Alias for ld a, (hl+)/(hld) etc */
-  
-
-  if(ISINST(pl->line, "ldi") || ISINST(pl->line, "ldd") || ISINST(pl->line, "cpi") || ISINST(pl->line, "cpd"))
-    return(2);
-
-  if(ISINST(pl->line, "neg"))
-    return(2);
-
-  if(ISINST(pl->line, "sep")) /* S1C88 sign-extend A into B: CE A8 */
-    return(2);
-
-  if(ISINST(pl->line, "daa") || ISINST(pl->line, "cpl")  || ISINST(pl->line, "ccf") || ISINST(pl->line, "scf") ||
-     ISINST(pl->line, "nop") || ISINST(pl->line, "halt") || ISINST(pl->line,  "ei") || ISINST(pl->line, "di"))
+  /* One-byte misc: nop (FF), pack (DE), upck (DF) */
+  if(ISINST(pl->line, "nop") || ISINST(pl->line, "pack") || ISINST(pl->line, "upck"))
     return(1);
-  
-  /* We always emit 2B stop due to hardware bugs*/
-  
 
-  if(ISINST(pl->line, "im"))
+  /* CE-page misc: sep (CE A8), mlt (CE D8), div (CE D9), halt (CE AE), slp (CE AF) */
+  if(ISINST(pl->line, "sep") || ISINST(pl->line, "mlt") || ISINST(pl->line, "div") ||
+     ISINST(pl->line, "halt") || ISINST(pl->line, "slp"))
     return(2);
-
-  if(ISINST(pl->line, "in") || ISINST(pl->line, "out") || ISINST(pl->line, "ot") ||
-     ISINST(pl->line, "ini") || ISINST(pl->line, "inir") || ISINST(pl->line, "ind") ||
-     ISINST(pl->line, "indr") || ISINST(pl->line, "outi") || ISINST(pl->line, "otir") ||
-     ISINST(pl->line, "outd") || ISINST(pl->line, "otdr"))
-    {
-      return(2);
-    }
-
-  
-
-  if(ISINST(pl->line, "mlt")) /* S1C88 HL <- L*A: CE D8 (z180-family mlt rr was also 2) */
-    return(2);
-
-  if(ISINST(pl->line, "div")) /* S1C88 L <- HL/A, H <- remainder: CE D9 */
-    return(2);
-
-  
-
-  
-
-  
-    
-  
-
-  if(ISINST(pl->line, "lddr") || ISINST(pl->line, "ldir") || ISINST(pl->line, "cpir") || ISINST(pl->line, "cpdr"))
-    return(2);
-
-  
-
-  
-
-  
-
-  
-
-  
-
-  
-
-  
-
-  
 
   if(ISINST(pl->line, ".db") || ISINST(pl->line, ".byte"))
     {
@@ -1682,8 +1731,6 @@ int s1c88instructionSize(lineNode *pl)
       for(i = 1, j = 0; pl->line[j]; i += pl->line[j] == ',', j++);
       return(i * 2);
     }
-  
-  
 
   /* If the instruction is unrecognized, we shouldn't try to optimize.  */
   /* For all we know it might be some .ds or similar possibly long line */
@@ -1694,6 +1741,7 @@ int s1c88instructionSize(lineNode *pl)
     werrorfl("unknown", 0, W_UNRECOGNIZED_ASM, __func__, 999, pl->line);
   return(999);
 }
+
 
 bool s1c88symmParmStack (const char *name)
 {
