@@ -177,7 +177,24 @@ int main(int argc, char** argv) {
 		// returns; the BIOS shutdown routine halts with main's return value still in
 		// BA (the ABI return register). Read the exit code straight off BA — there is
 		// no RAM exit mailbox, so no test/exit plumbing lives in the runtime.
+		//
+		// Only a halt INSIDE the BIOS shutdown routine is a clean exit. Any other
+		// halt — a miscompile that wandered into a `halt` opcode, an `__asm halt`,
+		// a wild jump into 0xCE 0xAE — is a STRAY HALT (exit 124), whatever BA
+		// holds. Before this check every halt counted as "main returned" and a
+		// stray one with BA == 0 passed the suite (2026-10 review). The routine is
+		// `halt ; jrs back` (4 bytes) at BIOS_SHUTDOWN (from bios.map via the
+		// Makefile); after HALT the PC sits inside it.
 		(void)is_pm;
+		// (CB is irrelevant: the BIOS sits in the common bank below 0x8000, which
+		// every CB value maps identically — the cart's `int (0x48)` arrives with
+		// CB = 1, the reset value.)
+		bool in_shutdown = m.reg.pc >= BIOS_SHUTDOWN && m.reg.pc < BIOS_SHUTDOWN + 4;
+		if (!in_shutdown) {
+			fprintf(stderr, "[emu] STRAY HALT outside the BIOS shutdown routine (0x%04X)\n", BIOS_SHUTDOWN);
+			dump_regs(m, steps);
+			return 124;
+		}
 		int code = m.reg.ba();
 		if (verbose) { fprintf(stderr, "[emu] clean exit (BA), code=%d\n", code); dump_regs(m, steps); }
 		return code > 123 ? 123 : code;	// keep clear of the harness codes below

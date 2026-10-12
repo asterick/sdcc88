@@ -91,7 +91,9 @@ for f in "${CORPUS}"/*.c; do
   # sdas88 validation (errors only)
   ne="$("${REPO}/scripts/validate-s1c88.sh" "$cur" 2>/dev/null | sed -nE 's/.*assembler errors  : ([0-9]+).*/\1/p')"
   ne="${ne:-?}"
-  [ "$ne" != "0" ] && [ "$ne" != "?" ] && aserr=$((aserr+1))
+  # '?' = the validator produced no "assembler errors" line (sdas88 missing or
+  # broken) — that is a failure, not a pass (it used to print GREEN).
+  [ "$ne" != "0" ] && aserr=$((aserr+1))
   if [ -n "$TAP" ]; then
     # a corpus case is ok iff byte-identical to the baseline AND assembles 0 errors
     if [ "$isdiff" -eq 0 ] && [ "$ne" = "0" ]; then
