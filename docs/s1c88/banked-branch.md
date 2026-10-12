@@ -470,6 +470,20 @@ documents two real, subtle bugs.
 > relaxable `bcall` and asserts a post-drop symbol's `.map` address tracks the dropped `ld nb`. (Was
 > briefly mis-diagnosed as a `bjump` mis-jump; the ROM-byte check above disproved that.)
 
+> **✅ FIXED (2026-10) — relaxation moved PINNED areas.** `rlxDelta()` was purely address-based
+> ("every byte above a drop in the same 64 KB block"), so an area the user based explicitly higher in
+> the bank moved too: a `__far` table at `-b _FAR=0x18800` behind two droppable bcalls in
+> `_CODE_1=0x18000` was emitted at `0x187FA`, and romgen (which maps `_FAR` by its linker address)
+> placed it at the wrong physical address while the code's EP:HL load still read 0x18800. A
+> `-b _CODE2=0x2300` landed at 0x22F7 the same way. The delta is now **layout-chain aware**
+> (`rlxBuildChains()` in `lkrloc3.c`): a drop shifts the rest of its area and the relocatable areas
+> the linker laid out *sequentially* behind it (`lnkarea`: `a_addr = running location`), and a chain
+> breaks at an explicitly based area (`a_bset`, the `-b` flag), at any gap in the layout, and at a
+> 64 KB bank boundary. Absolute areas never participate; an address in no relocatable area (RAM,
+> MMIO, `.equ` constants, area lengths) has delta 0. `scripts/relax-areas-smoke.sh` locks it: the
+> pinned `_FAR` stays, a sequential `_TAIL` moves by exactly the reclaimed bytes, and `ld hl,#_ftbl`
+> relocates to the pinned address.
+
 **Split-slot reclaim done (132 → 150 B):** the slots stage (i) skipped were *split slots* (`ld nb`'s
 `CE C4` straddling a `.rel` T-record boundary). Fixed at the source — `sdas88` reserves the `ld nb`
 (and the signed-cc `jrs +7` hop) atomically in one T-record via `outchk(scc>=0 ? 6 : 3, 5)`, so the
@@ -498,8 +512,15 @@ through to the trailing NOPs harmlessly — so the reorder is **never a pessimiz
 
 Mechanism (`lkrloc3.c`, gated `rlxVecReorderOn()`, default-on; opt out `SDLD_NO_VECREORDER=1` /
 `SDLD_VEC_REORDER=0`): the slot's two relocations cooperate. The `R_S1C88_BANK` handler, when it
-would NOP the head **and** the area is absolute (drop is impossible) **and** the head isn't split
-across a T-record or a signed-cc trampoline (`CE E0+inv 07`), sets `rlxReorderPend` and defers. The
+would NOP the head **and** the area is absolute (drop is impossible) **and** the **whole 6-byte slot
+sits in this T record** (head `rtp-2 >= rtofst` *and* tail `rtp+3 < rtcnt`) **and** it isn't a
+signed-cc trampoline (`CE E0+inv 07`), sets `rlxReorderPend` and defers; otherwise the slot keeps
+the legacy head-NOP layout. (2026-10 fix: only the head was checked, so a slot whose branch + disp16
+spilled into the next record left the flag set across `relr3()` calls, the rewrite ran with `rtp`
+= 3..4 and overwrote the next record's *address bytes*, and the head had already been emitted
+un-NOP'd — a silently corrupt ROM for any ABS `bjump` not at a fresh `.org`. The flag is now also
+reset at every `relr3()` entry, and `relax-areas-smoke.sh` links a slot at every offset around the
+record boundary, requiring the straddling ones to be byte-identical to `SDLD_NO_VECREORDER`.) The
 **next** reloc — the slot's word `R_PCR` — then has the resolved tail-position displacement `relv` in
 hand; it moves the opcode 3 bytes earlier to the slot head, writes the displacement **`relv + 3`**
 (the branch shifted 3 bytes earlier ⇒ its disp grows by exactly 3), and fills the freed tail with
