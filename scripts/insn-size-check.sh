@@ -77,5 +77,61 @@ for c in "${CASES[@]}"; do
   fi
 done
 
+# ---------------------------------------------------------------------------
+# Phase 2: the compiler's size MODEL vs the assembler on EVERY line it emits.
+#
+# With SDCC88_INSN_SIZE_DUMP=1 the compiler prints "insn-size <bytes> <line>"
+# (peep.c s1c88instructionSize) for every emitted line of every function. We
+# compile the corpus + the emu cases under the three option sets, dedupe the
+# lines, assemble each one in isolation (`-g`: undefined symbols are externals)
+# and compare the assembler's dot advance with the model.
+#   model < actual  -> FAIL: the jp->jrs peephole can emit an out-of-range jrs
+#                      (the linker then warns "Byte PCR relocation error", or
+#                      the branch silently wraps). This is what let a branch over
+#                      16 global byte copies become a jrs (CE/CF forms were all
+#                      under-sized by one).
+#   model > actual  -> listed as OVER (safe: only a missed shortening).
+# Label-relative branches are skipped here (phase 1 pins their worst case).
+# ---------------------------------------------------------------------------
+SDCCBIN="${REPO}/build/sdcc-4.5.0/src/sdcc"
+if [ -x "$SDCCBIN" ]; then
+  : > "${OUT}/dump"
+  for src in "${REPO}"/scripts/corpus/*.c "${REPO}"/tests/emu/cases/*.c; do
+    cc -std=gnu17 -E -P -x c -I "${REPO}/tests/emu" "$src" > "${OUT}/pp.c" 2>/dev/null || continue
+    for opts in "" "--opt-code-speed" "--opt-code-size"; do
+      # shellcheck disable=SC2086
+      SDCC88_INSN_SIZE_DUMP=1 "$SDCCBIN" -ms1c88 $opts --c1mode -o "${OUT}/pp.asm" < "${OUT}/pp.c" 2>&1 >/dev/null \
+        | grep '^insn-size' >> "${OUT}/dump" || true
+    done
+  done
+  # distinct lines; drop label-relative control transfers and anything naming a local label
+  sort -u "${OUT}/dump" | cut -f2- \
+    | grep -vE $'^[0-9]+\t(bcall|bjump|jp|jrs|jrl|carl|cars|djr|call)\t' | grep -v '\$' > "${OUT}/lines"
+  under=0; over=0; nlines=0; unasm=0
+  while IFS= read -r rec; do
+    want="${rec%%$'\t'*}"; line="${rec#*$'\t'}"
+    nlines=$((nlines+1))
+    printf '\t.area _T\n%s\n_x:\n' "$line" > "${OUT}/m.s"
+    if ! "$SDAS" -g -o "${OUT}/m.rel" "${OUT}/m.s" 2>"${OUT}/e" >/dev/null; then
+      printf "  FAIL  %-32s does not assemble: %s\n" "$(printf '%s' "$line" | tr '\t' ' ')" "$(head -1 "${OUT}/e")"
+      unasm=$((unasm+1)); continue
+    fi
+    # `_x` is local here (no .globl), so read the area size instead of the symbol
+    hex="$(sed -nE 's/^A _T size ([0-9A-Fa-f]+) .*/\1/p' "${OUT}/m.rel")"
+    got="$(printf '%d' "0x${hex:-0}")"
+    if [ "$got" -gt "$want" ]; then
+      printf "  FAIL  %-32s assembler emits %s bytes, compiler model says %s (UNDER-estimate)\n" "$(printf '%s' "$line" | tr '\t' ' ')" "$got" "$want"
+      under=$((under+1))
+    elif [ "$got" -lt "$want" ]; then
+      printf "  over  %-32s assembler emits %s bytes, compiler model says %s\n" "$(printf '%s' "$line" | tr '\t' ' ')" "$got" "$want"
+      over=$((over+1))
+    fi
+  done < "${OUT}/lines"
+  echo "  model check: ${nlines} distinct emitted lines, ${under} under-estimated, ${over} over-estimated, ${unasm} unassemblable"
+  [ "$under" -eq 0 ] && [ "$unasm" -eq 0 ] || fail=1
+else
+  echo "  (phase 2 skipped: no built compiler at ${SDCCBIN})"
+fi
+
 [ "$fail" -eq 0 ] && echo "== instruction-size contract GREEN ==" || echo "== instruction-size MISMATCH (sync peep.c s1c88instructionSize <-> the assembler) =="
 exit "$fail"

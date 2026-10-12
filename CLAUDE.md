@@ -31,9 +31,11 @@ and builds the compiler.
 > — plus the production `crt0`, `s1c88.lib`, and `<pm.h>` device header are all in place. Codegen is
 > functionally complete (all numbered ABI tasks closed; native `DIV`/`MLT`; 3-byte banked function pointers;
 > S1C88 **MAXIMUM-mode** call model; int×int→long widening multiply), every gate green (corpus 20/20
-> byte-identical, emu-test 18/18, diff-test 25, run-tests 69/69), and the differential-mining suite is
-> **clean with no known correctness bugs** (integer / pointer / far-pointer / struct / union / fnptr /
-> long-long / float / recursion / control-flow / bit-ops / mixed-width / `volatile` / libc all verified).
+> byte-identical, emu-test, diff-test, run-tests), and the differential-mining suite covers integer /
+> pointer / far-pointer / struct / union / fnptr / long-long / float / recursion / control-flow / bit-ops /
+> mixed-width / `volatile` / libc. **A 2026-10 quality review found defects the gates missed** (see the
+> `sdcc88-quality-review-2026-10` memory and the PR history); they are being fixed in priority order, one
+> PR per step, each adding its regression case to `tests/{emu,diff}/cases`.
 > The bundled libc covers `string.h`, `stdlib.h`, `ctype.h`, and
 > `printf`/`sprintf` (`<stdio.h>`, default `putchar` → `DEBUG_OUT`).
 >

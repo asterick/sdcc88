@@ -122,7 +122,7 @@ for src in "${EMU}"/cases/*.c; do
   # self-hosted div/mod/mul (already-defined, so the lib copies aren't pulled).
   if ! "$SDLD" -nwxi -b _CODE=0x21D0 -b _DATA=0x1000 ${FAR_LINK} -k "$LIBDIR" -l s1c88 \
         "${OUT}/${b}.ihx" "${OUT}/crt0.rel" "${OUT}/${b}.rel" ${RT_RELS} > "${OUT}/err" 2>&1 \
-     || grep -q "Undefined Global" "${OUT}/err"; then
+     || grep -qE "Undefined Global|relocation error|Range Exceeded|Overflow" "${OUT}/err"; then
     grep -E "Undefined Global|ASlink" "${OUT}/err" | sort -u > "${OUT}/diag"
     report_fail "$b" "LINK-FAIL" "${OUT}/diag"; continue
   fi
